@@ -53,10 +53,21 @@ class Connection:
     def __init__(self, dsn: str | None = None):
         target = dsn or database_url()
         validate_database_configuration(target)
-        # Deliberate preparation-only fence. No environment flag enables cloud SQL.
-        # A later role/policy and activation review must replace this guard explicitly.
-        if environment_mode() in CLOUD_MODES:
-            raise RuntimeError('Cloud database connections are disabled pending backend role and permission review.')
+
+        # Preserve local connections and block production cloud access.
+        # Staging requires explicit activation after security checks.
+        mode = environment_mode()
+
+        if mode == "production":
+            raise RuntimeError(
+                "Production cloud database connections are not authorized."
+            )
+
+        if mode == "staging" and os.environ.get("PSMS_STAGING_DB_ENABLED") != "1":
+            raise RuntimeError(
+                "Staging database connections require explicit activation."
+            )
+
         options = dict(row_factory=dict_row, connect_timeout=5)
         if os.environ.get('PSMS_DB_TRANSACTION_POOLER') == '1':
             options['prepare_threshold'] = None
