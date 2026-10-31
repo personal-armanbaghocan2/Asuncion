@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card"><h2>Historical signatory snapshot is unavailable</h2>
+<p><strong>{{ error.document_no }}</strong> remains an approved record. Its historical signatory identity is explicitly unresolved.</p>
+<p>Consult the archived official record; no current identity or signature was substituted. This page is not a reconstructed original and does not change the stored approval.</p>
+<p>Where a verifiable original archive exists, an Administrator can retain that original and record a clearly labelled identity reconstruction. Missing historical names, designations and approval times are never inferred.</p>
+{% if session.get('role')=='Admin' %}<a class="btn" href="{{ url_for('historical_evidence') }}">Review historical evidence</a>{% else %}<p>Contact the authorized archival custodian for the original document.</p>{% endif %}
+<a class="btn" href="{{ url_for('dashboard') }}">Return to dashboard</a></div>
+{% endblock %}

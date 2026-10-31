@@ -1,0 +1,221 @@
+{% extends 'base.html' %}
+{% block content %}
+{% set procurement_display = active in ['ppmp','app','pr','aoq','po','nlp'] %}
+<div class="review-toolbar">
+  <div>
+    <div class="review-kicker">{{'RECEIVING REVIEW' if receiving_items else 'READ-ONLY VIEWING MODE'}}</div>
+    <h2>{{ document_type }}</h2>
+    <div class="review-title-line">
+      <span class="id-chip large">{{ document_no }}</span>
+      <span class="badge {{ 'ok' if status=='Approved' else ('info' if status=='Reviewed' else 'warn') }}">{{ status }}</span>
+      {% if created_at %}<span class="muted">Created {{ created_at }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="{{ back_url }}">Back</a>
+    {% if print_url %}<a class="btn blue" href="{{ print_url }}" target="_blank">Print</a>{% endif %}
+  </div>
+</div>
+
+<div class="review-mode-notice">
+  <div class="review-mode-icon">✓</div>
+  <div>
+    <b>Review every item before approval.</b>
+    <div>{% if receiving_items %}Enter actual received quantities below before confirming acceptance.{% else %}This page is read-only.{% endif %} Check the document identifier, linked records, all line items, quantities, units, specifications, prices, totals, and supporting details.</div>
+  </div>
+</div>
+
+{% if linked_records %}
+<div class="card review-card">
+  <h3>Linked Procurement Records</h3>
+  <div class="linked-record-grid">
+    {% for field in linked_records %}
+    <div class="linked-record">
+      <span>{{ field.label }}</span>
+      {% if field.url %}<a href="{{ field.url }}" target="_blank"><b>{{ field.value }}</b></a>{% else %}<b>{{ field.value }}</b>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if summary %}
+<div class="review-summary-grid">
+  {% for field in summary %}
+  <div class="card review-summary-card">
+    <div class="muted">{{ field.label }}</div>
+    <div class="review-summary-value">{{ field.value }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% for section in item_sections %}
+{% if section.optional %}<details class="card source-comparison"><summary>{{ section.title }} · {{ section.count }} source item(s)</summary>{% endif %}
+<div class="card review-card item-review-section">
+  <div class="section-heading-row">
+    <div>
+      <h3>{{ section.title }}</h3>
+      {% if section.note %}<p class="muted">{{ section.note }}</p>{% endif %}
+    </div>
+    <span class="badge info">{{ section.count }} item(s)</span>
+  </div>
+  {% if section['items'] %}
+  <div class="review-table-wrap">
+    <table class="table review-items-table procurement-items">
+      <thead>
+        <tr>
+          <th>Line</th>
+          <th>Source Item</th>
+          <th>Item</th>
+          <th>Description</th>
+          <th>Quantity</th>
+          <th>Unit</th>
+          <th>Unit Cost</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in section['items'] %}
+        <tr>
+          <td><b>{{ item.index }}</b>{% if not procurement_display %}<br><span class="id-chip mini">{{ item.line_id }}</span>{% endif %}</td>
+          <td class="source-item"><span class="id-chip mini secondary">{{ item.source_number or item.source_id if procurement_display else item.source_id }}</span></td>
+          <td><b>{{ item.item }}</b></td>
+          <td class="review-description">{{ item.description }}</td>
+          <td class="{{'quantity' if procurement_display}}">{{ item.quantity|quantity if procurement_display else item.quantity }}</td>
+          <td class="{{'unit' if procurement_display}}">{{ item.unit }}</td>
+          <td class="{{'numeric' if procurement_display}}">{{ item.unit_cost }}</td>
+          <td class="{{'numeric' if procurement_display}}"><b>{{ item.amount }}</b></td>
+        </tr>
+        <tr class="review-detail-row">
+          <td colspan="8">
+            <details class="stored-fields">
+              <summary>Details · {{ item.line_id }}</summary>
+              <div class="stored-field-grid">
+                {% for detail in item.details if not detail.diagnostic or not procurement_display %}
+                <div class="stored-field {{ 'primary-field' if detail.is_primary else '' }}">
+                  <span>{{ detail.label }}</span>
+                  <b>{{ detail.value|month_year if procurement_display and detail.label in ['Start of Procurement Activity','End of Procurement Activity','Expected Delivery/Implementation Period'] else detail.value }}</b>
+                </div>
+                {% else %}
+                <div class="muted">No additional fields stored for this item.</div>
+                {% endfor %}
+              </div>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-review-warning">No items are stored in this section. Do not approve until the missing-item issue is resolved.</div>
+  {% endif %}
+</div>
+{% if section.optional %}</details>{% endif %}
+{% endfor %}
+
+{% if procurement_display %}
+<details class="card advanced-box"><summary>Advanced diagnostics and retained source evidence</summary>
+{% for section in item_sections %}{% for item in section['items'] %}
+<details><summary>{{ section.title }} · {{ item.line_id }}</summary>
+  {% for detail in item.details if detail.diagnostic %}<p><b>{{ detail.label }}</b></p><pre class="diagnostic-text">{{ detail.value }}</pre>{% endfor %}
+</details>
+{% endfor %}{% endfor %}
+{% endif %}
+{% for block in text_blocks %}
+<div class="card review-card">
+  <details class="review-text-block" {% if loop.first and not procurement_display %}open{% endif %}>
+    <summary>{{ block.title }}</summary>
+    <pre>{{ block.content }}</pre>
+  </details>
+</div>
+{% endfor %}
+{% if procurement_display %}</details>{% endif %}
+
+{% if active == 'nlp' and pricing_diagnostics %}
+{% include 'pricing_diagnostics.html' %}
+{% endif %}
+
+{% if active == 'nlp' and item_comparison %}
+{% include 'pr_po_item_comparison.html' %}
+{% endif %}
+
+<div class="card approval-review-card">
+  {% if can_review %}
+  <div class="approval-warning-title">Review Completion</div>
+  <p>{{ review_effect }}</p>
+  <form method="post" action="{{ review_url }}" id="reviewCompleteForm"
+        data-confirm="Mark {{ document_no }} as Reviewed after confirming that every listed item and stored field was checked?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="review-confirm-check">
+      <input type="checkbox" name="review_confirm" value="yes" id="reviewCompleteCheckbox" required>
+      <span>I reviewed all items, their stored details, totals, and linked records in this document.</span>
+    </label>
+    <div class="approval-action-row">
+      <a class="btn" href="{{ back_url }}">Back</a>
+      <button class="btn primary" type="submit" id="completeReviewButton" disabled>{{ review_label }}</button>
+    </div>
+  </form>
+  {% elif can_approve %}
+  <div class="approval-warning-title">Final Approval Check</div>
+  <p>{{ approval_effect }}</p>
+  <form method="post" action="{{ approve_url }}" id="reviewApprovalForm"
+        {% if active in ['aoq','po'] %}data-final-approval="true" data-approval-details="{{ approval_details|tojson|forceescape }}"{% endif %}
+        {% if active in ['ppmp','app','pr','po','iar','ris'] %}data-confirm-category="{{active}}"{% endif %}
+        data-confirm="Approve {{ document_no }} after confirming that every listed item and linked record was reviewed?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if receiving_items %}
+    <fieldset><legend>Actual received quantities</legend>
+      <p class="muted">Record accepted quantities in the ordered unit. The ordered quantities remain preserved. Partial acceptance does not create a balance delivery record.</p>
+      {% for item in receiving_items %}
+      <label class="form-field">{{item.get('item') or item.get('Item Name') or 'Item'}} — Ordered: {{item.get('ordered_qty')}} {{item.get('unit') or item.get('Unit')}}
+        <input name="received_qty_{{loop.index0}}" inputmode="decimal" value="{{item.get('received_qty','')}}" required aria-label="Actual received quantity for item {{loop.index}}">
+      </label>
+      {% endfor %}
+    </fieldset>
+    {% endif %}
+    <label class="review-confirm-check">
+      <input type="checkbox" name="review_confirm" value="yes" id="reviewConfirmCheckbox" required>
+      <span>I reviewed all items, their stored details, and linked records in this document.</span>
+    </label>
+    {% if active in ['aoq','po'] %}<noscript><label class="review-confirm-check"><input type="checkbox" name="final_confirm" value="yes" required> I explicitly confirm final approval of {{ document_no }} and the details above.</label></noscript>{% endif %}
+    <div class="approval-action-row">
+      <a class="btn" href="{{ back_url }}">Back</a>
+      <button class="btn primary" type="submit" id="finalApproveButton" {% if active not in ['aoq','po'] %}disabled{% endif %}>{{ approve_label }}</button>
+    </div>
+  </form>
+  {% elif status == 'Approved' %}
+  <div class="approved-review-state">
+    <span class="badge ok">Approved</span>
+    <div>
+      <b>{{ document_no }} is already approved.</b>
+      <p class="muted">You may still review all stored items and linked records on this page, but the approval action is locked.</p>
+    </div>
+  </div>
+  {% else %}
+  <div class="approved-review-state">
+    <span class="badge info">{{ status }}</span>
+    <div>
+      <b>No approval action is available for the current status.</b>
+      <p class="muted">Return to the record list or complete the required prior workflow step.</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  const pairs = [
+    ['reviewCompleteCheckbox', 'completeReviewButton'],
+    ['reviewConfirmCheckbox', 'finalApproveButton']
+  ];
+  pairs.forEach(([checkId, buttonId]) => {
+    const checkbox = document.getElementById(checkId);
+    const button = document.getElementById(buttonId);
+    if (!checkbox || !button) return;
+    const update = () => { button.disabled = !checkbox.checked; };
+    checkbox.addEventListener('change', update);
+    update();
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PPMP Print</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    @media print{.no-print{display:none}.print-page{border:0;max-width:none}.content{padding:0}}
+    .ppmp-title{font-size:18px;letter-spacing:.02em;margin:4px 0}
+    .ppmp-small{font-size:12px;margin:2px 0}
+    .print-table th,.print-table td{font-size:10px;padding:4px;vertical-align:middle;text-align:center}
+    .print-table td:nth-child(1),.print-table td:nth-child(3){text-align:left}
+  </style>
+<style>@page{size:A4 landscape;margin:10mm}.print-page{max-width:1400px}@media print{.print-page{max-width:none}}</style><link rel="stylesheet" href="{{url_for('static',filename='css/procurement-print.css')}}"></head>
+<body class="landscape-document"><div class="print-controls no-print"><a class="btn" href="/ppmp">Back to records</a><div class="actions"><p>Print preview · A4 landscape</p><button class="btn blue" onclick="window.print()">Print document</button></div></div>
+<div class="content">
+  
+
+  <div class="print-page">{% with hide_signatory_timestamp=true %}{% include "signatory_notice.html" %}{% endwith %}
+    <div class="print-head">
+      <img class="print-seal" src="{{url_for('static',filename='images/asuncion-seal.png')}}" alt="Municipality of Asuncion seal"><p class="ppmp-small">Republic of the Philippines<br><b>MUNICIPALITY OF ASUNCION</b></p>
+      <h1 class="ppmp-title">PROJECT PROCUREMENT MANAGEMENT PLAN (PPMP) NO. {{row.no}}</h1>
+      <p class="ppmp-small">{{'FINAL' if row.status=='Approved' else 'INDICATIVE'}} · Workflow status: {{row.status}}</p>
+    </div>
+
+    <p class="ppmp-small"><b>Fiscal Year:</b> {{row.year}}</p>
+    <p class="ppmp-small"><b>End-User or Implementing Unit:</b> {{row.office}}</p>
+
+    <p class="print-status"><b>Document:</b> {{row.no}} · <b>Workflow status:</b> {{row.status}}</p>
+<table class="print-table"><colgroup><col style="width:17%"><col style="width:7%"><col style="width:12%"><col style="width:9%"><col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:8%"><col style="width:6%"><col style="width:9%"><col style="width:7%"><col style="width:6%"></colgroup><thead>
+      <tr>
+        <th colspan="4">PROCUREMENT PROJECT DETAILS</th>
+        <th colspan="4">PROJECTED TIMELINE (MM/YYYY)</th>
+        <th colspan="2">FUNDING DETAILS</th>
+        <th rowspan="2">ATTACHED SUPPORTING DOCUMENTS</th>
+        <th rowspan="2">REMARKS</th>
+      </tr>
+      <tr>
+        <th>General Description and Objective of the Project to be Procured</th>
+        <th>Type of the Project to be Procured</th>
+        <th>Quantity and Size of the Project to be Procured</th>
+        <th>Recommended Mode of Procurement</th>
+        <th>Pre-Procurement Conference, if applicable (Yes/No)</th>
+        <th>Start of Procurement Activity</th>
+        <th>End of Procurement Activity</th>
+        <th>Expected Delivery/Implementation Period</th>
+        <th>Source of Funds</th>
+        <th>Estimated Budget/Authorized Budgetary Allocation (Php)</th>
+      </tr>
+      <tr>
+        <th class="column-label">Column 1</th><th class="column-label">Column 2</th><th class="column-label">Column 3</th><th class="column-label">Column 4</th><th class="column-label">Column 5</th><th class="column-label">Column 6</th><th class="column-label">Column 7</th><th class="column-label">Column 8</th><th class="column-label">Column 9</th><th class="column-label">Column 10</th><th class="column-label">Column 11</th><th class="column-label">Column 12</th>
+      </tr></thead><tbody>
+      {% for it in items %}
+      <tr>
+        <td>{{it.get('General Description and Objective of the Project to be Procured','')}}</td>
+        <td>{{it.get('Type of the Project to be Procured','')}}</td>
+        <td>{{it.get('Quantity and Size of the Project to be Procured','')}}</td>
+        <td>{{it.get('Recommended Mode of Procurement','')}}</td>
+        <td>{{it.get('Pre-Procurement Conference Applicable (Yes/No)','')}}</td>
+        <td>{{it.get('Start of Procurement Activity','')|month_year}}</td>
+        <td>{{it.get('End of Procurement Activity','')|month_year}}</td>
+        <td>{{it.get('Expected Delivery/Implementation Period','')|month_year}}</td>
+        <td>{{it.get('Source of Funds','')}}</td>
+        <td class="numeric">{{it.get('Estimated Budget Allocation (Php)',0)|money}}</td>
+        <td>{{it.get('Attached Supporting Documents','')}}</td>
+        <td>{{it.get('Remarks','')}}</td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td colspan="9" style="text-align:right"><b>TOTAL</b></td>
+        <td class="numeric"><b>{{row.total|money}}</b></td>
+        <td colspan="2"></td>
+      </tr>
+    </tbody></table>
+
+    <div class="sign-grid">
+      <div class="sign">
+        <p>Prepared by:</p>
+        <div class="signatory-name">{{sig.ppmp_prepared[0]}}</div>
+        <b>{{sig.ppmp_prepared[0]}}</b><br>
+        <span>{{sig.ppmp_prepared[1]}}</span><br>
+        <small>Date: {{row.created_at|document_date}}</small>
+        
+      </div>
+      <div class="sign">
+        <p>APPROVED BY:</p>
+        <div class="signatory-name">{{sig.ppmp_approved[0]}}</div>
+        <b>{{sig.ppmp_approved[0]}}</b><br>
+        <span>{{sig.ppmp_approved[1]}}</span><br>
+        <small>Approval date: {{(row.approved_at|document_date) if row.status=='Approved' and row.approved_at else 'Not recorded' if row.status=='Approved' else 'Not approved'}}</small>
+        
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

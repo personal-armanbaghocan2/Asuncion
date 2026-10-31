@@ -1,0 +1,42 @@
+{% extends 'base.html' %}{% block content %}
+<div class="toolbar page-head"><h2>PR–PO NLP Verification</h2><div class="actions"><span class="badge {{'ok' if model_state.active else 'bad'}}">FastText {{'Active' if model_state.active else 'Unavailable'}}</span><a class="btn small blue" href="{{url_for('nlp_algorithms')}}">Model Information</a></div></div>
+{% if not model_state.active %}<div class="warning-box">{{model_state.message}} Verification is unavailable until the compatible model is installed.</div>{% endif %}
+{% if model_state.get('manifest', {}).get('runtime') == 'retrained_rf' %}<div class="warning-box">Experimental Random Forest: synthetic testing only. AI_PROPOSED_UNVERIFIED labels; probabilities are uncalibrated. Review deterministic findings and original PR/PO documents before human confirmation. No automatic approval.</div>{% endif %}
+<form method="post" class="source-bar" id="nlpSourceForm"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label class="wide-field">Approved PO<select name="po_id" required data-record-selector="approved PO"><option value="">Select approved PO</option>{% for p in selector_pos %}<option value="{{p.id}}" data-search="{{p.search_terms}} {{p.supplier}} {{p.pr_no}}" data-can-run="{{'true' if p.can_run and model_state.active else 'false'}}" data-can-compare="{{'true' if p.can_compare else 'false'}}" {{'selected' if comparison_source and comparison_source.id == p.id}}>{{p.no}} · {{(p.item_preview or p.pr_no)|truncate(55)}} · {{p.supplier|truncate(40)}}</option>{% endfor %}</select></label>
+{% if comparison_enabled %}<button class="btn blue" type="submit" name="action" value="compare" id="compareSourceButton">Compare Source Items</button>{% endif %}
+<button class="btn primary" type="submit" id="runVerificationButton" data-confirm="Run the trained FastText model on this PR–PO pair?" {{'disabled' if not model_state.active}}>Run NLP Verification</button></form>
+<p id="nlpSelectionNotice" class="muted" hidden>Selection changed. Compare source items again for the selected PO.</p>
+{% if not pos %}<p class="muted">No approved PO is waiting for verification.</p>{% endif %}
+<table class="table"><thead><tr><th>NLP No.</th><th>PR No.</th><th>PO No.</th><th>AI Result</th><th>Confidence</th><th>Approval Status</th><th>Action</th></tr></thead><tbody>{% for r in rows %}<tr><td class="document-ref">{{r.no or r.id}}</td><td class="document-ref">{{r.pr_no}}</td><td class="document-ref">{{r.po_no}}</td><td><span class="badge {{'ok' if r.result=='Acceptable' else 'warn' if r.result=='Needs Review' else 'bad'}}">{{r.result}}</span></td><td>{{r.confidence}}%</td><td><span class="badge {{'ok' if r.status=='Approved' else 'warn'}}">{{r.status or 'For Review'}}</span></td><td><a class="btn small blue" href="{{url_for('nlp_review',id=r.id)}}">Review</a></td></tr>{% else %}<tr><td colspan="7" class="empty-state">No verification records yet.</td></tr>{% endfor %}</tbody></table>
+{% if comparison_enabled %}
+<div class="card review-card">
+  <h3>Read-only PR-PO Item Comparison</h3>
+  <p class="muted">Compare source items and explicit specifications. Technical findings do not change the FastText result, confidence, document status, or approval decision.</p>
+  {% if not comparison_pos %}<p class="muted">No approved linked PR and PO schedules are available.</p>{% endif %}
+</div>
+<div id="nlpComparisonResults">
+{% if comparison_source %}<p><b>Compared PR:</b> {{ comparison_source.pr_no }} <b>Compared PO:</b> {{ comparison_source.po_no }}</p>{% endif %}
+{% if item_comparison %}{% include 'pr_po_item_comparison.html' %}{% endif %}
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const select = document.querySelector('#nlpSourceForm select[name=po_id]');
+  const initial = select.value;
+  function update() {
+    const option = select.selectedOptions[0];
+    document.getElementById('runVerificationButton').disabled = option?.dataset.canRun !== 'true';
+    const compare = document.getElementById('compareSourceButton');
+    if (compare) compare.disabled = option?.dataset.canCompare !== 'true';
+    const results = document.getElementById('nlpComparisonResults');
+    if (results) results.hidden = select.value !== initial;
+    document.getElementById('nlpSelectionNotice').hidden = !results || select.value === initial;
+  }
+  select.addEventListener('change', update);
+  update();
+})();
+</script>
+{% endblock %}

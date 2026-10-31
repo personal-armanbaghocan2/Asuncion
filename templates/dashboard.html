@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/dashboard.css')}}">{% endblock %}
+{% block content %}
+{% set d = dashboard_data %}
+{% macro dash_icon(name) %}
+{% if name in ['clipboard','clock','warning','circle-check','circle-close'] %}<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">{% if name=='clipboard' %}<rect x="5" y="4" width="14" height="18" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M8 10h8M8 14h8M8 18h8"/>{% elif name=='clock' %}<circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 3"/>{% elif name=='warning' %}<path d="m12 3 10 18H2L12 3ZM12 9v5M12 17v.1"/>{% elif name=='circle-check' %}<circle cx="12" cy="12" r="9"/><path d="m7 12 3 3 7-7"/>{% else %}<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>{% endif %}</svg>{% else %}{{icon(name)}}{% endif %}
+{% endmacro %}
+{% macro heading(text, glyph, endpoint='', link='View Details') %}
+<div class="dash-heading"><h3>{{dash_icon(glyph)}}{{text}}</h3>{% if endpoint %}<a href="{{url_for(endpoint)}}">{{link}} <span aria-hidden="true">→</span></a>{% endif %}</div>
+{% endmacro %}
+{% macro donut(name, title, compact=false) %}
+<div class="dash-donut-layout{% if compact %} compact{% endif %}"><div class="dash-donut" id="{{name}}-chart" role="img" aria-label="{{title}}"><div class="donut-center"><strong id="{{name}}-total">0</strong><span>Total</span></div></div><ul class="dash-legend" id="{{name}}-legend" aria-label="{{title}} values"></ul></div>
+{% endmacro %}
+<div class="dash-layout">
+<section class="dash-welcome{% if municipal_banner_available %} has-municipal-photo{% endif %}" aria-labelledby="welcome-title">
+<div><h2 id="welcome-title"><svg width="32" height="34" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="6" r="4"/><path d="M3 24v-5a9 9 0 0 1 18 0v5Z"/></svg>Good day, {{(current_account or {}).get('display_name') or (current_account or {}).get('full_name') or session.get('username','')}}!</h2><p>Monitor procurement documents, inventory, and property records for a more<br class="welcome-break"> transparent and accountable Municipality of Asuncion.</p></div>
+<div class="dash-banner-note">{{icon('document')}}<span>Efficient Procurement<br>Accountable Management<br>Better Public Service</span></div>
+</section>
+<div class="dash-kpis">
+{% for label,glyph,tone,endpoint in [('Total PPMP Records','document','blue','ppmp_home'),('For Review','clipboard','amber','dashboard'),('Approved Documents','check','green','dashboard'),('Low Stock Alerts','box','red','inventory')] %}
+<a class="dash-kpi {{tone}}" href="{{url_for(endpoint)}}{% if loop.index==2 %}#pending-reviews{% elif loop.index==3 %}#document-status{% elif loop.index==4 %}?stock=low{% endif %}"><span class="dash-kpi-icon">{{dash_icon(glyph)}}</span><span class="dash-kpi-copy"><b>{{label}}</b><strong>{{'{:,}'.format(d.kpis[loop.index0])}}</strong></span><span class="dash-kpi-mini">{{dash_icon('clock' if loop.index==2 else 'circle-check' if loop.index==3 else 'warning' if loop.index==4 else glyph)}}</span></a>
+{% endfor %}
+</div>
+<div class="dash-main-grid">
+<section class="dash-panel pipeline-panel">{{heading('Procurement Pipeline','report','reports')}}<div id="pipeline-chart" class="dash-bar-chart" role="img" aria-label="Procurement pipeline record counts"></div><p class="dash-footnote">Inventory counts item records; other bars count documents.</p></section>
+<section class="dash-panel status-panel" id="document-status"><div class="dash-heading"><h3>{{icon('document')}}Document Status Overview</h3><select id="status-module" aria-label="Filter document statuses by module"><option value="all">All Modules</option>{% for module in d.statuses if module!='all' %}<option value="{{module}}">{{module}}</option>{% endfor %}</select></div>{{donut('status','Document status counts')}}</section>
+<section class="dash-panel reviews-panel" id="pending-reviews">{{heading('Pending Reviews','clock','dashboard','View all')}}<div class="dash-table-scroll"><table class="dash-table"><thead><tr><th>Ref No.</th><th>Module</th><th>Office / Supplier</th><th>Amount</th><th title="Creation timestamp; separate submission dates are not stored">Date Submitted*</th><th>Days Pending*</th><th>Action</th></tr></thead><tbody>
+{% for r in d.review_rows[:5] %}<tr><td>{{r.no or '—'}}</td><td><span class="dash-badge module-{{r.module|lower|replace(' / ','-')}}">{{r.module}}</span></td><td class="party-cell" title="{{r.party or ''}}">{{r.party or '—'}}</td><td class="dash-amount">{{r.amount|money if r.amount is not none else '—'}}</td><td>{{r.date or '—'}}</td><td><span class="dash-days">{{r.days if r.days is not none else '—'}}</span></td><td><a class="dash-review" href="{{url_for(r.endpoint,id=r.id)}}">Review</a></td></tr>{% else %}<tr><td colspan="7" class="dash-empty">No documents waiting for review.</td></tr>{% endfor %}
+</tbody></table></div><p class="dash-footnote">*From recorded creation date; oldest first. {% if d.review_rows|length > 5 %}<button type="button" id="show-all-reviews">Show all {{d.review_rows|length}} pending records</button>{% endif %}</p>
+{% if d.review_rows|length > 5 %}<div id="more-reviews" hidden><ul class="dash-more-reviews">{% for r in d.review_rows[5:] %}<li><a href="{{url_for(r.endpoint,id=r.id)}}">{{r.module}} · {{r.no or 'Reference unavailable'}} — Review</a></li>{% endfor %}</ul></div>{% endif %}</section>
+<section class="dash-panel inventory-panel">{{heading('Inventory Summary','box','inventory','View Inventory')}}<div class="dash-stock-kpis">{% for label,count,glyph,tone in [('Total Items',d.inventory.total,'dashboard','blue'),('In Stock',d.inventory.stock[0].count,'circle-check','green'),('Low Stock',d.inventory.stock[1].count,'warning','amber'),('Out of Stock',d.inventory.stock[2].count,'circle-close','red')] %}<div class="dash-stock-kpi {{tone}}"><span>{{dash_icon(glyph)}}</span><div><small>{{label}}</small><b>{{'{:,}'.format(count)}}</b></div></div>{% endfor %}</div><div class="dash-inventory-charts"><div><h4>Items by Category</h4>{{donut('category','Inventory records by category',true)}}</div><div><h4>Stock Status</h4>{{donut('stock','Inventory stock status',true)}}</div></div></section>
+</div>
+<div class="dash-bottom-grid">
+<section class="dash-panel nlp-panel">{{heading('NLP Verification Summary','check','nlp')}}<div id="nlp-chart" class="dash-bar-chart" role="img" aria-label="Stored NLP verification outcomes"></div>{% if d.ungrouped_nlp %}<p class="dash-footnote">{{d.ungrouped_nlp}} result(s) without a recognized outcome excluded.</p>{% endif %}</section>
+<section class="dash-panel monthly-panel">{{heading('Monthly Procurement Activity','report','reports')}}<div id="monthly-legend" class="dash-monthly-legend"></div><div id="monthly-chart" class="dash-monthly-chart" role="img" aria-label="Monthly document creation counts"></div><p class="dash-footnote">{{d.year}} · Line: total documents created. Invalid/future dates excluded{% if d.invalid_dates %}: {{d.invalid_dates}}{% endif %}.</p></section>
+<section class="dash-panel recent-panel">{{heading('Recent Activity','document','audit','View All')}}<div class="dash-table-scroll"><table class="dash-table dash-recent"><thead><tr><th>Date &amp; Time</th><th>User</th><th>Module</th><th>Activity</th></tr></thead><tbody>{% for r in d.recent %}<tr><td>{{r.date}}</td><td>{{r.user or '—'}}</td><td><span class="dash-badge">{{r.module or '—'}}</span></td><td title="{{r.action or ''}}">{{r.action or '—'}}</td></tr>{% else %}<tr><td colspan="4" class="dash-empty">No activity with a valid timestamp.</td></tr>{% endfor %}</tbody></table></div></section>
+</div>
+</div>
+<script type="application/json" id="dashboard-data">{{d|tojson}}</script>
+{% endblock %}
+{% block scripts %}<script defer src="{{url_for('static',filename='js/dashboard.js')}}"></script>{% endblock %}

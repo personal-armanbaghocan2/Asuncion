@@ -1,0 +1,25 @@
+{% extends 'base.html' %}{% block content %}
+<div class="page-head"><div><h2>My Account</h2><p class="muted">Manage your profile and password. Role and permissions are controlled by User Management.</p></div></div>
+<div class="account-grid">
+  <section class="card account-card">
+    <h3>Profile</h3>
+    <form method="post" class="stack account-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Username<input value="{{account.username}}" disabled></label>
+      <label>Full name<input name="full_name" value="{{account.full_name or ''}}" maxlength="160"></label>
+      <label>Display name<input name="display_name" value="{{account.display_name or ''}}" maxlength="80"></label>
+      <div class="account-meta"><div><span>Role</span><strong>{{account.role}}</strong></div><div><span>Status</span><strong>{{account.status or 'Active'}}</strong></div><div><span>Created</span><strong>{{account.created_at or 'Not recorded'}}</strong></div><div><span>Last login</span><strong>{{account.last_login or 'Not recorded'}}</strong></div></div>
+      <div class="actions"><button class="btn primary" type="submit">Save profile</button></div>
+    </form>
+  </section>
+  <section class="card account-card" id="change-password">
+    <h3>Change Password</h3>
+    <p class="muted">Use at least 8 characters. Your current password is required.</p>
+    <form method="post" action="{{url_for('change_password')}}" class="stack account-form" autocomplete="off"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Current Password<input id="currentPassword" type="password" name="current_password" required autocomplete="current-password"><button type="button" class="password-inline" data-password="currentPassword">Show</button></label>
+      <label>New Password<input id="newPassword" type="password" name="new_password" minlength="8" required autocomplete="new-password"><button type="button" class="password-inline" data-password="newPassword">Show</button></label>
+      <label>Confirm New Password<input id="confirmPassword" type="password" name="confirm_password" minlength="8" required autocomplete="new-password"><button type="button" class="password-inline" data-password="confirmPassword">Show</button></label>
+      <div class="actions"><button class="btn primary" type="submit">Change Password</button></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

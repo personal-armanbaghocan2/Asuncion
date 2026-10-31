@@ -1,0 +1,15 @@
+.action-confirm-dialog{border:1px solid #d7e3dd;border-radius:18px;padding:28px;width:min(460px,calc(100vw - 32px));box-sizing:border-box;color:#183b2d;background:#fff;box-shadow:0 20px 65px #0a241d40}
+.action-confirm-dialog::backdrop{background:#0a241d80}
+.action-confirm-dialog h2{margin:0 0 14px;font-size:1.3rem}
+.action-confirm-dialog p{color:#52675c;line-height:1.6;margin:0 0 24px;white-space:pre-line}
+.action-confirm-dialog .actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.action-confirm-dialog[data-danger="true"] .primary{background:#ad302d;border-color:#ad302d;color:#fff}
+.action-confirm-dialog button:focus-visible{outline:3px solid #b28d38;outline-offset:3px}
+.action-confirm-dialog dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;margin:0 0 16px}
+.action-confirm-dialog dt{font-weight:600}.action-confirm-dialog dd{margin:0;overflow-wrap:break-word}
+.action-confirm-dialog .review-confirm-check{margin-bottom:16px}
+.action-feedback{position:fixed;bottom:24px;right:24px;z-index:10000;max-width:min(430px,calc(100vw - 48px));background:#fff7df;color:#624817;border:1px solid #ddc57f;border-radius:12px;box-shadow:0 8px 30px #173c2925;padding:14px 18px}
+.notice[data-category="error"]{background:#fff0ee;color:#852c25;border-color:#d89b93}
+.notice[data-category="warning"]{background:#fff8df;color:#665018;border-color:#dbc574}
+.notice[data-category="success"]{background:#eff8f0;color:#1c5838;border-color:#a2cbb0}
+@media(max-width:480px){.action-confirm-dialog{padding:22px}.action-confirm-dialog .actions .btn{flex:1}}

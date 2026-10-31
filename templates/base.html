@@ -1,0 +1,67 @@
+{% from 'ui.html' import icon %}
+<!doctype html><html lang="en"><head><meta name="csrf-token" content="{{ csrf_token() }}"><script defer src="{{url_for('static',filename='js/csrf.js')}}"></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ title or 'Supply and Property Management' }} · Asuncion</title>
+<link rel="icon" href="{{url_for('static',filename='images/asuncion-seal.png')}}">
+<link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}">
+<link rel="stylesheet" href="{{url_for('static',filename='css/reference-layout.css')}}">
+<link rel="stylesheet" href="{{url_for('static',filename='css/ocr-table.css')}}">
+<link rel="stylesheet" href="{{url_for('static',filename='css/confirmation-dialog.css')}}">
+<script defer src="{{url_for('static',filename='js/confirm-actions.js')}}"></script>
+<script defer src="{{url_for('static',filename='js/ui.js')}}"></script>
+<script defer src="{{url_for('static',filename='js/source-preview.js')}}"></script>
+<script defer src="{{url_for('static',filename='js/record-selectors.js')}}"></script>
+{% block head_extra %}{% endblock %}
+</head><body class="reference-shell{% if active=='dashboard' %} approved-dashboard{% endif %}{% if active in ['ppmp','app','pr','aoq','po','nlp'] %} procurement-page{% endif %}">
+<a class="skip-link" href="#mainContent">Skip to content</a>
+<div class="nav-scrim" id="navScrim" hidden></div>
+<aside class="sidebar" id="sideNav" aria-label="Main navigation">
+  <div class="brand"><img class="seal" src="{{url_for('static',filename='images/asuncion-seal.png')}}" alt="Municipality of Asuncion official seal"><div><strong>Municipality of<br>Asuncion</strong><small>Supply &amp; Property<br>Management</small></div></div>
+  <button class="nav-close icon-button" id="navClose" aria-label="Close navigation">{{icon('close')}}</button>
+  <nav class="nav">
+    <a class="{{'active' if active=='dashboard'}}" href="{{url_for('dashboard')}}" {% if active=='dashboard' %}aria-current="page"{% endif %}>{{icon('dashboard')}}Dashboard{% if active=='dashboard' %}<span class="active-dot"></span>{% endif %}</a>
+    <div class="nav-title">Procurement planning</div>
+    <button class="nav-parent {{'active-parent' if active=='ppmp'}}" id="ppmpToggle" aria-expanded="{{ 'true' if active=='ppmp' else 'false' }}" aria-controls="ppmpSub">{{icon('document')}}<span>PPMP</span>{{icon('chevron')}}</button>
+    <div class="sub" id="ppmpSub" {% if active!='ppmp' %}hidden{% endif %}>
+      <a href="{{url_for('ppmp_home')}}">PPMP Overview</a>
+      <a href="{{url_for('ppmp_home')}}#created-ppmp-records">Created PPMP Records</a>
+      {% for category in ['DBM','NON-DBM','LIB'] %}<a class="{{'active' if request.path==url_for('ppmp_type',ptype=category)}}" href="{{url_for('ppmp_type',ptype=category)}}">{{category}}</a>{% endfor %}
+      <a class="{{'active' if request.endpoint=='ppmp_dataset'}}" href="{{url_for('ppmp_dataset')}}">Inventory Item Source</a>
+    </div>
+    {% for key,label,endpoint,glyph in [('app','APP','app_plan','document'),('pr','Purchase Request','pr','edit'),('aoq','AOQ / Bidding Result','aoq','document'),('po','Purchase Order','po','cart'),('nlp','NLP Verification','nlp','check')] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{label}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endfor %}
+    <div class="nav-title">Receiving &amp; property</div>
+    {% for key,label,endpoint,glyph in [('iar','IAR / AIR','iar','check'),('inventory','Inventory','inventory','box'),('ris','RIS / ICS','ris_ics','document')] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{label}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endfor %}
+    <div class="nav-title">System</div>
+    <a class="{{'active' if active=='reports'}}" href="{{url_for('reports')}}">{{icon('report')}}Reports{% if active=='reports' %}<span class="active-dot"></span>{% endif %}</a>
+    <a class="{{'active' if active=='audit'}}" href="{{url_for('audit')}}">{{icon('history')}}Audit Trail{% if active=='audit' %}<span class="active-dot"></span>{% endif %}</a>
+    {% if session.get('role')=='Admin' %}<a class="{{'active' if active=='users'}}" href="{{url_for('users')}}">{{icon('users')}}User Management{% if active=='users' %}<span class="active-dot"></span>{% endif %}</a>{% endif %}
+  </nav>
+</aside>
+<div class="app"><main class="main">
+<header class="topbar">
+  <div class="top-left"><button class="icon-button mobile-nav-toggle" id="navToggle" aria-label="Open navigation" aria-controls="sideNav" aria-expanded="false">{{icon('menu')}}</button><strong class="page-context">{{ title or 'Supply & Property Management' }}</strong></div>
+  <div class="top-meta">
+    <span class="header-date" id="header-date">{{header_date}}</span>
+    <span class="clock-pill" id="header-time" aria-live="off">--:--:-- --</span>
+    {% set acct = current_account or {} %}
+    {% set acct_name = acct.get('display_name') or acct.get('username') or session.get('username','') %}
+    <div class="account-menu-wrap">
+      <button type="button" class="account-trigger" id="accountMenuButton" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false" aria-controls="accountMenu">
+        {% if active=='dashboard' %}<span class="avatar dashboard-person"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3Z"/></svg></span>{% else %}<span class="avatar">{{(acct_name[:1] or 'A')|upper}}</span>{% endif %}
+        <span class="user-copy"><b>{{acct_name}}</b><small>{{acct.get('role') or session.get('role','Staff')}}</small></span>
+        <span class="account-chevron" aria-hidden="true">▾</span>
+      </button>
+      <div class="account-dropdown" id="accountMenu" role="menu" hidden>
+        <div class="account-dropdown-head"><span class="avatar small-avatar">{{(acct_name[:1] or 'A')|upper}}</span><span><b>{{acct_name}}</b><small>{{acct.get('role') or session.get('role','Staff')}}</small></span></div>
+        <div class="account-dropdown-links">
+          <a role="menuitem" href="{{url_for('account')}}">My Account</a>
+          <a role="menuitem" href="{{url_for('account')}}#change-password">Change Password</a>
+          <form method="post" action="{{url_for('logout')}}" data-confirm-category="logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" role="menuitem" class="danger-link">Sign Out</button></form>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+<section class="content" id="mainContent" tabindex="-1">{% with messages=get_flashed_messages(with_categories=true) %}{% for category,m in messages %}<div class="notice" data-category="{{category}}" role="{{'alert' if category=='error' else 'status'}}">{{m}}</div>{% endfor %}{% endwith %}{% block content %}{% endblock %}<footer class="page-footer">Municipality of Asuncion<span>Supply &amp; Property Management</span></footer></section></main></div>
+{% include 'confirmation_dialog.html' %}
+{% block scripts %}{% endblock %}</body></html>

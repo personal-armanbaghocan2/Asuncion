@@ -1,0 +1,7 @@
+{% extends 'base.html' %}{% block content %}
+<div class="toolbar page-head"><h2>Model Information</h2><a class="btn" href="/nlp">Back</a></div>
+<div class="grid grid-3 model-cards">{% for a in algorithms %}<div class="card"><div class="model-card-head">{{icon('check' if a.deployed else 'document')}}<h3>{{a.name}}</h3><span class="badge {{'ok' if a.deployed else 'neutral'}}">{{'Deployed' if a.deployed else 'Research comparison'}}</span></div><p class="muted">{{a.notes}}</p></div>{% endfor %}</div>
+<div class="section-gap"><table class="table"><thead><tr><th>Aspect</th>{% for a in algorithms %}<th>{{a.name}}</th>{% endfor %}</tr></thead><tbody>{% for label,key in [('Model type','type'),('Purpose','role'),('Status in app','status'),('Recorded metric','accuracy')] %}<tr><th>{{label}}</th>{% for a in algorithms %}<td>{{a[key]}}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+<div class="warning-box section-gap"><b>Evaluation limitation</b> · Generated and COA-derived examples are controlled training data. Results require review by authorized personnel and validation against real reviewed PR–PO outcomes.</div>
+<details class="card"><summary>How verification works</summary><p>FastText embeds the approved PR and PO, including descriptions, specifications, quantities, and units. Separate trained classifiers predict the status and primary issue. No runtime rule changes the predicted class; verification stops if the model cannot load.</p></details>
+{% endblock %}

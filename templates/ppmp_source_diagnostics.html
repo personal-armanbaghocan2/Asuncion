@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Private source diagnostics</h2>
+<p>Administrator troubleshooting for your own source. Native extraction and Tesseract evidence retain their original labels.</p>
+<p><a class="btn" href="{{url_for('ppmp_type',ptype=ptype)}}">Back to PPMP</a></p>
+<pre class="raw-ocr-pre">{{source.extraction|tojson(indent=2)}}</pre>
+{% endblock %}

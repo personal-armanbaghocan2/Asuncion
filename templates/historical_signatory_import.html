@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="toolbar"><h2>Historical signatory evidence</h2><a class="btn" href="{{ url_for('signatories.index') }}">Authorized Signatories</a></div>
+<div class="card"><p>Use only an original PDF whose authenticity, document number and signatory fields you have independently verified against authorized archival records. Native text and exact quotes are checked; software cannot establish the authenticity of an uploaded archive.</p>
+<p>Scans, unavailable originals and unverified identities remain unresolved. This action records a labelled reconstruction and retains the original PDF. It does not recreate an original signed form, approval timestamp or legal signature, and cannot replace an existing snapshot.</p>
+<form method="post" enctype="multipart/form-data" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Document type<select name="document_kind" required>{% for kind in ['ppmp','app','pr','po','iar','ris','ics'] %}<option value="{{kind}}">{{kind|upper}}</option>{% endfor %}</select></label>
+<label>Existing record ID<input name="document_id" type="number" min="1" required></label>
+<label>Exact document number<input name="document_no" maxlength="160" required></label>
+<label>Original verified PDF (8 MiB, 30 pages maximum)<input name="archive" type="file" accept=".pdf" required></label>
+<label class="full">Verification method and archival custody reference<textarea name="verification_note" maxlength="1000" required></textarea></label>
+<label class="full">Source-backed identity entries<textarea name="identities_json" rows="8" required placeholder='[{"slot":"ppmp_prepared","name":"Name from the archive","position":"Designation from the archive, or empty if unknown","quote":"Exact archival text containing that name and designation"}]'></textarea></label>
+<details class="full"><summary>Existing signing fields</summary><ul>{% for key,label in slots.items() %}<li>{{key}} — {{label[1]}}</li>{% endfor %}</ul></details>
+<label class="full"><input type="checkbox" name="verify_archive" value="yes" required> I independently verified this original archive and the quoted historical identities through authorized archival evidence.</label>
+<label class="full"><input type="checkbox" name="confirm_reconstruction" value="yes" required> I understand this is a reconstruction with no recreated approval time, signature image or new procurement approval.</label>
+<button type="submit" class="btn primary">Retain archive and record verified identity evidence</button>
+</form></div>
+{% endblock %}

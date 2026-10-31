@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% macro guard(person=None) -%}
+<input type="hidden" name="config_revision" value="{{ config_revision }}">
+{% if person %}<input type="hidden" name="person_revision" value="{{ person.revision }}">{% endif %}
+{%- endmacro %}
+{% block content %}
+<div class="toolbar"><div><h2>Authorized Signatories</h2><p class="muted">Active Administrator accounts only</p></div><div class="actions"><a class="btn" href="{{ url_for('users') }}">User Management</a><a class="btn" href="{{ url_for('signatories.history') }}">Configuration history</a></div></div>
+<div class="card"><p><strong>Configuration does not approve or sign a document.</strong> Images are stored privately for Admin preview. No uploaded image is automatically placed on procurement documents. Approved documents retain their own identity snapshots.</p><a class="btn" href="{{ url_for('historical_evidence') }}">Historical archive evidence</a></div>
+<div class="card"><h3>Add an authorized signatory</h3>
+<form method="post" action="{{ url_for('signatories.add') }}" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{{ guard() }}
+<div class="form-field"><label>Full name</label><input name="full_name" maxlength="160" required autocomplete="off"></div>
+<div class="form-field"><label>Position / designation</label><input name="position" maxlength="160" required></div>
+<div class="form-field"><label>Office / department (information only)</label><input name="office" maxlength="120"></div>
+<div class="form-field"><label>Effective from</label><input type="date" name="effective_from" value="{{ today }}" required></div>
+<div class="form-field"><label>Effective until (optional)</label><input type="date" name="effective_to"></div>
+<div class="form-actions full"><button class="btn primary" type="submit">Add signatory</button></div></form></div>
+
+<div class="card"><h3>Document signing fields</h3><p class="muted">These are existing print fields. Assignments do not grant user permissions or procurement approval authority.</p>
+<table class="table"><thead><tr><th>Field</th><th>Current signatory</th></tr></thead><tbody>{% for key, label in slots.items() %}{% set assigned = assignments|selectattr('slot', 'equalto', key)|first %}<tr><td>{{ label[1] }}</td><td>{% if assigned %}<strong>{{ assigned.full_name }}</strong><br>{{ assigned.position }}{% if not assigned.active %}<br><span class="muted">Inactive — unsigned for new actions</span>{% endif %}{% else %}<span class="muted">Not configured — unsigned</span>{% endif %}</td></tr>{% endfor %}</tbody></table>
+<form method="post" action="{{ url_for('signatories.assign') }}" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{{ guard() }}
+<div class="form-field"><label>Existing document field</label><select name="slot" required>{% for key, label in slots.items() %}<option value="{{ key }}">{{ label[1] }}</option>{% endfor %}</select></div>
+<div class="form-field"><label>Active signatory on this page</label><select name="person_id"><option value="">Clear assignment</option>{% for p in people if p.active %}<option value="{{ p.id }}">{{ p.full_name }} — {{ p.position }}</option>{% endfor %}</select></div>
+<label class="full"><input type="checkbox" name="confirm_reassign" value="yes"> I confirm replacement or removal if this field already has a signatory.</label>
+<div class="form-actions full"><button class="btn primary" type="submit">Save assignment</button></div></form></div>
+
+<h3>Configured signatories</h3>
+{% for p in people %}
+<details class="card"><summary><strong>{{ p.full_name }}</strong> — {{ p.position }} · {{ 'Active' if p.active else 'Inactive' }}</summary>
+<form method="post" action="{{ url_for('signatories.edit', person_id=p.id) }}" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{{ guard(p) }}
+<div class="form-field"><label>Full name</label><input name="full_name" maxlength="160" value="{{ p.full_name }}" required autocomplete="off"></div>
+<div class="form-field"><label>Position / designation</label><input name="position" maxlength="160" value="{{ p.position }}" required></div>
+<div class="form-field"><label>Office / department</label><input name="office" maxlength="120" value="{{ p.office }}"></div>
+<div class="form-field"><label>Effective from</label><input type="date" name="effective_from" value="{{ p.effective_from }}" required></div>
+<div class="form-field"><label>Effective until</label><input type="date" name="effective_to" value="{{ p.effective_to or '' }}"></div>
+<div class="form-actions full"><button class="btn primary" type="submit">Save details</button></div></form>
+<form method="post" action="{{ url_for('signatories.status', person_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{{ guard(p) }}<input type="hidden" name="active" value="{{ 'false' if p.active else 'true' }}"><button class="btn" type="submit">{{ 'Deactivate' if p.active else 'Activate' }}</button></form>
+<h4>Private signature image</h4><p>PNG or JPEG, at most 512 KiB and 1600 × 600 pixels; single frame only. Uploading is storage authorization only.</p>
+{% if p.current_signature %}<p><a class="btn" target="_blank" rel="noopener" href="{{ url_for('signatories.preview', person_id=p.id, version_id=p.current_signature) }}">Private Admin preview</a></p>{% endif %}
+<form method="post" enctype="multipart/form-data" action="{{ url_for('signatories.upload_signature', person_id=p.id) }}" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{{ guard(p) }}
+<div class="form-field full"><label>Authorized image</label><input type="file" name="signature" accept=".png,.jpg,.jpeg" required></div>
+<label class="full"><input type="checkbox" name="confirm_storage" value="yes" required> I confirm permission to store this image for private Admin preview. This does not sign or approve a document.</label>
+<div class="form-actions full"><button class="btn primary" type="submit">Upload / replace image</button></div></form>
+{% if p.current_signature %}<form method="post" action="{{ url_for('signatories.remove_signature', person_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{{ guard(p) }}<button class="btn" type="submit">Remove current image</button><span class="muted"> Prior immutable versions remain private for history; no document image is changed.</span></form>{% endif %}
+</details>
+{% else %}<p>No signatories on this page. Missing fields remain explicitly unsigned.</p>{% endfor %}
+<div class="actions">{% if page > 1 %}<a class="btn" href="{{ url_for('signatories.index', page=page-1) }}">Previous page</a>{% endif %}{% if people|length == 50 %}<a class="btn" href="{{ url_for('signatories.index', page=page+1) }}">Next page</a>{% endif %}</div>
+{% endblock %}

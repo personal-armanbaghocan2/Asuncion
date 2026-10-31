@@ -1,0 +1,42 @@
+{% extends 'base.html' %}{% block content %}
+<div class="toolbar page-head">
+    <h2>Annual Procurement Plan</h2>
+</div>
+<form method="post" class="source-bar app-source-bar" data-confirm="Generate an APP from the selected PPMP?"><input
+        type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Approved Source PPMP<select name="ppmp_id" required data-record-selector="approved PPMP"
+            data-source-preview="appSource" data-source-endpoint="/api/ppmp/{id}/source">
+            <option value="">Select PPMP</option>{% for p in ppmps %}<option value="{{p.id}}"
+                data-search="{{p.search_terms}} {{p.office}}">{{p.no}} · {{(p.item_preview or '')|truncate(55)}} ·
+                {{(p.office or '')|truncate(30)}} · {{p.total|money}}</option>{% endfor %}
+        </select></label>
+    <div class="source-preview source-preview-detailed" id="appSource" aria-live="polite">Select a PPMP to view the
+        exact saved source data.</div><button class="btn primary" type="submit">Generate APP</button>
+</form>
+{% if not ppmps %}<p class="muted">No approved PPMP is available for APP generation. Review and approve a PPMP first.
+</p>{% endif %}
+<table class="table">
+    <thead>
+        <tr>
+            <th>APP No.</th>
+            <th>Source PPMP</th>
+            <th>Office</th>
+            <th>Total Amount (₱)</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>{% for r in plans %}<tr>
+            <td class="document-ref">{{r.no}}</td>
+            <td class="document-ref">{{r.ppmp_no or '—'}}</td>
+            <td>{{r.office}}</td>
+            <td class="numeric">{{r.total|money}}</td>
+            <td><span class="badge {{'ok' if r.status=='Approved' else 'warn'}}">{{r.status}}</span></td>
+            <td class="actions"><a class="btn small blue" href="/app/{{r.id}}/view"
+                    aria-label="Review {{r.no}}">Review</a><a class="btn small blue" href="/app/{{r.id}}/print"
+                    aria-label="Print {{r.no}}">Print</a></td>
+        </tr>{% else %}<tr>
+            <td colspan="6" class="empty-state">No APP records yet.</td>
+        </tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

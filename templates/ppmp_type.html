@@ -1,0 +1,78 @@
+{% extends 'base.html' %}{% block content %}
+<div class="breadcrumb"><a href="/">Home</a><span>›</span><a href="/ppmp">PPMP</a><span>›</span>{{ptype}}</div>
+<div class="toolbar page-head"><div><h2>PPMP - {{ptype}}</h2><p class="muted">{{'Department of Budget and Management (DBM)' if ptype=='DBM' else ptype}} category</p></div><div class="actions"><a class="btn small" href="/ppmp">Back to PPMP</a><button class="btn primary" form="ppmpSourceForm" name="action" value="create_ppmp" data-confirm="Create official PPMP records from the selected eligible source items and reviewed drafts?">{{icon()}}Create Official PPMP</button></div></div>
+<form method="post" enctype="multipart/form-data" id="ppmpSourceForm"><input type="hidden" name="creation_token" value="{{creation_token}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" id="ocrReprocessConfirmed" name="reprocess_confirmed" value="">
+<div class="upload-panel"><div><h3>Upload OCR File</h3><div class="upload-drop">{{icon()}}<label for="ocrFile">Choose a document to extract procurement data</label><input id="ocrFile" type="file" name="ocr_file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt"><button id="ocrUploadButton" class="btn small" type="submit" formaction="{{url_for('ppmp_ocr_upload',ptype=ptype)}}" name="action" value="ocr" aria-describedby="ocrUploadStatus">Upload &amp; extract</button><div class="ocr-upload-status" id="ocrUploadStatus" role="status" aria-live="polite" data-check-url="{{url_for('ppmp_ocr_duplicate_check',ptype=ptype)}}"><span id="ocrUploadMessage"></span> <a id="ocrExistingUpload" hidden>View existing extraction</a> <button id="ocrRetryCheck" class="btn small" type="button" hidden>Check again</button></div></div></div><div class="file-requirements"><b>File Requirements</b><ul><li>PDF, PNG/JPG, TIFF/BMP, DOCX, XLSX/XLSM, CSV, TXT</li><li>For scans, use a clear image at 300 DPI when possible</li><li>Extracted records remain temporary until reviewed and verified</li></ul></div></div>
+{% if ocr_state %}
+<div class="ocr-result-banner"><div><strong>{{ocr_state.get('item_count', (ocr_state.get('structured', {}).get('rows', [])|length))}} items extracted from latest upload · {{ocr_rows|length}} active drafts on this page</strong><span>{{ocr_state.filename or 'Uploaded document'}} · {{ocr_state.method or 'local extraction'}}</span></div><div class="actions"><button class="btn small" name="action" value="clear_ocr" type="submit" formnovalidate>Clear extraction</button></div></div>
+
+{% set structure=ocr_state.get('structured', {}) %}
+{% if structure.get('review_candidates') %}<details class="ocr-review"><summary>Uncertain Source Regions ({{structure.review_candidates|length}}) — no item drafts created</summary><p class="muted">Compare these regions with the source. Insufficient row evidence prevents automatic item creation.</p>{% for candidate in structure.review_candidates %}<pre class="raw-ocr-pre">{{candidate.evidence.text}}</pre>{% endfor %}</details>{% endif %}
+{% endif %}
+<label class="full"><input type="checkbox" name="confirm_reviewed" value="yes"> I confirm the selected saved values for official PPMP creation. Procurement approval remains separate.</label>
+<div class="filters"><input aria-label="Search PPMP items" placeholder="Search item, description, or code…" oninput="filterRows(this.value)"><button class="btn" type="button" onclick="filterRows(this.previousElementSibling.value)">Search</button><button class="btn small blue" type="button" id="edit_selected_btn">Review selected source items</button><button class="btn small blue" type="button" id="reviewSelectedOCR" disabled>Review Selected OCR</button><button class="btn small" type="submit" name="action" value="refresh" formnovalidate>Refresh</button></div>
+<p class="muted">Showing {{ 'all active uploads' if request.args.get('ocr_source')=='all' else 'one source upload' }}. <a href="{{url_for('ppmp_type',ptype=ptype,ocr_source='latest')}}">Latest upload</a> · <a href="{{url_for('ppmp_type',ptype=ptype,ocr_source='all')}}">All active drafts</a></p>
+<p id="ocrSelectionCount" class="selection-summary" aria-live="polite">OCR selection applies to this page, including selected rows hidden by search. Changing pages clears selection.</p>
+<div class="table-scroll ppmp-table-wrap"><table class="table ppmp-list" id="ppmpTable"><thead><tr><th>Select</th><th>Item Code</th><th>Item Number</th><th>Description</th><th>Quantity</th><th>Unit</th><th>Estimated Unit Cost</th><th>Estimated Budget (₱)</th><th>Status / Remarks</th><th>Action</th></tr></thead><tbody>
+{% for r in ocr_rows %}
+{% set f=r.fields %}
+<tr class="ocr-temp-row" id="ocr-{{r.temp_id}}">
+  <td><input type="checkbox" name="ocr_rows" value="{{r.temp_id}}" aria-label="Select {{r.temp_id}}"><input type="hidden" name="ocr_revision_{{r.temp_id}}" value="{{r.revision}}"></td>
+  <td><strong>{{r.temp_id}}</strong><span class="badge info ocr-source-badge">OCR Extracted</span></td>
+  <td>{{r.field_confidence.get('_source_evidence', {}).get('item_number') or 'Not captured'}}</td>
+  <td data-ocr-column="description">{{f.get('General Description and Objective of the Project to be Procured','') or f.get('Item Name') or 'Unresolved'}}</td>
+  <td data-ocr-column="quantity" class="numeric">{{f.get('Quantity')|quantity if f.get('Quantity') is not none and f.get('Quantity') != '' else 'Unresolved'}}</td>
+  <td data-ocr-column="unit">{{f.get('Unit') or 'Unresolved'}}</td>
+  <td data-ocr-column="unit-cost" class="numeric">{{f.get('Estimated Unit Cost')|money if f.get('Estimated Unit Cost') else 'Unresolved'}}</td>
+  <td data-ocr-column="budget" class="numeric">{{f.get('Estimated Budget Allocation (Php)')|money if f.get('Estimated Budget Allocation (Php)') else 'Unresolved'}}</td>
+  <td><span class="badge {{'ok' if r.status in ['High Confidence','Reviewed'] else 'warn'}}">{{r.status}}</span>{% if r.human_reviewed %}<small class="verified-note">Human verified · Ready for PPMP</small>{% endif %}</td>
+  <td><button type="button" class="btn small blue" data-ocr-review="{{r.temp_id}}">Review</button></td>
+</tr>
+{% endfor %}
+{% for x in data %}<tr><td><input type="checkbox" name="rows" value="{{x._row}}"><input type="hidden" name="source_signature_{{x._row}}" value="{{x.get('_creation_signature','')}}"><input type="hidden" disabled name="general_{{x._row}}" value="{{x.get('General Description and Objective of the Project to be Procured','')}}"><input type="hidden" disabled name="type_{{x._row}}" value="{{x.get('Type of the Project to be Procured','')}}"><input type="hidden" disabled name="quantity_{{x._row}}" value="{{x.get('Quantity and Size of the Project to be Procured','')}}"><input type="hidden" disabled name="mode_{{x._row}}" value="{{x.get('Recommended Mode of Procurement','')}}"><input type="hidden" disabled name="preproc_{{x._row}}" value="{{x.get('Pre-Procurement Conference Applicable (Yes/No)','')}}"><input type="hidden" disabled name="start_{{x._row}}" value="{{x.get('Start of Procurement Activity','')}}"><input type="hidden" disabled name="end_{{x._row}}" value="{{x.get('End of Procurement Activity','')}}"><input type="hidden" disabled name="delivery_{{x._row}}" value="{{x.get('Expected Delivery/Implementation Period','')}}"><input type="hidden" disabled name="source_{{x._row}}" value="{{x.get('Source of Funds','')}}"><input type="hidden" disabled name="budget_{{x._row}}" value="{{x.get('Estimated Budget Allocation (Php)','')}}"><input type="hidden" disabled name="docs_{{x._row}}" value="{{x.get('Attached Supporting Documents','')}}"><input type="hidden" disabled name="remarks_{{x._row}}" value="{{x.get('Remarks','')}}"></td>
+<td>{{x.get('_Source Item ID') or (ptype ~ '-' ~ x._row)}}</td><td>{{x.get('Item Number') or x.get('Item No') or ''}}</td>
+<td>{{x.get('General Description and Objective of the Project to be Procured','')}}</td><td class="numeric">{{x.get('Quantity','')}}</td><td>{{x.get('Unit','')}}</td><td class="numeric">{{x.get('Estimated Unit Cost','')}}</td>
+<td class="numeric">{{x.get('Estimated Budget Allocation (Php)',0)|money}}</td><td>{{x.get('Remarks','')}}</td><td><button type="button" class="btn small blue" data-review-row="{{x._row}}">Review</button></td></tr>{% else %}{% if not ocr_rows %}<tr><td colspan="10" class="empty-state">No available items.</td></tr>{% endif %}{% endfor %}
+</tbody></table></div></form>
+
+{% if ocr_rows %}
+<dialog id="ocrReviewDialog" class="ppmp-editor-modal ocr-review-modal" data-category="{{ptype}}" aria-labelledby="ocrReviewTitle">
+  <div class="modal-head"><div class="modal-icon">{{icon('edit')}}</div><div><h3 id="ocrReviewTitle">Review OCR item</h3><p class="muted">Verify every field before creating an official PPMP record.</p></div><button type="button" class="modal-x" data-ocr-close aria-label="Close review">×</button></div>
+  <form method="post" id="ocrReviewForm"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="update_ocr_rows"><input type="hidden" name="ocr_temp_id" id="ocrTempId"><input type="hidden" name="ocr_revision" id="ocrRevision">
+    <div class="editor-scroll"><div id="ocrItemTabs" class="ocr-item-tabs" role="tablist" aria-label="Selected OCR items"></div><div id="ocrReviewPanel" role="tabpanel" tabindex="0"><div class="ocr-review-status" id="ocrReviewStatus"></div><p id="ocrReviewMessage" role="status" aria-live="polite"></p><ul id="ocrItemErrors" class="warning-box" hidden></ul><div class="ocr-field-grid">
+      {% for label in ocr_field_labels %}
+      <label><span>{{'Size / Technical Specifications' if label=='Quantity and Size of the Project to be Procured' else label}}</span><span class="field-confidence" id="ocrConfidence{{loop.index0}}"></span>{% if label=='Quantity' %}<input type="number" min="0" step="any" name="ocr_field_{{loop.index0}}" id="ocrField{{loop.index0}}" data-field-label="{{label}}" maxlength="5000">{% else %}<textarea name="ocr_field_{{loop.index0}}" id="ocrField{{loop.index0}}" data-field-label="{{label}}" maxlength="5000" rows="2" data-grow></textarea>{% endif %}</label>
+      {% endfor %}
+    </div>
+    <p id="ocrConsistencyWarning" class="warning-box" role="status"></p>
+    <label id="ocrSourceDifference" class="warning-box" hidden><input type="checkbox" id="ocrSourceDifferenceConfirm"> Quantity differs from the extracted source. I checked the original and confirm this intentional correction.</label>
+    <details id="ocrSourceComparison" class="ocr-source-comparison"><summary>Compare Extracted Data with Original Document</summary>
+      <p id="ocrDocumentMetadata" class="muted"></p><p id="ocrSourceKind"></p>
+      <div class="ocr-comparison-grid"><section><h4>Current item fields</h4><pre class="raw-ocr-pre" id="ocrStructuredData"></pre></section>
+      <section><h4>Original source</h4><a id="ocrOriginalSource" class="btn small" target="_blank" rel="noopener">Open original document</a>
+      <iframe id="ocrSourcePreview" title="Original authorized source document" loading="lazy" hidden></iframe>
+      <p id="ocrPreviewUnavailable">Visual preview is unavailable for this format. Open the original document and compare the captured excerpt below.</p>
+      <p class="muted">Captured extraction excerpt; verify recognition against the original document.</p><pre class="raw-ocr-pre" id="ocrItemEvidence"></pre></section></div>
+      <a id="ocrDiagnostics" target="_blank" rel="noopener" hidden>Administrator source diagnostics</a>
+    </details>
+    </div></div>
+    <div class="modal-footer"><span class="muted">Review saves drafts only. Official creation and approval remain separate.</span><div class="actions"><button type="button" class="btn" data-ocr-close>Cancel</button><button class="btn primary" type="submit" id="ocrSaveReview">Confirm Review</button></div></div>
+  </form>
+</dialog>
+<div class="actions">{% if request.args.get("ocr_page", "1")|int > 1 %}<a class="btn" href="{{ url_for('ppmp_type', ptype=ptype, ocr_page=(request.args.get('ocr_page','1')|int)-1, ocr_source=request.args.get('ocr_source','latest')) }}">Previous draft page</a>{% endif %}{% if ocr_rows|length == 200 %}<a class="btn" href="{{ url_for('ppmp_type', ptype=ptype, ocr_page=(request.args.get('ocr_page','1')|int)+1, ocr_source=request.args.get('ocr_source','latest')) }}">Next draft page</a>{% endif %}</div>
+<script id="ocrRowsData" type="application/json">{{ocr_rows|tojson}}</script>
+
+{% endif %}
+
+{% from 'ui.html' import editor_fields %}
+<dialog id="ppmpEditor" class="ppmp-editor-modal" data-mode="selected" aria-labelledby="editorTitle">
+  <div class="modal-head"><div class="modal-icon">{{icon('edit')}}</div><div><h3 id="editorTitle">Edit PPMP item</h3><p class="muted">Update details for the selected item.</p></div><button type="button" class="modal-x" data-editor-close aria-label="Close editor">×</button></div>
+  <form id="modalEditForm" method="post" action="{{ url_for('ppmp_edit_table', ptype=ptype) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div id="hiddenEditFields"></div>
+    <div class="editor-scroll"><div class="selected-strip"><label for="editorItemSelect">Selected item</label><div class="selected-nav"><select id="editorItemSelect"></select><span class="position" id="editorPosition">1 of 1</span><button type="button" class="btn small" id="editorPrev" aria-label="Previous item">‹</button><button type="button" class="btn small" id="editorNext" aria-label="Next item">›</button></div></div>
+    {{editor_fields('f_')}}</div>
+    <div class="modal-footer"><span class="muted" id="editorCount"></span><div class="actions"><button type="button" class="btn" data-editor-close>Cancel</button><button type="submit" class="btn primary">Save changes</button></div></div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}<script defer src="{{url_for('static',filename='js/ppmp-ocr-upload.js')}}"></script><script defer src="{{url_for('static',filename='js/ppmp-editor.js')}}"></script><script defer src="{{url_for('static',filename='js/ppmp-ocr-review.js')}}"></script>{% endblock %}

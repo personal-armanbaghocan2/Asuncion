@@ -1,0 +1,80 @@
+{% macro source_fields(source) %}
+<div class="stored-field-grid">
+  {% for key, value in source.items() %}
+  <div class="stored-field"><span>{{ key }}</span><b>{{ value if value is not none and value != '' else 'Not provided' }}</b></div>
+  {% endfor %}
+</div>
+{% endmacro %}
+{% macro evidence(values) %}
+  {% for value in values %}
+  <div><span class="id-chip mini secondary">{{ value.ref }}</span><br><q>{{ value.quote }}</q>{% if value.unit %} ({{ value.unit }}){% endif %}</div>
+  {% else %}<span class="muted">No explicit evidence available.</span>{% endfor %}
+{% endmacro %}
+{% macro finding_table(findings) %}
+<div class="review-table-wrap"><table class="table review-items-table">
+  <thead><tr><th>Source check</th><th>Requested evidence</th><th>Offered evidence</th><th>Technical finding</th></tr></thead>
+  <tbody>{% for check in findings %}
+    <tr><td><b>{{ check.attribute }}</b><br><span class="badge {{ 'info' if check.state == 'PASS' else 'warn' }}">{{ {'PASS': 'Source check satisfied', 'VIOLATED': 'Technical difference', 'WORDING_DIFFERENCE': 'Wording difference', 'UNKNOWN': 'Unsupported or uncertain'}.get(check.state, 'Unsupported or uncertain') }}</span></td>
+      <td>{{ evidence(check.requested_evidence) }}</td><td>{{ evidence(check.offered_evidence) }}</td>
+      <td>{{ check.explanation }}{% if check.question %}<p><b>Human review:</b> {{ check.question }}</p>{% endif %}
+      {% for value in check.unresolved_evidence or [] %}<p>{{ value.ref }}: <q>{{ value.quote }}</q></p>{% endfor %}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% endmacro %}
+<section class="card review-card" id="prPoItemComparison" aria-labelledby="itemComparisonHeading">
+  <h3 id="itemComparisonHeading">PR-PO Technical Item Comparison</h3>
+  <div class="review-mode-notice"><div>
+    <b>Advisory and read-only. Human review is required.</b>
+    <div>Source correspondence permits a technical comparison only. It does not prove product equivalence or procurement compliance. Findings do not change the FastText classification, confidence, official status, or approval decision.</div>
+  </div></div>
+  <div class="review-table-wrap"><table class="table comparison-summary"><thead><tr><th class="source-line">Source line</th><th>Requested / offered item and specifications</th><th>Quantity</th><th>Unit</th><th>Unit cost</th><th>Amount</th></tr></thead><tbody>
+    {% for schedule in item_comparison.sources %}{% for source in schedule['items'] %}
+    {% set name = source.get('item') or source.get('Item Name') or source.get('General Description and Objective of the Project to be Procured') or 'Identity not established' %}
+    {% set description = source.get('description') or source.get('Description / Specification') or source.get('Description') or '' %}
+    {% set cost = source.get('unit_cost',source.get('Estimated Unit Cost')) %}
+    {% set amount = source.get('amount',source.get('Estimated Budget Allocation (Php)')) %}
+    <tr><td class="source-line">{{schedule.side}} {{loop.index}}</td><td><b>{{name}}</b>{% if description and description != name %}<br>{{description}}{% endif %}</td><td class="quantity">{{source.get('qty',source.get('Quantity'))|quantity}}</td><td class="unit">{{source.get('unit') or source.get('Unit') or 'Not provided'}}</td><td class="numeric">{{cost|source_money}}</td><td class="numeric">{{amount|source_money}}</td></tr>
+    {% endfor %}{% endfor %}
+  </tbody></table></div>
+  <details class="advanced-box"><summary>Diagnostic evidence: original fields and source checks</summary>
+  {% for schedule in item_comparison.sources %}<h4>{{ 'Requested PR items' if schedule.side == 'PR' else 'Offered PO items' }} ({{schedule['items']|length}})</h4>
+    {% for source in schedule['items'] %}{{source_fields(source)}}{% endfor %}
+  {% endfor %}
+  {% if item_comparison.result %}{% for row in item_comparison.result.rows %}<h4>PR item {{row.requested_position}}: source evidence</h4>{{finding_table(row.checks)}}{% endfor %}{% endif %}
+  </details>
+  {% if item_comparison.error %}<p class="warning-box" role="status">{{ item_comparison.error }}</p>{% endif %}
+  {% if item_comparison.result %}
+  {% set result = item_comparison.result %}
+  <p>{{ result.counts.bound }} source correspondence(s); {{ result.counts.unresolved_requested }} unresolved requested item(s); {{ result.counts.unallocated_offers }} unmatched offered item(s).</p>
+  {% if item_comparison.price_summary and item_comparison.price_summary.difference is not none %}
+  <p><b>Document totals:</b> PR {{item_comparison.price_summary.requested|money}} / PO {{item_comparison.price_summary.offered|money}}.
+    <b>PR minus PO:</b> {{item_comparison.price_summary.difference|money}}. This order-wide difference does not establish any item correspondence.</p>
+  {% else %}<p class="muted">Price difference is not established from the available source amounts.</p>{% endif %}
+  <p class="muted">Only supported explicit clauses are interpreted. Missing specifications, unsupported wording, and uncertain item relationships remain unresolved. Review all original fields above, including specifications that could not be parsed.</p>
+  {% for row in result.rows %}
+  <div class="item-review-section">
+    <h4>PR item {{ row.requested_position }}: {{ row.requested.item or row.requested.description or 'Identity not established' }}</h4>
+    {% if row.matching_state == 'BOUND' %}
+    <p><b>Source correspondence for comparison:</b> PO item {{ row.offered_position }}. {{ 'Unique exact source name and literal model reference.' if row.matching_reason == 'EXACT_NAME_AND_UNIQUE_MODEL_REFERENCE' else 'Unique reordered source words.' if row.matching_reason == 'UNIQUE_REORDERED_NAME' else 'Unique source attribute scope.' if row.matching_reason == 'UNIQUE_ATTRIBUTE_SCOPE' else 'Unique exact source name.' }}</p>
+    <p><b>Quantity:</b> PR {{ row.requested.quantity|quantity }} / PO {{ row.offered.quantity|quantity }}.
+      <b>Unit:</b> PR {{ row.requested.unit or 'Not provided' }} / PO {{ row.offered.unit or 'Not provided' }}.</p>
+    {% elif row.matching_state == 'CANDIDATE' %}
+    <p class="warning-box"><b>Candidate item relationship: manual confirmation required.</b> PO item {{ row.offered_position }}. {{ row.matching_reason }}</p>
+    <p>Arithmetic below is conditional on confirming that both descriptions refer to the requested item. It does not establish procurement compliance.</p>
+    {% else %}
+    <p class="warning-box"><b>{{ 'Ambiguous item relationship' if row.matching_state == 'AMBIGUOUS' else 'Requested item has no established offered match' }}.</b> {{ row.matching_reason }}
+      {% if 'Missing item' in row.issue_candidates %}<br>Potential missing requested item. Confirm omission against the complete source documents.{% endif %}</p>
+    {% if row.candidates %}<details><summary>Candidate names for human review (equivalence not established)</summary><ul>
+      {% for candidate in row.candidates %}<li>PO item {{ candidate.offered_position }}: {{ candidate.offered_name }}. {{ 'Exact name with unresolved allocation.' if candidate.evidence == 'EXACT_NAME_WITH_UNRESOLVED_ALLOCATION' else 'Shared words only.' }}{% if candidate.already_bound %} Already allocated to another PR item.{% endif %}</li>{% endfor %}
+    </ul></details>{% endif %}
+    {% endif %}
+    {% if row.checks %}<ul>{% for check in row.checks %}<li><b>{{check.attribute}}:</b> {{check.explanation}}{% if check.question %} {{check.question}}{% endif %}</li>{% endfor %}</ul>{% endif %}
+  </div>
+  {% endfor %}
+  {% if result.unallocated_offers %}
+  <h4>Unmatched offered items</h4>
+  {% for offer in result.unallocated_offers %}<p><b>PO item {{ offer.position }}: {{ offer.source.item or offer.source.description or 'Identity not established' }}</b> — {{ offer.explanation }}</p>{% endfor %}
+  {% endif %}
+  {% if result.document_checks %}<h4>Unsupported or uncertain document comparisons</h4>{{ finding_table(result.document_checks) }}{% endif %}
+  {% endif %}
+</section>

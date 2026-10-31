@@ -1,0 +1,5 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="toolbar"><div><h2>Signatory Configuration History</h2><p class="muted">Private Administrator view · latest 100 events</p></div><a class="btn" href="{{ url_for('signatories.index') }}">Authorized Signatories</a></div>
+{% for event in rows %}<div class="card"><h3>{{ event.action }}</h3><p>{{ event.created_at }} · Administrator account ID {{ event.actor_id }} · Reference {{ event.reference }}</p><pre>{{ event.detail }}</pre></div>{% else %}<p>No signatory configuration changes have been recorded.</p>{% endfor %}
+{% endblock %}

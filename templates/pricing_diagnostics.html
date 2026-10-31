@@ -1,0 +1,33 @@
+<section class="card review-card" aria-labelledby="pricing-diagnostics-title" id="pricing-diagnostics">
+  <h3 id="pricing-diagnostics-title">Pricing and Budget Diagnostics</h3>
+  <p><span class="badge info">Advisory only</span> These checks do not change the official NLP result, confidence, approval status or actions.</p>
+  <p class="muted">Current linked records are shown. Missing evidence does not mean compliant. This is not a historical snapshot of the NLP run.</p>
+  {% if pricing_diagnostics['values'] %}
+  <div class="linked-record-grid">
+    {% for field in pricing_diagnostics['values'] %}
+    <div class="linked-record"><span>{{ field.label }}</span><b>{{ field.value }}</b><small style="display:block;overflow-wrap:anywhere">{{ field.source }}</small></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if pricing_diagnostics['lines'] %}
+  <div class="review-table-wrap" style="overflow-x:auto">
+    <table class="table">
+      <caption>Stored pricing evidence and unrounded calculations</caption>
+      <thead><tr><th>Document / source row</th><th>Quantity</th><th>Unit</th><th>Stored unit price</th><th>Quantity × price (unrounded)</th><th>Stored amount</th></tr></thead>
+      <tbody>{% for line in pricing_diagnostics['lines'] %}
+        <tr><td>{{ line.side }} · {{ line.identity }}<br><small>{{ line.source }}</small></td><td>{{ line.quantity }}</td><td>{{ line.unit }}</td><td>{{ line.unit_price }}</td><td>{{ line.calculated }}</td><td>{{ line.amount }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="review-table-wrap" style="overflow-x:auto">
+    <table class="table">
+      <caption>Advisory findings</caption>
+      <thead><tr><th>Check</th><th>Diagnostic state</th><th>Finding and source references</th></tr></thead>
+      <tbody>{% for row in pricing_diagnostics['rows'] %}
+        <tr><td>{{ row.check }}</td><td><span class="badge {{ 'ok' if row.state == 'Check Passed' else ('bad' if row.state == 'Discrepancy Found' else ('info' if row.state == 'Check Not Applicable' else 'warn')) }}">{{ row.state }}</span></td>
+        <td>{{ row.message }}{% if row.sources %}<details><summary>Source references</summary><ul>{% for source in row.sources %}<li><code>{{ source }}</code></li>{% endfor %}</ul></details>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </div>
+</section>

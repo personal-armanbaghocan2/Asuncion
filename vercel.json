@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "python deploy/build_vercel_assets.py",
+  "env": {
+    "PSMS_ENV": "staging"
+  },
+  "functions": {
+    "app.py": {
+      "excludeFiles": "{public/**,tests/**,docs/**,data/**,uploads/**,temp/**,output/**,experiments/**,training/**,training_v2/**,training_data/**,legacy_training/**,sample_files/**,proposed_migrations/**,supabase/**,.env,.env.*,**/*.env,**/*.env.*,secrets/**,.secrets/**,.aws/**,**/*.pem,**/*.key,**/*.p12,**/*.pfx,**/*.dump,**/*.backup,**/*.bak,.venv/**,venv/**,node_modules/**}"
+    }
+  }
+}

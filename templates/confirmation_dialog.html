@@ -1,0 +1,13 @@
+<dialog id="actionConfirmDialog" class="action-confirm-dialog" aria-labelledby="actionConfirmTitle" aria-describedby="actionConfirmMessage">
+  <h2 id="actionConfirmTitle">Confirm Action</h2>
+  <p id="actionConfirmMessage"></p>
+  <div id="actionFinalApproval" hidden>
+    <dl id="actionApprovalDetails"></dl>
+    <label class="review-confirm-check"><input type="checkbox" id="actionFinalCheckbox"> I confirm final approval of this document and its displayed details.</label>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn" id="actionConfirmCancel" autofocus>Cancel</button>
+    <button type="button" class="btn primary" id="actionConfirmAccept">Confirm</button>
+  </div>
+</dialog>
+<div id="actionFeedback" class="action-feedback" role="status" aria-live="polite" hidden></div>

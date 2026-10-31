@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>APP Print</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    @media print{.no-print{display:none}.print-page{border:0;max-width:none}.content{padding:0}}
+    .print-page{max-width:1400px}
+    .print-table th,.print-table td{font-size:9px;padding:4px;text-align:center;vertical-align:middle}
+    .print-table td:nth-child(2),.print-table td:nth-child(13){text-align:left}
+    .app-title{text-align:center;letter-spacing:2px;margin:8px 0 18px}
+    .agency-line{margin:8px 0 18px;font-size:13px}
+  </style>
+<style>@page{size:A4 landscape;margin:10mm}.print-page{max-width:1400px}@media print{.print-page{max-width:none}}</style><link rel="stylesheet" href="{{url_for('static',filename='css/procurement-print.css')}}"></head>
+<body class="landscape-document"><div class="print-controls no-print"><a class="btn" href="/app">Back to records</a><div class="actions"><p>Print preview · A4 landscape</p><button class="btn blue" onclick="window.print()">Print document</button></div></div>
+<div class="content">
+  
+  <div class="print-page">{% with hide_signatory_timestamp=true %}{% include "signatory_notice.html" %}{% endwith %}
+    <img class="print-seal" src="{{url_for('static',filename='images/asuncion-seal.png')}}" alt="Municipality of Asuncion seal"><h1 class="app-title">ANNUAL PROCUREMENT PLAN (APP)</h1>
+    <p class="agency-line"><b>Name of Agency:</b> Not configured</p>
+    <p style="text-align:center"><b>Annual Procurement Plan for FY {{row.year}}</b></p>
+
+    <p class="print-status"><b>Document:</b> {{row.no}} · <b>Workflow status:</b> {{row.status}}</p>
+<table class="print-table"><colgroup><col style="width:5%"><col style="width:17%"><col style="width:9%"><col style="width:8%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:7%"><col style="width:8%"><col style="width:7%"><col style="width:7%"><col style="width:8%"></colgroup><thead>
+      <tr>
+        <th rowspan="2">Code<br>(PAP)</th>
+        <th rowspan="2">Procurement<br>Program/Project</th>
+        <th rowspan="2">PMO/<br>End-User</th>
+        <th rowspan="2">Mode of<br>Procurement</th>
+        <th colspan="4">Schedule for Each Procurement Activity</th>
+        <th rowspan="2">Source of<br>Funds</th>
+        <th colspan="3">Estimated Budget (Php)</th>
+        <th rowspan="2">Remarks<br>(Brief description of Program/Project)</th>
+      </tr>
+      <tr>
+        <th>Ads/Post of<br>IB/REI</th>
+        <th>Sub/Open<br>of Bids</th>
+        <th>Notice of<br>Award</th>
+        <th>Contract<br>Signing</th>
+        <th>Total</th>
+        <th>MOOE</th>
+        <th>CO</th>
+      </tr>
+      </thead><tbody>
+
+      {% for g in app_rows %}
+        {% for sched in g.schedules %}
+        <tr>
+          {% if loop.first %}
+          <td>{{g.code}}</td>
+          <td>{{g.program}}</td>
+          <td>{{g.office}}</td>
+          <td>{{g.mode}}</td>
+          {% else %}
+          <td></td><td></td><td></td><td></td>
+          {% endif %}
+          <td>{{sched[0]|document_date}}</td>
+          <td>{{sched[1]|document_date}}</td>
+          <td>{{sched[2]|document_date}}</td>
+          <td>{{sched[3]|document_date}}</td>
+          {% if loop.first %}
+          <td>{{g.funds}}</td>
+          <td class="numeric">{{g.total|money}}</td>
+          <td class="numeric">{{g.mooe|money if g.mooe is not none else '—'}}</td>
+          <td class="numeric">{{g.co|money if g.co is not none else '—'}}</td>
+          <td>{{g.remarks}}</td>
+          {% else %}
+          <td></td><td></td><td></td><td></td><td></td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      {% endfor %}
+      <tr>
+        <td colspan="9" style="text-align:right"><b>TOTAL</b></td>
+        <td class="numeric"><b>{{row.total|money}}</b></td>
+        <td colspan="3"></td>
+      </tr>
+    </tbody></table>
+
+    
+
+    <p class="app-budget-note">Unrecorded milestone dates are blank. “—” means MOOE/CO classification is not established; the total remains unchanged.</p>
+    <details class="no-print"><summary>Source PPMP timeline (not APP milestone dates)</summary>{% for item in items %}<p>Start: {{item.get('Start of Procurement Activity','')|month_year}} · End: {{item.get('End of Procurement Activity','')|month_year}} · Expected delivery: {{item.get('Expected Delivery/Implementation Period','')|month_year}}</p>{% endfor %}</details>
+    <div class="sign-grid">
+      <div class="sign"><p>Prepared by:</p><div class="signatory-name">{{sig.app_prepared[0]}}</div><b>{{sig.app_prepared[0]}}</b><br>{{sig.app_prepared[1]}}</div>
+      <div class="sign"><p>Approved:</p><div class="signatory-name">{{sig.app_approved[0]}}</div><b>{{sig.app_approved[0]}}</b><br>{{sig.app_approved[1]}}</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

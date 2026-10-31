@@ -1,0 +1,19 @@
+/* Only the PPMP, APP, PR and PO print templates load this stylesheet. */
+.print-page .print-table th,.print-page .print-table td{word-break:normal;overflow-wrap:break-word;line-height:1.35;font-size:11px}
+.print-page .print-table .numeric{white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
+.print-page .print-table .quantity,.print-page .print-table .unit{white-space:nowrap}
+.print-page .print-table .column-label{white-space:nowrap;font-size:9px}
+.print-page .print-table td.description{white-space:pre-wrap}
+.print-page .signatory-notice{font-size:11px;line-height:1.4}
+.print-page .print-status{font-size:12px;margin:8px 0}
+.print-page .print-table .source-reference{white-space:nowrap}
+body.landscape-document .print-page .print-table th{font-size:10px;padding:5px 4px;overflow-wrap:normal}
+body.landscape-document .print-page .print-table td{font-size:11px;padding:5px 4px}
+.app-budget-note{font-size:11px}
+@media print{
+  .print-page .print-table{table-layout:fixed}
+  .print-page .print-table thead{display:table-header-group}
+  .print-page .print-table tr{break-inside:avoid}
+  .print-page .sign-grid{break-inside:avoid}
+  body.landscape-document .print-page{width:100%;padding:0}
+}

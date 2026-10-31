@@ -1,0 +1,44 @@
+{% macro icon(name='document') -%}
+<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+{% if name == 'dashboard' %}<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+{% elif name == 'box' %}<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 5v9l9 5 9-5V8M12 13v9M7.5 5.5l9 5"/>
+{% elif name == 'check' %}<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/>
+{% elif name == 'users' %}<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M21 21v-3a6 6 0 0 0-3-5"/>
+{% elif name == 'report' %}<path d="M3 3v18h18M7 17v-5M12 17V7M17 17v-8"/>
+{% elif name == 'history' %}<path d="M3 11a9 9 0 1 1 2 7M3 4v7h7M12 7v5l3 2"/>
+{% elif name == 'menu' %}<path d="M4 6h16M4 12h16M4 18h16"/>
+{% elif name == 'chevron' %}<path d="m9 5 7 7-7 7"/>
+{% elif name == 'close' %}<path d="m6 6 12 12M18 6 6 18"/>
+{% elif name == 'edit' %}<path d="m15 4 5 5M3 21l5-1L21 7a2 2 0 0 0-5-5L3 16v5Z"/>
+{% elif name == 'cart' %}<path d="M2 3h3l3 13h11l3-9H6"/><circle cx="9" cy="21" r="1"/><circle cx="18" cy="21" r="1"/>
+{% else %}<path d="M14 2H5v20h14V7l-5-5ZM14 2v6h5M8 12h8M8 16h8"/>{% endif %}
+</svg>
+{%- endmacro %}
+{% macro editor_fields(prefix, saved=false) %}
+<fieldset class="editor-section"><legend>Project details</legend><div class="editor-grid">
+<label class="span-8">General Description and Objective<textarea rows="1" data-grow id="{{prefix}}general" {% if saved %}name="general"{% endif %}></textarea></label>
+<label class="span-4">Type of Project<input id="{{prefix}}type" {% if saved %}name="type"{% endif %}></label>
+<label class="span-7">Quantity and Size of Project<textarea rows="1" data-grow id="{{prefix}}quantity" {% if saved %}name="quantity"{% endif %}></textarea></label>
+<label class="span-5">Recommended Mode<textarea rows="1" data-grow id="{{prefix}}mode" {% if saved %}name="mode"{% endif %}></textarea></label>
+</div></fieldset>
+<fieldset class="editor-section"><legend>Schedule</legend><div class="editor-grid">
+<label class="span-2">Pre-Procurement<input id="{{prefix}}preproc" {% if saved %}name="preproc"{% endif %}></label>
+<label class="span-3">Start<input id="{{prefix}}start" {% if saved %}name="start"{% endif %}></label>
+<label class="span-3">End<input id="{{prefix}}end" {% if saved %}name="end"{% endif %}></label>
+<label class="span-4">Delivery / Implementation<textarea rows="1" data-grow id="{{prefix}}delivery" {% if saved %}name="delivery"{% endif %}></textarea></label>
+</div></fieldset>
+<fieldset class="editor-section"><legend>Funding &amp; notes</legend><div class="editor-grid">
+<label class="span-2">Source of Funds<input id="{{prefix}}source" {% if saved %}name="source"{% endif %}></label>
+<label class="span-4">Estimated Budget<span class="money-input"><span>PHP</span><input inputmode="decimal" id="{{prefix}}budget" {% if saved %}name="budget"{% endif %}></span></label>
+<label class="span-6">Documents<textarea rows="1" data-grow id="{{prefix}}docs" {% if saved %}name="docs"{% endif %} placeholder="Supporting document reference"></textarea></label>
+<label class="span-12">Remarks<textarea rows="2" data-grow id="{{prefix}}remarks" {% if saved %}name="remarks"{% endif %} placeholder="Add remarks, if needed"></textarea></label>
+</div></fieldset>
+{% if saved %}
+<fieldset class="editor-section"><legend>Structured item review</legend><p class="muted">Keep the full source description above. Confirm quantity and unit separately. Leave unit cost blank when the source does not provide it.</p><div class="editor-grid">
+<label class="span-6">Item Name<input id="{{prefix}}item_name" name="Item Name" required></label>
+<label class="span-2">Quantity<input id="{{prefix}}ordered_quantity" name="Quantity" inputmode="decimal" required></label>
+<label class="span-2">Unit<input id="{{prefix}}unit" name="Unit" required></label>
+<label class="span-2">Unit Cost<input id="{{prefix}}unit_cost" name="Estimated Unit Cost" inputmode="decimal"></label>
+</div></fieldset>
+{% endif %}
+{% endmacro %}
