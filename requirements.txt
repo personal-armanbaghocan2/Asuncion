@@ -15,5 +15,5 @@ scikit-learn>=1.6,<2
 joblib>=1.4,<2
 
 rapidfuzz>=3.9,<4
-sentence-transformers>=3.0,<6
+sentence-transformers>=3.0,<6; sys_platform == "win32"
 Flask-WTF==1.2.2
