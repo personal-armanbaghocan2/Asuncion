@@ -212,13 +212,37 @@ def _inventory(content):
     return records, sheets
 
 
-def refresh_inventory(api):
+def _inventory_reconciliation(con, source, records):
+    incoming={row['record_key'] for row in records}
+    previous=con.execute('select * from dataset_records').fetchall()
+    retired=[dict(row) for row in previous if row['active'] and row['record_key'] not in incoming]
+    fingerprint=hashlib.sha256(json.dumps([str(source['id']),sorted(incoming),
+        sorted(row['record_key'] for row in retired)],separators=(',',':')).encode()).hexdigest()
+    return dict(source_version=str(source['id']),fingerprint=fingerprint,
+        accepted_count=len(records),retired_count=len(retired),
+        accepted=records[:200],retired=retired[:200])
+
+
+def preview_inventory_refresh(api):
+    """Classify the retained source without changing records or immutable versions."""
+    with transaction(api) as (con, uid):
+        source=_version(con,_head(con,'inventory_source'))
+        if not source:abort(409,description='Upload an inventory workbook before reviewing a refresh.')
+        records,_=_inventory(source['content'])
+        return _inventory_reconciliation(con,source,records)
+
+
+def refresh_inventory(api, *, expected_version=None, expected_fingerprint=None):
     with transaction(api) as (con, uid):
         head = _head(con, 'inventory_source')
         source = _version(con, head)
         if not source:
             abort(409, description='Upload a validated inventory workbook before refreshing.')
         records, sheets = _inventory(source['content'])
+        if expected_version is not None:
+            preview=_inventory_reconciliation(con,source,records)
+            if (str(source['id'])!=expected_version or preview['fingerprint']!=expected_fingerprint):
+                abort(409,description='The inventory source changed. Preview its refresh again before confirming.')
         summary = persist_records(con, records, sheets, filename=source['filename'],
             stored_path='psms_workbooks:' + str(source['id']), file_hash=source['sha256'])
         api['log']('Refreshed Inventory Dataset', 'PPMP Inventory Source', str(source['id']),

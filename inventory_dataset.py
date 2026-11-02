@@ -52,7 +52,7 @@ CRITICAL_FIELDS = [
 HEADER_ALIASES = {
     "article": ["article", "category", "asset category", "property type", "type of property"],
     "description": [
-        "description", "item description", "particulars", "item name",
+        "description", "item description", "particulars", "item name", "item", "product name",
         "property description", "name of item", "specification",
     ],
     "property_number": [
@@ -67,7 +67,7 @@ HEADER_ALIASES = {
     ],
     "balance_qty": [
         "balance per card", "balance quantity", "book quantity", "card balance",
-        "quantity per card", "balance",
+        "quantity per card", "balance", "quantity", "qty",
     ],
     "on_hand_qty": [
         "on hand per card", "on hand quantity", "actual quantity", "physical count",
@@ -132,7 +132,7 @@ def _hash_file(path: str) -> str:
 
 def _match_header(value: Any) -> Optional[str]:
     text = _norm(value)
-    if not text:
+    if not text or len(text)>100 or len(text.split())>12:
         return None
 
     # The merged COA heading "Shortage/Overage" is resolved later using the
@@ -273,6 +273,39 @@ def _record_identity(record: Dict[str, Any], occurrence: int) -> str:
     return hashlib.sha256(f"{base}|{occurrence}".encode("utf-8")).hexdigest()
 
 
+def _numeric_cell(value):
+    """A complete numeric cell is evidence; a number inside a note is not."""
+    if isinstance(value,bool) or value in (None,""):
+        return False
+    if isinstance(value,(int,float)):
+        return math.isfinite(value)
+    text=_clean_text(value).replace('PHP','').replace('₱','').strip()
+    return bool(re.fullmatch(r'-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?',text))
+
+
+def _item_row(canonical, raw, mapping):
+    """Require identity plus independent item-cell evidence before inferring values."""
+    identity=[_clean_text(canonical.get(k)) for k in ('article','description','property_number')]
+    if any(_norm(v) in {'total','grand total','subtotal','sub total'} for v in identity):
+        return False
+    for key in ('article','description','property_number'):
+        value=_norm(canonical.get(key))
+        if value and value in {_norm(alias) for alias in HEADER_ALIASES[key]}:
+            return False
+    numeric=any(_numeric_cell(canonical.get(k)) for k in
+                ('unit_value','balance_qty','on_hand_qty','shortage_qty','shortage_value'))
+    identity_cells=sum(bool(_clean_text(value)) and _match_header(label) in
+                       ('article','description','property_number') for label,value in raw.items())
+    if any(identity) and (sum(bool(v) for v in identity)>1 or
+                          identity_cells>1 or _clean_text(canonical.get('unit')) or numeric):
+        return True
+    # Unfamiliar tables remain supported when separate text, numeric and other
+    # cells establish a row. A prose-only worksheet cannot become an item list.
+    values=[v for v in raw.values() if v not in (None,"")]
+    return (not mapping and len(values)>=3 and any(_numeric_cell(v) for v in values)
+            and any(not _numeric_cell(v) and _clean_text(v) for v in values))
+
+
 def read_dynamic_workbook(path: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Read every sheet and every valid row without hard-coded sheet names."""
     from workbook_limits import validate_dimensions, bounded_rows, parsing_budget
@@ -326,6 +359,8 @@ def read_dynamic_workbook(path: str) -> Tuple[List[Dict[str, Any]], List[Dict[st
                     continue
                 if raw and not any(re.search(r"[A-Za-z0-9]", str(v or "")) for v in raw.values()):
                     continue
+                if not _item_row(canonical,raw,mapping):
+                    continue
 
                 # Generic-schema fallback for future sheets whose headers are
                 # not yet in the alias dictionary. The raw fields remain the
@@ -349,7 +384,7 @@ def read_dynamic_workbook(path: str) -> Tuple[List[Dict[str, Any]], List[Dict[st
                     canonical["description"] = max(raw_text_candidates, key=len)
                 if not _clean_text(canonical.get("article")):
                     canonical["article"] = ws.title
-                if _to_float(canonical.get("unit_value")) == 0 and raw_numeric_candidates:
+                if not mapping and canonical.get("unit_value") in (None,"") and raw_numeric_candidates:
                     canonical["unit_value"] = raw_numeric_candidates[0]
 
                 article = _clean_text(canonical.get("article"))

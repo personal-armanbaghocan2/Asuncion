@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 from flask import session, g
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.exceptions import HTTPException
 from PIL import Image, ImageOps, ImageFilter
 import pytesseract
 from db import connect_db, database_url, apply_schema, ping as db_ping
@@ -1585,8 +1586,10 @@ def next_available_records(kind=None):
                 where aq.status='Approved' and p.id is null
                 order by aq.id desc''') if kind in (None, 'aoq') else []
     pos_for_nlp = q('''select p.* from po p
+                       join aoq aq on aq.id=p.aoq_id
+                       join pr r on r.id=aq.pr_id
                        left join nlp n on n.po_id=p.id
-                       where p.status='Approved' and n.id is null
+                       where p.status='Approved' and aq.status='Approved' and r.status='Approved' and n.id is null
                        order by p.id desc''') if kind in (None, 'nlp') else []
     pos_for_iar = q('''select p.* from po p
                        join nlp n on n.po_id=p.id
@@ -2325,9 +2328,22 @@ def ppmp_dataset():
 
         if action == 'refresh_dataset':
             try:
-                summary = sync_active_coa_dataset(force=True, audit_action='Refreshed Inventory Dataset')
+                from durable_workbooks import enabled, preview_inventory_refresh, refresh_inventory
+                if enabled():
+                    if request.form.get('reconcile_confirm')!='yes':
+                        preview=preview_inventory_refresh(globals())
+                        return render_template('inventory_source_reconciliation.html',active='ppmp',
+                            title='Review Inventory Source Refresh',preview=preview)
+                    if not request.form.get('source_version') or not request.form.get('source_fingerprint'):
+                        abort(400,description='Preview the inventory source refresh before confirming.')
+                    summary=refresh_inventory(globals(),expected_version=request.form['source_version'],
+                        expected_fingerprint=request.form['source_fingerprint'])
+                else:
+                    summary = sync_active_coa_dataset(force=True, audit_action='Refreshed Inventory Dataset')
                 flash(f'Inventory source refreshed: {summary["row_count"]} active rows from {summary["sheet_count"]} sheet(s).')
             except (PersistentWorkbookUnavailable, WorkbookStorageUnavailable):
+                raise
+            except HTTPException:
                 raise
             except Exception:
                 flash('Unable to refresh the inventory source. The previous data was preserved; verify storage readiness.')

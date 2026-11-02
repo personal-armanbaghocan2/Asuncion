@@ -231,11 +231,14 @@ def package(path,identifier,directory=None,base=ROOT):
         archive_bytes=entry['delivery']['archive_bytes'],output=str(target),published=False)
 
 
-def context(path,identifier=None,base=ROOT,inference_mode=None,nlp_runtime=None):
+def context(path,identifier=None,base=ROOT,inference_mode=None,nlp_runtime=None,production=False):
     base=Path(base); target=destination(path,base)
     identifier=identifier or None
     mode=inference_mode or ('approved_release' if identifier else 'disabled')
     selected=nlp_runtime if nlp_runtime is not None else os.environ.get('PSMS_NLP_RUNTIME','legacy')
+    if production:
+        releases.require((mode,selected,identifier)==('approved_release','retrained_rf','nlp-online-original-v2'),
+                         'DELIVERY_PRODUCTION_RELEASE_MISMATCH')
     releases.require(selected in ('legacy','retrained_rf'),'DELIVERY_NLP_RUNTIME_INVALID')
     releases.require(mode in ('disabled','approved_release'),'DELIVERY_INFERENCE_MODE_INVALID')
     if mode=='disabled':
@@ -305,6 +308,7 @@ def main():
     parser.add_argument('--release')
     parser.add_argument('--inference-mode',choices=('disabled','approved_release'))
     parser.add_argument('--runtime',dest='nlp_runtime',choices=('legacy','retrained_rf'))
+    parser.add_argument('--production',action='store_true',help='Require the existing approved RF production configuration')
     parser.add_argument('--directory',help='Private release (package) or existing transport proposal folder (supabase)')
     parser.add_argument('--project-ref',help='Existing Supabase project for private ROOT archive parts')
     args=parser.parse_args()
@@ -313,7 +317,8 @@ def main():
             releases.require(bool(args.release),'RELEASE_SELECTION_REQUIRED')
             result=supabase(args.output,args.release,args.directory,args.project_ref)
         elif args.action=='context':
-            result=context(args.output,args.release,inference_mode=args.inference_mode,nlp_runtime=args.nlp_runtime)
+            result=context(args.output,args.release,inference_mode=args.inference_mode,nlp_runtime=args.nlp_runtime,
+                           production=args.production)
         elif args.action=='package':
             releases.require(bool(args.release),'RELEASE_SELECTION_REQUIRED')
             result=package(args.output,args.release,args.directory)

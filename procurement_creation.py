@@ -84,10 +84,10 @@ def create_nlp(api, identifier):
         abort(400, description='Select a valid source document.')
     source=api['q']('''select p.*,aq.pr_id,r.no pr_no,r.items pr_items from po p
         join aoq aq on aq.id=p.aoq_id join pr r on r.id=aq.pr_id
-        where p.id=? and p.status='Approved'
+        where p.id=? and p.status='Approved' and aq.status='Approved' and r.status='Approved'
           and not exists(select 1 from nlp n where n.po_id=p.id)''',(identifier,),one=True)
     if not source:
-        flash('Select an approved PO for verification.')
+        flash('Select an approved PO linked to an approved AOQ and PR, without an existing NLP verification. Complete each source review first.')
         return redirect(url_for('nlp'))
     try:
         result,confidence,details=api['nlp_predict'](api['parse_items'](source['pr_items']),api['parse_items'](source['items']))
@@ -100,7 +100,7 @@ def create_nlp(api, identifier):
             flash('This PO already has an NLP verification. No duplicate was created.')
             return redirect(url_for('nlp'))
         linked=con.execute('''select aq.pr_id,r.no pr_no,r.items pr_items from aoq aq
-            join pr r on r.id=aq.pr_id where aq.id=? for share of aq,r''',
+            join pr r on r.id=aq.pr_id where aq.id=? and aq.status='Approved' and r.status='Approved' for share of aq,r''',
             (current['aoq_id'],)).fetchone() if current else None
         if (not current or current['status']!='Approved' or not linked or
                 any(current.get(key)!=source.get(key) for key in ('items','aoq_id')) or

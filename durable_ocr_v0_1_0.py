@@ -1,7 +1,7 @@
 """Owner-bound PostgreSQL OCR review; no user payload in globals/cookies/files."""
 from contextlib import contextmanager
 import hashlib,json,re,secrets,uuid
-from flask import abort,flash,redirect,request,session,url_for,Response,jsonify
+from flask import abort,flash,redirect,request,session,url_for,Response,jsonify,current_app,g
 from werkzeug.exceptions import HTTPException
 import server_sessions_v0_1_0 as sessions
 from private_document_uploads import validate,extraction_path,ALLOWED
@@ -116,6 +116,7 @@ def _reprocess_nonce(api, con, uid, ptype):
 
 
 def ppmp_upload(api,ptype,reprocess=False):
+    g.document_stage='validation'
     from nlp_runtime_selection import require_available
     require_available(getattr(api.get('app'),'config',{}))
     if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
@@ -124,14 +125,17 @@ def ppmp_upload(api,ptype,reprocess=False):
     reprocess = reprocess or request.form.get('reprocess_confirmed') == 'yes'
     name,ext,content=validate(request.files.get('ocr_file'))
     digest=hashlib.sha256(content).hexdigest()
+    g.document_stage='source_lookup'
     with transaction(api) as (con,uid):
         nonce = _reprocess_nonce(api,con,uid,ptype) if reprocess else None
         existing = _existing_upload(con,uid,ptype,digest)
         if reprocess and not existing:abort(409,description='Reprocessing requires an existing extraction in your category.')
         if existing and not reprocess:return _existing_response(ptype,existing)
     with extraction_path(content,ext) as path:
+        g.document_stage='extraction'
         extracted=api['extract_aoq_document'](path)
         extracted['filename']=name
+        g.document_stage='mapping'
         structured=api['map_ppmp_ocr_document'](extracted)
     if not (structured.get('model') or {}).get('active'):
         # Fixed codes only: never return dependency exceptions, paths or source text.
@@ -161,6 +165,7 @@ def ppmp_upload(api,ptype,reprocess=False):
     if len(rows)>200:abort(400,description='Review at most 200 extracted rows per upload.')
     state=dict(text=str(extracted.get('raw_text') or ''),method=extracted.get('extraction_method') or 'document extraction',
         warnings=structured.get('warnings') or [],filename=name,structured=structured,item_count=len(rows),extraction_timestamp=api['now']())
+    g.document_stage='draft_persistence'
     with transaction(api) as (con,uid):
         # Serialize identical uploads by owner/category even across processes.
         con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',(f'ppmp-upload:{uid}:{ptype}:{digest}',))
@@ -514,4 +519,51 @@ def aoq_source(api,did):
 def protected(operation,*args):
     try:return operation(*args)
     except HTTPException:raise
-    except Exception:return Response('Document processing could not be confirmed. Reopen the saved review; no success is assumed.',status=503,mimetype='text/plain')
+    except Exception as error:
+        # Never log exception text/tracebacks, SQL, filenames, tokens or document
+        # contents. SQLSTATE and fixed stages are sufficient to distinguish a
+        # missing migration/permission from extraction and resource failures.
+        code={
+            '42P01':'DOCUMENT_SCHEMA_MISSING','3F000':'DOCUMENT_SCHEMA_MISSING',
+            '42703':'DOCUMENT_SCHEMA_INCOMPATIBLE','42501':'DOCUMENT_PERMISSION_DENIED',
+            '57014':'DOCUMENT_PROCESSING_TIMEOUT','55P03':'DOCUMENT_BUSY',
+            '23505':'DOCUMENT_CONFLICT','23503':'DOCUMENT_SOURCE_CHANGED',
+            '22P05':'DOCUMENT_TEXT_ENCODING_INVALID','22021':'DOCUMENT_TEXT_ENCODING_INVALID',
+        }.get(getattr(error,'sqlstate',None),'DOCUMENT_PROCESSING_FAILED')
+        if isinstance(error,TimeoutError):code='DOCUMENT_PROCESSING_TIMEOUT'
+        if isinstance(error,MemoryError):code='DOCUMENT_RESOURCE_LIMIT'
+        stage=getattr(g,'document_stage','review')
+        if stage not in {'validation','source_lookup','extraction','mapping','draft_persistence','review'}:
+            stage='review'
+        if stage=='extraction' and type(error) is RuntimeError:
+            code={
+                'Document processing is busy; retry shortly.':'DOCUMENT_BUSY',
+                'Document processing time limit exceeded; review a smaller document.':'DOCUMENT_PROCESSING_TIMEOUT',
+                'No readable text or table was detected in the uploaded document.':'DOCUMENT_UNREADABLE',
+            }.get(str(error),code)
+        location='unavailable'
+        trace=error.__traceback__
+        while trace is not None:
+            name=trace.tb_frame.f_code.co_filename.replace('\\','/').rsplit('/',1)[-1]
+            if name in {'app.py','db.py','durable_ocr_v0_1_0.py','aoq_flexible.py',
+                         'offline_ocr_mapper.py','private_document_uploads.py'}:
+                location=name+':'+str(trace.tb_lineno)
+            trace=trace.tb_next
+        reference=uuid.uuid4().hex[:16]
+        current_app.logger.warning('Private document failed [%s] operation=%s stage=%s location=%s reference=%s',
+            code,getattr(operation,'__name__','document'),stage,location,reference)
+        messages={
+            'DOCUMENT_SCHEMA_MISSING':'Private document storage is not installed. Ask the administrator to check the document schema; repeated uploads will not fix it.',
+            'DOCUMENT_SCHEMA_INCOMPATIBLE':'Private document storage needs its reviewed schema update. Ask the administrator to check the document columns.',
+            'DOCUMENT_PERMISSION_DENIED':'The backend cannot access private document storage. Ask the administrator to check the restricted document grants and policies.',
+            'DOCUMENT_PROCESSING_TIMEOUT':'Document processing timed out. Use fewer pages or a smaller supported document, then reopen the review before retrying.',
+            'DOCUMENT_RESOURCE_LIMIT':'Document processing exceeded available resources. Split the document into smaller supported files.',
+            'DOCUMENT_BUSY':'Document processing is busy. Reopen the saved review and retry shortly.',
+            'DOCUMENT_UNREADABLE':'No readable item text or table was found. Use a clear scan, a searchable PDF, or a supported native workbook.',
+        }
+        response=Response(messages.get(code,'Document processing could not be confirmed. Reopen the saved review before retrying; no success is assumed.')+
+                          ' Reference: '+reference,status=422 if code=='DOCUMENT_UNREADABLE' else 503,mimetype='text/plain')
+        response.headers['Cache-Control']='private, no-store'
+        response.headers['X-PSMS-Diagnostic']=code
+        response.headers['X-PSMS-Reference']=reference
+        return response

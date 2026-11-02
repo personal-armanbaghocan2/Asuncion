@@ -4,25 +4,23 @@ on:
   workflow_dispatch:
     inputs:
       inference_mode:
-        description: First website deployment keeps OCR/NLP disabled
+        description: Existing production requires the approved inference release
         required: true
-        default: disabled
+        default: approved_release
         type: choice
         options:
-          - disabled
           - approved_release
       release_id:
-        description: Leave empty when disabled; required only for an approved model release
-        required: false
-        default: ''
+        description: Approved immutable production model release
+        required: true
+        default: nlp-online-original-v2
         type: string
       nlp_runtime:
         description: Selected classifier; RF requires explicit retrained_rf release approval
         required: true
-        default: legacy
+        default: retrained_rf
         type: choice
         options:
-          - legacy
           - retrained_rf
       deploy_approved:
         description: Owner authorizes this exact commit/release for the existing production project
@@ -48,6 +46,11 @@ jobs:
       RELEASE_ID: ${{ inputs.release_id }}
       INFERENCE_MODE: ${{ inputs.inference_mode }}
     steps:
+      - name: Reject incompatible production inputs before checkout or deployment
+        run: |
+          test "$INFERENCE_MODE" = approved_release
+          test "$PSMS_NLP_RUNTIME" = retrained_rf
+          test "$RELEASE_ID" = nlp-online-original-v2
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -59,7 +62,7 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - name: Prepare source-only context below 90 MB with explicit inference mode
-        run: python -B deploy/online_delivery.py context --inference-mode "$INFERENCE_MODE" --release "$RELEASE_ID" --runtime "$PSMS_NLP_RUNTIME" --output output/vercel-container
+        run: python -B deploy/online_delivery.py context --production --inference-mode "$INFERENCE_MODE" --release "$RELEASE_ID" --runtime "$PSMS_NLP_RUNTIME" --output output/vercel-container
       - name: Deploy the prepared context to the existing project
         working-directory: output/vercel-container
         env:
