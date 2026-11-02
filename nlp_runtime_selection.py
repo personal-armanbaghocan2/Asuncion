@@ -1,4 +1,4 @@
-"""Operator-only NLP selection; production RF is synthetic experimental staging only."""
+"""Operator-only NLP selection; hosted production RF requires release approval."""
 import hashlib
 import json
 import os
@@ -40,7 +40,7 @@ def verify_retrained_artifacts(model_dir, base_dir):
     try:
         import retrained_nlp_runtime as retrained
         result = retrained.verify_artifacts(model_dir)
-        feature = Path(base_dir) / 'model/fasttext_nlp/fasttext_feature_schema_v2.py'
+        feature = result.get('feature_path') or Path(base_dir) / 'model/fasttext_nlp/fasttext_feature_schema_v2.py'
         _require(retrained._sha(feature) == retrained.FEATURE_SHA256,
                  'The shared feature source does not match.')
         return result
@@ -51,9 +51,9 @@ def verify_retrained_artifacts(model_dir, base_dir):
 def _staging_settings(config, base_dir, model_dir):
     """Private configuration, never included in readiness/health output."""
     from runtime_configuration import environment_mode
-    _require(environment_mode() == 'production'
+    _require(environment_mode() in ('staging', 'production')
              and os.environ.get('PSMS_NLP_RELEASE_CHANNEL', '').strip() == RELEASE_CHANNEL,
-             'Production RF requires explicit experimental staging authorization.')
+              'Hosted RF requires explicit experimental staging authorization.')
     required = ('SUPABASE_DB_URL', 'PSMS_DATA_DIR', 'PSMS_RETRAINED_NLP_DIR', 'PSMS_SECRET_KEY',
                 'PSMS_HEALTH_HOST', 'PSMS_TRUSTED_HOSTS', 'CAPSTONE_STAGE_ORIGIN', 'CAPSTONE_STAGE_DB_HOST',
                 'CAPSTONE_STAGE_DB_NAME', 'CAPSTONE_STAGE_DB_LOGIN', 'CAPSTONE_STAGE_DB_ROLE',
@@ -168,20 +168,48 @@ def inspect_selection(config, base_dir):
     selected = os.environ.get('PSMS_NLP_RUNTIME', 'legacy').strip()
     _require(selected in ('legacy', 'retrained_rf'), 'PSMS_NLP_RUNTIME must be legacy or retrained_rf.')
     base = Path(base_dir).resolve()
+    from inference_releases import inference_enabled, ReleaseError
+    if not inference_enabled():
+        return dict(runtime=selected,root=str(base/'Retrained_Colab_Models/retrained_nlp'),
+            base=str(base),stage=None,production_release=False,release_id=None,
+            legacy_root=None,inference_enabled=False)
     model = os.environ.get('PSMS_RETRAINED_NLP_DIR') or str(base / 'Retrained_Colab_Models/retrained_nlp')
-    if selected == 'retrained_rf' and config['PSMS_ENV'] == 'production':
+    if selected == 'retrained_rf' and config['PSMS_ENV'] in ('staging', 'production'):
         _require(not model.startswith(('//', '\\\\')) and Path(model).is_absolute(),
                  'An absolute local staging model directory is required.')
     root = Path(model).resolve()
+    from inference_releases import selected_metadata as selected_release
+    release = selected_release(base=base, environment=config['PSMS_ENV'])
+    if config['PSMS_ENV']=='production' and release is None:
+        raise ReleaseError('RELEASE_SELECTION_REQUIRED')
+    if release is not None:
+        release_rf = release['root'] / 'rf'
+        # Preserve the existing explicit hosted RF path/authorization gates.
+        if selected == 'retrained_rf' and os.environ.get('PSMS_RETRAINED_NLP_DIR'):
+            _require(root in (release_rf, release['root'].parent),
+                     'RF directory conflicts with the selected inference release.')
+        root = release_rf
     stage = None
-    if selected == 'retrained_rf':
+    production_release = (selected == 'retrained_rf' and config['PSMS_ENV'] == 'production'
+                          and release is not None)
+    if production_release:
+        # selected_release() has verified the trusted manifest, Linux contract
+        # and explicit retrained_rf/semantic_ocr approval before reaching here.
+        from runtime_configuration import environment_mode
+        _require(environment_mode() == 'production'
+                 and os.environ.get('PSMS_PRODUCTION_DB_ENABLED') == '1',
+                 'Approved production RF requires explicit production database activation.')
+    elif selected == 'retrained_rf':
         _require(all(os.environ.get(k, '').strip() for k in ('SUPABASE_DB_URL', 'PSMS_DATA_DIR')),
                  'retrained_rf requires an explicit synthetic database and data directory; no local defaults.')
-        if config['PSMS_ENV'] == 'production':
+        if config['PSMS_ENV'] in ('staging', 'production'):
             stage = _staging_settings(config, base, root)
         else:
             _require(config['PSMS_ENV'] == 'test', 'retrained_rf requires isolated tests or authorized production staging.')
-    return dict(runtime=selected, root=str(root), base=str(base), stage=stage)
+    return dict(runtime=selected, root=str(root), base=str(base), stage=stage,
+                production_release=production_release,
+                release_id=release['manifest']['release_id'] if release else None,
+                legacy_root=str(release['root'] / 'legacy') if release else None,inference_enabled=True)
 
 
 def _fingerprint(settings):
@@ -193,13 +221,31 @@ def configure(app, base_dir):
     if selection['stage'] is not None:
         verify_staging_database(selection['stage'])
     app.config.update(PSMS_NLP_RUNTIME=selection['runtime'], PSMS_RETRAINED_NLP_DIR=selection['root'],
-                      _PSMS_NLP_BASE_DIR=selection['base'])
+                      PSMS_INFERENCE_ENABLED=selection['inference_enabled'],
+                      _PSMS_NLP_BASE_DIR=selection['base'],
+                      _PSMS_INFERENCE_RELEASE_ID=selection['release_id'],
+                      _PSMS_LEGACY_RELEASE_ROOT=selection['legacy_root'])
     app.config.pop('_PSMS_NLP_STAGING_FINGERPRINT', None)
+    app.config['_PSMS_RF_PRODUCTION_RELEASE'] = (selection['release_id']
+                                                if selection['production_release'] else None)
     if selection['stage'] is not None:
         app.config['_PSMS_NLP_STAGING_FINGERPRINT'] = _fingerprint(selection['stage'])
 
 
+def require_available(config):
+    from inference_releases import inference_enabled
+    if not config.get('PSMS_INFERENCE_ENABLED',True) or not inference_enabled():
+        from werkzeug.exceptions import ServiceUnavailable
+        raise ServiceUnavailable('OCR/NLP inference is disabled pending an approved model release. '
+                                 'Manual procurement and workbook operations remain available.')
+
+
 def runtime(config):
+    require_available(config)
+    from inference_releases import configured_identifier
+    _require(config.get('_PSMS_INFERENCE_RELEASE_ID') ==
+             configured_identifier(environment=config.get('PSMS_ENV')),
+             'Inference release selection changed; restart with verified settings.')
     selected = config.get('PSMS_NLP_RUNTIME', 'legacy')
     if selected == 'legacy':
         import fasttext_nlp_runtime
@@ -207,7 +253,25 @@ def runtime(config):
     if selected == 'retrained_rf' and config.get('PSMS_ENV') == 'test':
         import retrained_nlp_runtime
         return retrained_nlp_runtime
-    if selected == 'retrained_rf' and config.get('PSMS_ENV') == 'production':
+    if selected == 'retrained_rf' and config.get('PSMS_ENV') == 'production' \
+            and config.get('_PSMS_RF_PRODUCTION_RELEASE'):
+        selection = inspect_selection(config, config['_PSMS_NLP_BASE_DIR'])
+        _require(selection['production_release']
+                 and selection['release_id'] == config['_PSMS_RF_PRODUCTION_RELEASE']
+                 and selection['root'] == config.get('PSMS_RETRAINED_NLP_DIR'),
+                 'Production RF release selection changed; restart with verified settings.')
+        _require(config.get('WTF_CSRF_ENABLED') is True
+                 and config.get('SESSION_COOKIE_SECURE') is True
+                 and config.get('SESSION_COOKIE_HTTPONLY') is True
+                 and config.get('SESSION_COOKIE_SAMESITE') == 'Lax'
+                 and not config.get('DEBUG') and not config.get('TESTING')
+                 and config.get('TRUSTED_HOSTS')
+                 and config.get('SECRET_KEY') == os.environ.get('PSMS_SECRET_KEY')
+                 and bool(config.get('SECRET_KEY')),
+                 'Production RF requires initialized production session and CSRF protections.')
+        import retrained_nlp_runtime
+        return retrained_nlp_runtime
+    if selected == 'retrained_rf' and config.get('PSMS_ENV') in ('staging', 'production'):
         _require(config.get('_PSMS_NLP_BASE_DIR'), 'Experimental staging was not configured.')
         selection = inspect_selection(config, config['_PSMS_NLP_BASE_DIR'])
         _require(selection['runtime'] == selected and selection['stage'] is not None
@@ -224,4 +288,5 @@ def runtime(config):
 
 
 def model_root(config, legacy_root):
-    return config['PSMS_RETRAINED_NLP_DIR'] if config.get('PSMS_NLP_RUNTIME') == 'retrained_rf' else legacy_root
+    return (config['PSMS_RETRAINED_NLP_DIR'] if config.get('PSMS_NLP_RUNTIME') == 'retrained_rf'
+            else config.get('_PSMS_LEGACY_RELEASE_ROOT') or legacy_root)

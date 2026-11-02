@@ -2,14 +2,15 @@ from flask import Flask, render_template, request, redirect, url_for, flash, sen
 import os, json, datetime, random, re, shutil, csv, io, secrets
 from decimal import Decimal, InvalidOperation
 import click
-from private_workbooks import serialize_workbook, atomic_save, WorkbookBusy
+from private_workbooks import serialize_workbook, atomic_save, WorkbookBusy, WorkbookStorageUnavailable
+from durable_workbooks import Unavailable as PersistentWorkbookUnavailable, protected as protect_workbook_request
 import durable_ocr_v0_1_0 as durable_ocr
 import ppmp_creation
 from runtime_configuration import configure as configure_runtime
 import server_sessions_v0_1_0 as server_sessions
 from web_security_v0_1_0 import init_csrf
 from openpyxl import load_workbook
-from flask import session
+from flask import session, g
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from PIL import Image, ImageOps, ImageFilter
@@ -22,6 +23,7 @@ from aoq_flexible import (
     allow_single_supplier_winner,
 )
 from inventory_dataset import (
+    DatasetCommitUncertain,
     ensure_schema as ensure_inventory_dataset_schema,
     sync_workbook as sync_inventory_dataset_workbook,
     get_status as get_inventory_dataset_status,
@@ -63,16 +65,18 @@ def workbook_update_busy(error):
                     mimetype='text/plain', headers={'Cache-Control': 'no-store'})
 
 
+@app.errorhandler(WorkbookStorageUnavailable)
+@app.errorhandler(PersistentWorkbookUnavailable)
+def workbook_storage_unavailable(error):
+    return Response(error.description, status=503, mimetype='text/plain',
+                    headers={'Cache-Control': 'private, no-store'})
+
+
 
 
 @app.context_processor
 def inject_layout_context():
-    account = None
-    if session.get('logged_in') and session.get('user_id'):
-        try:
-            account = q('select id,username,role,full_name,display_name,status,created_at,last_login from users where id=?', (session.get('user_id'),), one=True)
-        except Exception:
-            account = None
+    account = getattr(g, 'psms_account', None)
     return {
         'header_date': datetime.datetime.now().strftime('%A, %B %-d, %Y') if os.name != 'nt' else datetime.datetime.now().strftime('%A, %B %d, %Y').replace(' 0', ' '),
         'offline_mode': True,
@@ -80,6 +84,7 @@ def inject_layout_context():
     }
 
 import signatory_management_v0_1_0 as managed_signatories
+import procurement_creation
 
 def conn():
     return managed_signatories.Connection(connect_db(DATABASE_URL))
@@ -122,6 +127,15 @@ def log(action, module, ref, details='', *, connection=None):
         # The caller owns commit/rollback when this audit is part of a workflow.
         if connection.execute(sql, params).rowcount != 1:
             raise RuntimeError('Audit entry was not inserted.')
+
+def audited_update(sql, params, action, module, reference, details):
+    """Commit a guarded update and its intended action audit together."""
+    with durable_ocr.transaction(globals()) as (con, uid):
+        count = con.execute(sql, params).rowcount
+        if count == 1:
+            log(action, module, reference, details, connection=con)
+        return count
+
 
 def now(): return datetime.datetime.now().strftime('%b %d, %Y %I:%M %p')
 def today(): return datetime.date.today().strftime('%Y-%m-%d')
@@ -955,6 +969,17 @@ def excel_meta():
     correct file. The app ONLY reads this path:
         data/PPMP_Data.xlsx
     """
+    from durable_workbooks import enabled, read_source, Unavailable
+    try:
+        persistent = enabled()
+        source = read_source(globals(), 'ppmp_source') if persistent else None
+    except Unavailable:
+        return {'path': 'Private workbook source', 'exists': False, 'unavailable': True,
+                'modified': 'Source selection temporarily unavailable', 'size': 0}
+    if persistent:
+        return {'path': 'Private PostgreSQL workbook source', 'exists': bool(source),
+                'modified': str(source['created_at']) if source else 'No source items yet',
+                'size': len(source['content']) if source else 0}
     exists = os.path.exists(EXCEL_PATH)
     info = {
         'path': EXCEL_PATH,
@@ -1367,23 +1392,44 @@ def check_auth_sessions_command(confirm_database_target):
         raise click.ClickException('Session metadata checks failed. Resolve only the reported requirement after target-specific review; no database changes were made.')
 
 
-def read_excel(sheet):
+def read_excel(sheet, *, connection=None):
     """Read DBM, NON-DBM or LIB from data/PPMP_Data.xlsx.
 
     Compatible with the Asuncion PPMP Excel format shown in the official form.
     Row 1 must contain the PPMP columns. Personnel/signatories are intentionally
     excluded from Excel and are injected only in print preview.
     """
-    if not os.path.exists(EXCEL_PATH):
-        return []
-
-    wb = load_workbook(EXCEL_PATH, data_only=True, read_only=True)
+    from durable_workbooks import enabled, read_source, Unavailable
     try:
+        persistent = enabled()
+        source = read_source(globals(), 'ppmp_source', connection=connection) if persistent else None
+    except Unavailable:
+        if connection is not None:
+            raise
+        # Workbook availability must not prevent independent OCR draft review.
+        # A source mutation/official creation still fails closed on its connection.
+        return []
+    if persistent:
+        if source is None:
+            return []
+        workbook_source = io.BytesIO(source['content'])
+    else:
+        if not os.path.exists(EXCEL_PATH):
+            return []
+        workbook_source = EXCEL_PATH
+
+    wb = load_workbook(workbook_source, data_only=True, read_only=True)
+    try:
+        from workbook_limits import validate_dimensions, bounded_rows, parsing_budget
+        validate_dimensions(wb)
         # Match DBM, NON-DBM, or LIB even if the Excel sheet casing/spaces differ.
         requested = str(sheet or '').strip().lower()
-        sheet_name = next((name for name in wb.sheetnames if str(name).strip().lower() == requested), wb.sheetnames[0])
+        matches = [name for name in wb.sheetnames if str(name).strip().lower() == requested]
+        if requested not in ('dbm', 'non-dbm', 'lib') or len(matches) != 1:
+            return []
+        sheet_name = matches[0]
         ws = wb[sheet_name]
-        rows = list(ws.iter_rows(values_only=True))
+        rows = list(bounded_rows(ws, parsing_budget()))
         if not rows:
             return []
 
@@ -1407,7 +1453,7 @@ def ppmp_has_downstream_app(ppmp_id):
     return bool(q('select id from app_plan where ppmp_id=? limit 1', (ppmp_id,), one=True))
 
 
-def sync_draft_ppmp_from_excel(ptype):
+def sync_draft_ppmp_from_excel(ptype, *, connection=None, source_rows=None):
     """Synchronize Draft PPMP records with the current Excel file.
 
     Why this is needed:
@@ -1416,34 +1462,66 @@ def sync_draft_ppmp_from_excel(ptype):
       would stay unchanged unless we update it here.
     - Only Draft PPMP records with no generated APP are changed. Records that
       already moved to APP/PR/PO are preserved for audit trail consistency.
+
+    A row number alone is not identity: rows can move or be replaced. Only a
+    stable dataset ID or an unambiguous retained source signature may match.
+    Missing, partial, ambiguous and OCR sources preserve the entire record.
     """
-    excel_rows = read_excel(ptype)
-    by_row = {str(r.get('_row')): r for r in excel_rows}
-    by_sig = {str(r.get('_excel_signature')): r for r in excel_rows if r.get('_excel_signature')}
-    updated = deleted = 0
-    for rec in q("select * from ppmp where type=? and status='Draft' order by id", (ptype,)):
-        if ppmp_has_downstream_app(rec['id']):
+    from contextlib import nullcontext
+    from durable_workbooks import enabled, refresh_drafts
+    if enabled() and connection is None:
+        return refresh_drafts(globals(), ptype)
+    excel_rows = source_rows if source_rows is not None else read_excel(ptype)
+    result = dict(updated=0, deleted=0, preserved=0, excel_rows=len(excel_rows),
+                  source_unavailable=not bool(excel_rows))
+    if not excel_rows:
+        return result
+    category = str(ptype).strip().upper()
+    by_id, by_sig = {}, {}
+    for row in excel_rows:
+        if str(row.get('_excel_sheet', '')).strip().upper() != category:
             continue
-        old_items = parse_items(rec['items'])
-        new_items = []
-        missing = False
-        for old in old_items:
-            row_key = str(old.get('_row', ''))
-            sig_key = str(old.get('_excel_signature', ''))
-            fresh = by_row.get(row_key) or by_sig.get(sig_key)
-            if fresh:
+        for index, key in ((by_id, row.get('_Dataset Record ID')), (by_sig, row.get('_excel_signature'))):
+            if key not in (None, '', 0, '0'):
+                index.setdefault(str(key), []).append(row)
+    with (nullcontext((connection, None)) if connection is not None else durable_ocr.transaction(globals())) as (con, uid):
+        con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))', ('ppmp-excel:'+ptype,))
+        records = con.execute("select * from ppmp where type=? and status='Draft' order by id for update", (ptype,)).fetchall()
+        for rec in records:
+            old_items = parse_items(rec['items'])
+            if (rec.get('status') != 'Draft' or rec.get('type') != ptype or rec.get('source_type') == 'OCR'
+                    or not isinstance(old_items, list) or not old_items
+                    or any(not isinstance(item, dict) or
+                           str(item.get('_excel_sheet', '')).strip().upper() != category or
+                           not item.get('_excel_signature') for item in old_items)
+                    or con.execute('select id from app_plan where ppmp_id=? limit 1', (rec['id'],)).fetchone()):
+                result['preserved'] += 1
+                continue
+            new_items = []
+            for old in old_items:
+                identifier = old.get('_Dataset Record ID')
+                candidates = (by_id.get(str(identifier), []) if identifier not in (None, '', 0, '0')
+                              else by_sig.get(str(old['_excel_signature']), []))
+                if len(candidates) != 1:
+                    break
+                fresh = dict(candidates[0])
+                if old.get('_PPMP Item ID'):
+                    fresh['_PPMP Item ID'] = old['_PPMP Item ID']
                 new_items.append(fresh)
-            else:
-                missing = True
-        if missing and not new_items:
-            exec_db('delete from ppmp where id=?', (rec['id'],))
-            deleted += 1
-        elif new_items:
-            new_total = sum(to_float(x.get('Estimated Budget Allocation (Php)') or x.get('Estimated Total Cost') or x.get('Total Cost') or 0) for x in new_items)
-            if json.dumps(old_items, default=str, sort_keys=True) != json.dumps(new_items, default=str, sort_keys=True) or to_float(rec['total']) != new_total:
-                exec_db('update ppmp set items=?, total=? where id=?', (json.dumps(new_items, default=str), new_total, rec['id']))
-                updated += 1
-    return {'updated': updated, 'deleted': deleted, 'excel_rows': len(excel_rows)}
+            new_total = items_total(new_items) if len(new_items) == len(old_items) else None
+            if new_total is None:
+                result['preserved'] += 1
+                continue
+            if (json.dumps(old_items, default=str, sort_keys=True) != json.dumps(new_items, default=str, sort_keys=True)
+                    or parse_currency_decimal(rec['total']) != new_total):
+                changed = con.execute("""update ppmp set items=?,total=? where id=? and status='Draft'
+                    and items=? and not exists(select 1 from app_plan where ppmp_id=ppmp.id)""",
+                    (json.dumps(new_items, default=str), new_total, rec['id'], rec['items'])).rowcount
+                if changed != 1:
+                    raise RuntimeError('PPMP changed during source refresh. Reopen the category.')
+                log('Refreshed PPMP Source', 'PPMP', rec['no'], 'Verified workbook lineage; saved item identifiers preserved', connection=con)
+                result['updated'] += 1
+    return result
 
 
 def used_excel_rows_for_ppmp(ptype):
@@ -1484,37 +1562,39 @@ def parse_items(items_json):
     try: return json.loads(items_json or '[]')
     except: return []
 
-def next_available_records():
+def next_available_records(kind=None):
     """Return only records that are allowed for the next connected process.
     This prevents users from creating disconnected duplicate documents.
     """
+    if kind not in (None, 'ppmp', 'app', 'pr', 'aoq', 'nlp', 'iar'):
+        raise ValueError('Unknown procurement selector.')
     ppmps = q('''select p.* from ppmp p
                  left join app_plan a on a.ppmp_id=p.id
                  where p.status='Approved' and a.id is null
-                 order by p.id desc''')
+                 order by p.id desc''') if kind in (None, 'ppmp') else []
     apps = q('''select a.* from app_plan a
                 left join pr r on r.app_id=a.id
                 where a.status='Approved' and r.id is null
-                order by a.id desc''')
+                order by a.id desc''') if kind in (None, 'app') else []
     prs = q('''select r.* from pr r
                left join aoq aq on aq.pr_id=r.id
                where r.status='Approved' and aq.id is null
-               order by r.id desc''')
+               order by r.id desc''') if kind in (None, 'pr') else []
     aoqs = q('''select aq.* from aoq aq
                 left join po p on p.aoq_id=aq.id
                 where aq.status='Approved' and p.id is null
-                order by aq.id desc''')
+                order by aq.id desc''') if kind in (None, 'aoq') else []
     pos_for_nlp = q('''select p.* from po p
                        left join nlp n on n.po_id=p.id
                        where p.status='Approved' and n.id is null
-                       order by p.id desc''')
+                       order by p.id desc''') if kind in (None, 'nlp') else []
     pos_for_iar = q('''select p.* from po p
                        join nlp n on n.po_id=p.id
                        left join iar i on i.po_id=p.id
                        where i.id is null
                          and n.status='Approved'
                          and n.result in ('Acceptable','Needs Review')
-                       order by p.id desc''')
+                       order by p.id desc''') if kind in (None, 'iar') else []
     return ppmps, apps, prs, aoqs, pos_for_nlp, pos_for_iar
 
 def trace_for_po(po_row):
@@ -1707,6 +1787,9 @@ def nlp_dynamic_remarks(result, details=None):
 
 def trained_nlp_model_status():
     """Validate the exported FastText model without loading a fallback."""
+    if not app.config.get('PSMS_INFERENCE_ENABLED',True):
+        return {'active':False,'message':'OCR/NLP inference is disabled pending an approved release.',
+                'diagnostic_code':'INFERENCE_DISABLED'}
     try:
         from nlp_runtime_selection import runtime, model_root
         return runtime(app.config).model_status(model_root(app.config, NLP_FASTTEXT_DIR))
@@ -1744,7 +1827,7 @@ def algorithm_comparison():
 # ---------------------------
 # Editable PPMP Table Save Route
 @app.route('/ppmp/<ptype>/edit_table', methods=['POST'])
-@serialize_workbook(lambda: EXCEL_PATH)
+@serialize_workbook(lambda: EXCEL_PATH, when=lambda: local_workbook_writes())
 def ppmp_edit_table(ptype):
     """Save PPMP table/modal edits back to Excel and Draft PPMP records.
 
@@ -1784,6 +1867,12 @@ def ppmp_edit_table(ptype):
 
     if not edited_rows:
         flash('No editable fields were submitted. Open Edit Table, change the selected item, then click Save Changes.')
+        return redirect(url_for('ppmp_type', ptype=ptype))
+
+    from durable_workbooks import enabled, edit
+    if enabled():
+        edit(globals(), ptype, edited_rows, request.form)
+        flash('Saved successfully.')
         return redirect(url_for('ppmp_type', ptype=ptype))
 
     # Save edits to the real Excel sheet used by PPMP.
@@ -1882,6 +1971,7 @@ def ensure():
     # database so demoted roles and renamed accounts take effect on this request.
     session['role'] = account['role']
     session['username'] = account['username']
+    g.psms_account = account
     return None
 
 # Authentication/session readiness runs before CSRF validation. No route exemptions.
@@ -1970,6 +2060,13 @@ def dashboard():
 
 @app.route('/excel-status')
 def excel_status():
+    from durable_workbooks import enabled, read_source
+    if enabled():
+        source = read_source(globals(), 'ppmp_source')
+        return {'excel_path': 'Private PostgreSQL workbook source', 'exists': bool(source),
+                'modified': str(source['created_at']) if source else 'No source items yet',
+                'size': len(source['content']) if source else 0,
+                'sheets': list(PPMP_DESTINATIONS) if source else [], 'error': ''}
     meta = excel_meta()
     sheets = []
     error = ''
@@ -1998,7 +2095,10 @@ def dataset_reference_unit_cost(record):
     return round(value / qty, 2) if value > 0 and qty > 1 else round(value, 2)
 
 
-def sync_active_coa_dataset(force=False, display_filename=None):
+def sync_active_coa_dataset(force=False, display_filename=None, audit_action=None):
+    from durable_workbooks import enabled, refresh_inventory
+    if enabled():
+        return refresh_inventory(globals())
     if not os.path.exists(COA_DATASET_PATH):
         return None
     return sync_inventory_dataset_workbook(
@@ -2006,6 +2106,8 @@ def sync_active_coa_dataset(force=False, display_filename=None):
         COA_DATASET_PATH,
         display_filename=display_filename or os.path.basename(COA_DATASET_PATH),
         force=force,
+        audit=(lambda con, summary: log(audit_action, 'PPMP Inventory Source', summary['filename'],
+            f'{summary["sheet_count"]} sheet(s), {summary["row_count"]} valid row(s)',connection=con)) if audit_action else None,
     )
 
 def dataset_record_to_ppmp_item(record, requested_qty, estimated_unit_cost, ptype):
@@ -2013,12 +2115,21 @@ def dataset_record_to_ppmp_item(record, requested_qty, estimated_unit_cost, ptyp
     ptype = str(ptype or '').strip().upper()
     if ptype not in PPMP_DESTINATIONS:
         raise ValueError('PPMP destination must be DBM, NON-DBM, or LIB.')
-    requested_qty = max(to_float(requested_qty), 1)
-    estimated_unit_cost = max(to_float(estimated_unit_cost), 0)
+    quantity = parse_currency_decimal(requested_qty)
+    cost = parse_currency_decimal(estimated_unit_cost)
+    if quantity is None or quantity <= 0:
+        raise ValueError('Requested quantity must be a finite positive number.')
+    if cost is None or cost < 0:
+        raise ValueError('Estimated unit cost must be a finite non-negative number.')
+    requested_qty = quantity
+    estimated_unit_cost = cost
     unit = str(record.get('unit') or 'unit').strip() or 'unit'
     description = str(record.get('description') or record.get('article') or 'Inventory item').strip()
     article = str(record.get('article') or 'Goods').strip()
-    total = requested_qty * estimated_unit_cost
+    try:
+        total = (requested_qty * estimated_unit_cost).quantize(Decimal('0.01'))
+    except InvalidOperation:
+        raise ValueError('Requested quantity or unit cost exceeds the supported precision.') from None
     source_note = f"Inventory source: {record.get('sheet_name')} row {record.get('source_row')}"
     procurement_method = {
         'DBM': 'Agency to Agency',
@@ -2063,7 +2174,12 @@ def dataset_record_to_ppmp_item(record, requested_qty, estimated_unit_cost, ptyp
         '_Dataset Source Row': record.get('source_row') or '',
     }
 
-@serialize_workbook(lambda: EXCEL_PATH)
+def local_workbook_writes():
+    from durable_workbooks import enabled
+    return not enabled()
+
+
+@serialize_workbook(lambda: EXCEL_PATH, when=lambda: local_workbook_writes())
 def append_dataset_items_to_ppmp_excel(ptype, items, requesting_office):
     """Append selected inventory items to the chosen PPMP worksheet.
 
@@ -2071,6 +2187,9 @@ def append_dataset_items_to_ppmp_excel(ptype, items, requesting_office):
     added once so the inventory source remains traceable when the user
     later generates the PPMP record from the selected category page.
     """
+    from durable_workbooks import enabled, append_items
+    if enabled():
+        return append_items(globals(), ptype, items, requesting_office)
     ptype = str(ptype or '').strip().upper()
     if ptype not in PPMP_DESTINATIONS:
         raise ValueError('Choose DBM, NON-DBM, or LIB as the PPMP destination.')
@@ -2135,14 +2254,14 @@ def append_dataset_items_to_ppmp_excel(ptype, items, requesting_office):
 
 
 @app.route('/ppmp/dataset', methods=['GET', 'POST'])
-@serialize_workbook(lambda: COA_DATASET_PATH, when=lambda: request.method == 'POST')
+@serialize_workbook(lambda: COA_DATASET_PATH, when=lambda: request.method == 'POST' and local_workbook_writes())
+@protect_workbook_request
 def ppmp_dataset():
     '''Dynamic multi-sheet inventory source for the existing PPMP workflow.'''
     if request.method == 'POST':
         action = request.form.get('action') or ''
 
         if action == 'upload_dataset':
-            os.makedirs(os.path.dirname(COA_DATASET_PATH), exist_ok=True)
             uploaded = request.files.get('dataset_file')
             if not uploaded or not uploaded.filename:
                 flash('Choose an Excel workbook to upload.')
@@ -2152,6 +2271,17 @@ def ppmp_dataset():
             if ext not in ALLOWED_DATASET_EXTENSIONS:
                 flash('Upload an .xlsx or .xlsm workbook.')
                 return redirect(url_for('ppmp_dataset'))
+            from durable_workbooks import enabled, import_inventory
+            if enabled():
+                try:
+                    summary = import_inventory(globals(), uploaded)
+                except ValueError:
+                    flash('No valid bounded inventory data was imported. The previous source was preserved.')
+                    return redirect(url_for('ppmp_dataset'))
+                flash(f'Inventory dataset imported: {summary["sheet_count"]} sheet(s) and {summary["row_count"]} valid row(s).'
+                      if summary['changed'] else 'This workbook is already the active inventory source. No duplicate version was created.')
+                return redirect(url_for('ppmp_dataset'))
+            os.makedirs(os.path.dirname(COA_DATASET_PATH), exist_ok=True)
             operation_id = secrets.token_hex(16)
             temp_path = COA_DATASET_PATH + '.uploading-' + operation_id + ext
             backup_path = COA_DATASET_PATH + '.backup-' + operation_id
@@ -2161,15 +2291,19 @@ def ppmp_dataset():
                 stream.write(validated_bytes)
             if os.path.exists(COA_DATASET_PATH):
                 shutil.copy2(COA_DATASET_PATH, backup_path)
+            committed = False
             try:
                 os.replace(temp_path, COA_DATASET_PATH)
-                summary = sync_active_coa_dataset(force=True, display_filename=original_name)
+                summary = sync_active_coa_dataset(force=True, display_filename=original_name, audit_action='Imported Inventory Dataset')
+                committed = True
                 if os.path.exists(backup_path):
                     os.remove(backup_path)
-                log('Imported Inventory Dataset', 'PPMP Inventory Source', original_name,
-                    f'{summary["sheet_count"]} sheet(s), {summary["row_count"]} valid row(s)')
                 flash(f'Inventory dataset imported: {summary["sheet_count"]} sheet(s) and {summary["row_count"]} valid row(s) were read automatically.')
             except Exception as exc:
+                if committed or isinstance(exc, DatasetCommitUncertain):
+                    flash('Dataset and audit committed; local backup cleanup was not confirmed. No workbook rollback was attempted.'
+                          if committed else 'Dataset commit could not be confirmed. Available workbook versions were retained; reconcile before retrying.')
+                    return redirect(url_for('ppmp_dataset'))
                 if os.path.exists(backup_path):
                     os.replace(backup_path, COA_DATASET_PATH)
                 elif os.path.exists(COA_DATASET_PATH):
@@ -2181,12 +2315,12 @@ def ppmp_dataset():
 
         if action == 'refresh_dataset':
             try:
-                summary = sync_active_coa_dataset(force=True)
+                summary = sync_active_coa_dataset(force=True, audit_action='Refreshed Inventory Dataset')
                 flash(f'Inventory source refreshed: {summary["row_count"]} active rows from {summary["sheet_count"]} sheet(s).')
-                log('Refreshed Inventory Dataset', 'PPMP Inventory Source', summary['filename'],
-                    f'Rows {summary["row_count"]}; sheets {summary["sheet_count"]}')
-            except Exception as exc:
-                flash(f'Unable to refresh the inventory dataset: {exc}')
+            except (PersistentWorkbookUnavailable, WorkbookStorageUnavailable):
+                raise
+            except Exception:
+                flash('Unable to refresh the inventory source. The previous data was preserved; verify storage readiness.')
             return redirect(url_for('ppmp_dataset'))
 
         destination_actions = {
@@ -2199,6 +2333,16 @@ def ppmp_dataset():
             if destination not in PPMP_DESTINATIONS:
                 flash('Choose where the selected inventory items should appear: DBM, NON-DBM, or LIB.')
                 return redirect(request.referrer or url_for('ppmp_dataset'))
+            from durable_workbooks import enabled, transfer
+            if enabled():
+                try:
+                    result = transfer(globals(), destination, request.form)
+                except ValueError:
+                    flash('Enter valid quantities and costs. No items were transferred.')
+                    return redirect(url_for('ppmp_dataset'))
+                flash(f'{result["added"]} item(s) added to {destination}; {result["skipped"]} duplicate(s) skipped. '
+                      'Review the items before creating official PPMP records.')
+                return redirect(url_for('ppmp_type', ptype=destination))
             selected = [int(x) for x in request.form.getlist('record_ids') if str(x).isdigit()]
             if not selected:
                 flash(f'Select at least one inventory item to display in {destination}.')
@@ -2211,13 +2355,15 @@ def ppmp_dataset():
                 if not row:
                     continue
                 record = dict(row)
-                requested_qty = to_float(request.form.get(f'qty_{record_id}')) or 1
-                estimated_unit_cost = to_float(request.form.get(f'cost_{record_id}'))
-                if estimated_unit_cost <= 0:
+                requested_qty = request.form.get(f'qty_{record_id}')
+                estimated_unit_cost = request.form.get(f'cost_{record_id}')
+                if estimated_unit_cost in (None, ''):
                     estimated_unit_cost = dataset_reference_unit_cost(record)
-                items.append(dataset_record_to_ppmp_item(
-                    record, requested_qty, estimated_unit_cost, destination
-                ))
+                try:
+                    items.append(dataset_record_to_ppmp_item(record, requested_qty, estimated_unit_cost, destination))
+                except ValueError as error:
+                    flash(str(error))
+                    return redirect(url_for('ppmp_dataset'))
                 source_details.append(f'{record["sheet_name"]} row {record["source_row"]}')
 
             if not items:
@@ -2238,6 +2384,8 @@ def ppmp_dataset():
             message += ' Review the displayed items, select them, then click Create Official PPMP.'
             flash(message)
             return redirect(url_for('ppmp_type', ptype=destination))
+
+        abort(400, description='Choose a supported inventory source operation.')
 
     # Import/refresh writes require an explicit CSRF-protected POST.
     auto_sync_message = None
@@ -2375,12 +2523,12 @@ def ppmp_mark_reviewed(id):
     if errors:
         flash(' '.join(errors) + ' Use Edit items before completing review.')
         return redirect(url_for('ppmp_review', id=id))
-    changed = exec_db("update ppmp set status=?, reviewed_by=?, reviewed_at=? where id=? and (status='Draft' or status is null or status='')",
-                      ('Reviewed', session.get('username',''), now(), id))
+    changed = audited_update("update ppmp set status=?, reviewed_by=?, reviewed_at=? where id=? and (status='Draft' or status is null or status='') and items=?",
+                      ('Reviewed', session.get('username',''), now(), id, row['items']),
+                      'Reviewed PPMP', 'PPMP', row['no'], f'{len(items)} item(s) reviewed; ready for approval')
     if changed != 1:
         flash('PPMP status changed. Reopen the review page before continuing.')
         return redirect(url_for('ppmp_review', id=id))
-    log('Reviewed PPMP', 'PPMP', row['no'], f'{len(items)} item(s) reviewed; ready for approval')
     flash(f'PPMP {row["no"]} marked as Reviewed. It is now ready for approval.')
     return redirect(url_for('ppmp_review', id=id))
 
@@ -2405,12 +2553,12 @@ def ppmp_approve(id):
     if errors:
         flash(' '.join(errors) + ' Correct the item before approval.')
         return redirect(url_for('ppmp_review', id=id))
-    changed = exec_db("update ppmp set status=?, approved_by=?, approved_at=? where id=? and status='Reviewed'",
-                      ('Approved', session.get('username',''), now(), id))
+    changed = audited_update("update ppmp set status=?, approved_by=?, approved_at=? where id=? and status='Reviewed' and items=?",
+                      ('Approved', session.get('username',''), now(), id, row['items']),
+                      'Approved PPMP', 'PPMP', row['no'], 'PPMP approved after explicit review completion')
     if changed != 1:
         flash('PPMP status changed. Reopen the review page before approving.')
         return redirect(url_for('ppmp_review', id=id))
-    log('Approved PPMP', 'PPMP', row['no'], 'PPMP approved after explicit review completion')
     flash(f'PPMP {row["no"]} approved. It is now available in APP as a Source PPMP.')
     return redirect(url_for('ppmp_home'))
 
@@ -2428,12 +2576,18 @@ def ppmp_type(ptype):
     # Always read Excel from disk, then hide rows that are already saved into PPMP.
     # This keeps the process clean: Excel item -> PPMP -> APP -> PR -> AOQ -> PO.
     if request.method == 'POST' and request.form.get('action') == 'refresh':
-        sync_draft_ppmp_from_excel(ptype)
+        refresh = sync_draft_ppmp_from_excel(ptype)
+        if refresh['source_unavailable']:
+            flash('No matching workbook source rows are available for this category. Saved PPMP records were preserved.')
+        elif refresh['preserved']:
+            flash('Saved records with OCR, downstream or uncertain source lineage were preserved. Review source changes explicitly.')
         return redirect(url_for('ppmp_type', ptype=ptype))
     data, used_rows, total_excel_rows = available_excel_rows(ptype)
     for source_row in data:
         source_row['_creation_signature'] = ppmp_creation.source_signature(source_row)
     meta = excel_meta()
+    if meta.get('unavailable'):
+        flash('Workbook source selection is temporarily unavailable. Saved records and OCR drafts remain available for review.')
     if request.method == 'POST':
         if request.form.get('action') == 'save_table':
             return redirect(url_for('ppmp_edit_table', ptype=ptype))
@@ -2527,21 +2681,24 @@ def ppmp_update_saved_items(id):
         return redirect(url_for('ppmp_home'))
     calculated_total = items_total(items)
     new_total = calculated_total if calculated_total is not None else 0.0
-    changed = exec_db("""update ppmp set items=?, total=?, status=?, reviewed_by=null, reviewed_at=null,
+    changed = audited_update("""update ppmp set items=?, total=?, status=?, reviewed_by=null, reviewed_at=null,
                          approved_by=null, approved_at=null where id=?
                          and (status is null or status <> 'Approved')
-                         and not exists (select 1 from app_plan where ppmp_id=ppmp.id)""",
-                      (json.dumps(items, default=str), new_total, 'Draft', id))
+                         and items=? and not exists (select 1 from app_plan where ppmp_id=ppmp.id)""",
+                      (json.dumps(items, default=str), new_total, 'Draft', id, row['items']),
+                      'Updated PPMP Item', 'PPMP', row['no'], f'Updated saved PPMP item {selected_index + 1}')
     if changed != 1:
         flash('PPMP was not changed because it was approved, linked to an APP, or removed. Reopen the review page.')
         return redirect(url_for('ppmp_review', id=id))
-    log('Updated PPMP Item', 'PPMP', row['no'], f'Updated saved PPMP item {selected_index + 1}')
     flash('PPMP item updated successfully. Review and approval were reset because the PPMP changed.')
     return redirect(url_for('ppmp_home'))
 
 @app.route('/ppmp/<int:id>/print')
 def ppmp_print(id):
-    row=q('select * from ppmp where id=?',(id,),one=True); items=parse_items(row['items'])
+    row=q('select * from ppmp where id=?',(id,),one=True)
+    if not row:
+        abort(404)
+    items=parse_items(row['items'])
     return render_template('print_ppmp.html', row=row, items=items, **managed_signatories.print_context(conn, 'ppmp', dict(row)), title='Print PPMP')
 
 @app.route('/api/ppmp/<int:id>')
@@ -2637,7 +2794,7 @@ def app_plan():
         d['item_count'] = item_count_from_json(source_items)
         d['item_preview'] = item_preview_from_json(source_items, include_offer_name=True)
         plans.append(d)
-    raw_ppmps, _, _, _, _, _ = next_available_records()
+    raw_ppmps, _, _, _, _, _ = next_available_records('ppmp')
     ppmps = []
     for p in raw_ppmps:
         d = dict(p)
@@ -2701,15 +2858,22 @@ def app_approve(id):
     if row['status'] == 'Approved':
         flash('APP is already approved.')
         return redirect(url_for('app_review', id=id))
-    exec_db('update app_plan set status=? where id=?',('Approved',id))
-    log('Approved APP','APP',row['no'],'APP approved after full item review')
+    changed = audited_update('update app_plan set status=? where id=? and status is not distinct from ? and items is not distinct from ?',
+        ('Approved',id,row.get('status'),row.get('items')), 'Approved APP','APP',row['no'],'APP approved after full item review')
+    if changed != 1:
+        flash('APP changed during approval. Reopen its review page.')
+        return redirect(url_for('app_review', id=id))
     flash(f'APP {row["no"]} approved after reviewing all items.')
     return redirect(url_for('app_plan'))
 
 @app.route('/app/<int:id>/print')
 def app_print(id):
     row = q('select * from app_plan where id=?', (id,), one=True)
+    if not row:
+        abort(404)
     p = q('select * from ppmp where id=?', (row['ppmp_id'],), one=True) if row else None
+    if row.get('ppmp_id') is not None and not p:
+        abort(404)
     # Use the APP row's own item first. Older records without app_plan.items fall back to PPMP items.
     items = parse_items(row['items']) if row and 'items' in row.keys() and row['items'] else (parse_items(p['items']) if p else [])
     app_rows = build_app_rows(items, row['office'] if row else '')
@@ -2718,35 +2882,7 @@ def app_print(id):
 @app.route('/pr', methods=['GET','POST'])
 def pr():
     if request.method == 'POST':
-        app_id = request.form.get('app_id')
-        app_row = q('''select a.*, p.no ppmp_no, p.type ppmp_type, p.items ppmp_items
-                       from app_plan a left join ppmp p on p.id=a.ppmp_id
-                       where a.id=? and a.status='Approved'
-                         and not exists (select 1 from pr r where r.app_id=a.id)''', (app_id,), one=True)
-        if not app_row:
-            flash('Select an approved APP record that does not already have a Purchase Request.')
-            return redirect(url_for('pr'))
-        items = parse_items(app_row['items'] or app_row['ppmp_items'])
-        if not items:
-            flash('No approved APP items were found for the selected record.')
-            return redirect(url_for('pr'))
-        errors = planning_item_errors(items)
-        if errors:
-            flash('Cannot create Purchase Request: ' + ' '.join(errors))
-            return redirect(url_for('pr'))
-        no = next_document_no('PR', 'PR', 'pr', year=app_row['year'] or current_year())
-        pr_items = assign_item_identifiers(items, '_PR Item ID', no)
-        total = sum(to_float(value_any(item, 'Estimated Budget Allocation (Php)', 'Estimated Total Cost', 'Total Cost', 'amount', default=0)) for item in items)
-        if total <= 0:
-            total = to_float(app_row['total'])
-        purpose = source_pr_purpose(items)
-        exec_db('''insert into pr(no,app_id,ppmp_id,office,purpose,status,created_at,items,total)
-                   values(?,?,?,?,?,?,?,?,?)''',
-                (no, app_row['id'], app_row['ppmp_id'], app_row['office'], purpose,
-                 'For Review', now(), json.dumps(pr_items, default=str), total))
-        log('Created PR', 'PR', no, f'Created from approved APP {app_row["no"]}; source PPMP {app_row["ppmp_no"]}; {len(items)} item(s)')
-        flash(f'Purchase Request {no} created from approved APP {app_row["no"]}.')
-        return redirect(url_for('pr'))
+        return procurement_creation.create_pr(globals(), request.form.get('app_id'))
 
     raw_prs = q('''select r.*, p.no ppmp_no, p.type ppmp_type, a.no app_no
                    from pr r
@@ -2760,7 +2896,7 @@ def pr():
         d['item_count'] = item_count_from_json(d.get('items'))
         prs.append(d)
 
-    _, raw_apps, _, _, _, _ = next_available_records()
+    _, raw_apps, _, _, _, _ = next_available_records('app')
     apps = []
     for row in raw_apps:
         d = dict(row)
@@ -2828,14 +2964,20 @@ def pr_approve(id):
     if row['status'] == 'Approved':
         flash('PR is already approved.')
         return redirect(url_for('pr_review', id=id))
-    exec_db('update pr set status=? where id=?', ('Approved', id))
-    log('Approved PR', 'PR', row['no'], 'Purchase Request approved')
+    changed = audited_update('update pr set status=? where id=? and status is not distinct from ? and items is not distinct from ?',
+        ('Approved',id,row.get('status'),row.get('items')), 'Approved PR','PR',row['no'],'Purchase Request approved')
+    if changed != 1:
+        flash('PR changed during approval. Reopen its review page.')
+        return redirect(url_for('pr_review', id=id))
     flash('PR approved. Continue to AOQ to upload and review the bidding result.')
     return redirect(url_for('aoq'))
 
 @app.route('/pr/<int:id>/print')
 def pr_print(id):
-    row=q('select * from pr where id=?',(id,),one=True); items=parse_items(row['items'])
+    row=q('select * from pr where id=?',(id,),one=True)
+    if not row:
+        abort(404)
+    items=parse_items(row['items'])
     return render_template('print_pr.html', row=row, items=items, display_items=review_item_rows(items), **managed_signatories.print_context(conn, 'pr', dict(row)), title='Print PR')
 
 @app.route('/aoq', methods=['GET','POST'])
@@ -2850,7 +2992,7 @@ def aoq():
         d=dict(aq)
         d['item_preview']=item_preview_from_json(d.get('winning_offer'),limit=2, include_offer_name=True)
         rows.append(d)
-    _, _, prs, _, _, _ = next_available_records()
+    _, _, prs, _, _, _ = next_available_records('pr')
     pr_previews = []
     for r in prs:
         d = dict(r)
@@ -2874,7 +3016,9 @@ def aoq():
 @app.route('/aoq/<int:id>/view')
 def aoq_review(id):
     row = q('''select aq.*, r.no pr_no, r.office pr_office, r.items pr_items,
-                      r.total pr_total
+                      r.total pr_total,
+                      exists(select 1 from psms_documents.aoq_drafts ds
+                             where ds.official_aoq_id=aq.id and ds.status='CONFIRMED') has_durable_source
                from aoq aq left join pr r on r.id=aq.pr_id
                where aq.id=?''', (id,), one=True)
     if not row:
@@ -2890,7 +3034,7 @@ def aoq_review(id):
         linked_records=[
             {'label': 'Related PR', 'value': d.get('pr_no') or 'No linked PR'},
             {'label': 'Source File', 'value': d.get('ocr_filename') or 'Legacy/manual record',
-             'url': url_for('aoq_source_file', id=id) if d.get('stored_filename') else ''},
+             'url': url_for('aoq_source_file', id=id) if d.get('stored_filename') or d.get('has_durable_source') else ''},
             {'label': 'Detected Document Type', 'value': d.get('source_type') or 'Legacy/manual record'},
             {'label': 'Extraction Method', 'value': d.get('extraction_method') or 'Legacy/manual extraction'},
         ],
@@ -2971,36 +3115,13 @@ def po():
     from aoq_flexible import winning_offer_error, winning_total_error, reviewed_total, review_number
 
     if request.method=='POST':
-        aoq_id=request.form.get('aoq_id')
-        a=q('''select aq.* from aoq aq where aq.id=? and aq.status='Approved'
-               and not exists (select 1 from po p where p.aoq_id=aq.id)''',(aoq_id,),one=True)
-        if a:
-            # Correct rule: PO is generated from the approved OCR-created AOQ winning offer.
-            # It must NOT copy the PR items, otherwise NLP compares PR against itself.
-            po_items=parse_items(a['winning_offer'])
-            error = winning_offer_error(po_items) or winning_total_error(po_items, a.get('winning_amount'))
-            if not error and (not isinstance(a.get('winner'), str) or not a['winner'].strip()):
-                error = 'The AOQ has no official winning supplier. Review it before generating a PO.'
-            if error:
-                flash(error)
-                return redirect(url_for('po'))
-            po_items = [dict(item, **{field: review_number(item[field]) for field in ('qty', 'unit_cost', 'amount')})
-                        for item in po_items]
-            total=round(reviewed_total(po_items), 2)
-            no = next_document_no('PO', 'PO', 'po')
-            po_items = assign_item_identifiers(po_items, '_PO Item ID', no)
-            exec_db('insert into po(no,aoq_id,supplier,status,created_at,items,total) values(?,?,?,?,?,?,?)',(no,a['id'],a['winner'],'For Review',now(),json.dumps(po_items,default=str),total))
-            log('Generated PO','PO',no,f'from approved OCR AOQ {a["no"]}; {len(po_items)} winning offer item(s)')
-            flash('PO generated successfully.')
-        else:
-            flash('Select an approved AOQ that does not already have a PO.')
-        return redirect(url_for('po'))
+        return procurement_creation.create_po(globals(), request.form.get('aoq_id'))
     rows=q("""select p.*, aq.no aoq_no, aq.winner, r.no pr_no
               from po p
               left join aoq aq on aq.id=p.aoq_id
               left join pr r on r.id=aq.pr_id
               order by p.id desc""")
-    _,_,_,raw_aoqs,_,_ = next_available_records()
+    _,_,_,raw_aoqs,_,_ = next_available_records('aoq')
     aoqs=[]
     for a in raw_aoqs:
         d=dict(a)
@@ -3076,7 +3197,10 @@ def po_approve(id):
 
 @app.route('/po/<int:id>/print')
 def po_print(id):
-    row=q('select p.*, aq.no aoq_no from po p left join aoq aq on aq.id=p.aoq_id where p.id=?',(id,),one=True); items=parse_items(row['items'])
+    row=q('select p.*, aq.no aoq_no from po p left join aoq aq on aq.id=p.aoq_id where p.id=?',(id,),one=True)
+    if not row:
+        abort(404)
+    items=parse_items(row['items'])
     return render_template('print_po.html', row=row, items=items, display_items=review_item_rows(items), **managed_signatories.print_context(conn, 'po', dict(row)), title='Print PO')
 
 def nlp_item_comparison(pr_items_json, po_items_json):
@@ -3129,23 +3253,9 @@ def nlp():
             if not app.config['PR_PO_ITEM_COMPARISON_ENABLED']:
                 abort(404)
             return redirect(url_for('nlp', comparison_po_id=request.form.get('po_id', '')))
-        po_id=request.form.get('po_id'); po_row=q('''select p.* from po p where p.id=? and p.status='Approved'
-               and not exists (select 1 from nlp n where n.po_id=p.id)''',(po_id,),one=True)
-        if po_row:
-            a=q('select * from aoq where id=?',(po_row['aoq_id'],),one=True); r=q('select * from pr where id=?',(a['pr_id'],),one=True)
-            try:
-                result, conf, details = nlp_predict(parse_items(r['items']), parse_items(po_row['items']))
-            except Exception as error:
-                log('PR–PO NLP Check Failed', 'NLP', po_row['no'], str(error))
-                flash(f'NLP verification stopped: {error}. No fallback or hardcoded result was created.')
-                return redirect(url_for('nlp'))
-            finding = nlp_short_finding(result, details)
-            nlp_no = next_document_no('NLP', 'NLP', 'nlp')
-            exec_db('insert into nlp(no,po_id,result,confidence,staff_decision,remarks,created_at,details,status) values(?,?,?,?,?,?,?,?,?)',(nlp_no,po_id,result,conf,result,nlp_dynamic_remarks(result, details),now(),json.dumps(details, default=str),'For Review'))
-            log('PR–PO FastText NLP Check Completed','NLP',nlp_no,f'PR {r["no"]} versus PO {po_row["no"]}: {result} {conf}% - {finding}'); flash(f'FastText NLP verification {nlp_no} completed for PR {r["no"]} and PO {po_row["no"]}.')
-        else:
-            flash('Select an approved PO that has not yet been verified.')
-        return redirect(url_for('nlp'))
+        from nlp_runtime_selection import require_available
+        require_available(app.config)
+        return procurement_creation.create_nlp(globals(), request.form.get('po_id'))
     raw_rows=q('''select n.*, p.no po_no, p.supplier, aq.no aoq_no, r.no pr_no
                   from nlp n
                   join po p on p.id=n.po_id
@@ -3158,7 +3268,7 @@ def nlp():
         d['findings'] = nlp_short_finding(d.get('result'), d.get('details'))
         d['remarks'] = nlp_dynamic_remarks(d.get('result'), d.get('details'))
         rows.append(d)
-    _,_,_,_,raw_pos,_ = next_available_records()
+    _,_,_,_,raw_pos,_ = next_available_records('nlp')
     pos = []
     for p in raw_pos:
         d = dict(p)
@@ -3280,8 +3390,13 @@ def nlp_approve(id):
     if row['status'] == 'Approved':
         flash('NLP result is already approved.')
         return redirect(url_for('nlp_review', id=id))
-    exec_db('update nlp set status=?, staff_decision=? where id=?', ('Approved', row['result'], id))
-    log('Approved NLP Result', 'NLP', row['po_no'], f'Approved prediction: {row["result"]}')
+    changed = audited_update('''update nlp set status=?,staff_decision=? where id=?
+        and status is not distinct from ? and result is not distinct from ? and details is not distinct from ?''',
+        ('Approved',row['result'],id,row.get('status'),row.get('result'),row.get('details')),
+        'Approved NLP Result','NLP',row['po_no'],f'Approved prediction: {row["result"]}')
+    if changed != 1:
+        flash('NLP result changed during approval. Reopen its review page.')
+        return redirect(url_for('nlp_review', id=id))
     if row['result'] in ('Acceptable', 'Needs Review'):
         flash('NLP result approved. The PO is now available for IAR creation.')
     else:
@@ -3300,22 +3415,7 @@ def nlp_algorithms():
 @app.route('/iar', methods=['GET','POST'])
 def iar():
     if request.method=='POST':
-        po_id=request.form.get('po_id'); p=q('''select p.* from po p where p.id=? and p.status='Approved'
-               and exists (select 1 from nlp n where n.po_id=p.id and n.status='Approved' and n.result in ('Acceptable','Needs Review'))
-               and not exists (select 1 from iar i where i.po_id=p.id)''',(po_id,),one=True)
-        if p:
-            no = next_document_no('IAR', 'IAR', 'iar')
-            iar_items = assign_item_identifiers(parse_items(p['items']), '_IAR Item ID', no)
-            for item in iar_items:
-                item['_Receiving Contract Version'] = 1
-                item['ordered_qty'] = value_any(item, 'qty', 'Quantity', default='')
-                item['received_qty'] = ''
-            exec_db('insert into iar(no,po_id,status,created_at,items) values(?,?,?,?,?)',(no,p['id'],'For Review',now(),json.dumps(iar_items, default=str)))
-            log('Created IAR','IAR',no,'IAR created for review; inventory is updated only after approval')
-            flash('IAR created. Approve it to accept the delivery and add the items to inventory.')
-        else:
-            flash('The selected PO is not eligible for IAR creation or already has an IAR.')
-        return redirect(url_for('iar'))
+        return procurement_creation.create_iar(globals(), request.form.get('po_id'))
     rows=q('''select i.*, p.no po_no, p.supplier, n.no nlp_no, aq.no aoq_no, r.no pr_no
               from iar i
               left join po p on p.id=i.po_id
@@ -3323,7 +3423,7 @@ def iar():
               left join aoq aq on aq.id=p.aoq_id
               left join pr r on r.id=aq.pr_id
               order by i.id desc''')
-    _,_,_,_,_,raw_pos = next_available_records()
+    _,_,_,_,_,raw_pos = next_available_records('iar')
     pos=[]
     for p in raw_pos:
         d=dict(p)
@@ -3375,7 +3475,7 @@ def iar_review(id):
         approval_effect='Approval accepts the delivery and adds every listed IAR item to the system Inventory.',
         back_url=url_for('iar'), print_url=url_for('iar_print', id=id),
         can_approve=d.get('status') != 'Approved',
-        receiving_items=iar_items if any(it.get('_Receiving Contract Version') for it in iar_items) else [],
+        receiving_items=iar_items,
     )
 
 def confirmed_receiving_items(items, form):
@@ -3393,6 +3493,12 @@ def confirmed_receiving_items(items, form):
                 raise ValueError(f'IAR item {index + 1}: enter a positive actual received quantity no greater than the ordered quantity.')
             item['received_qty'] = number_text(received)
             item['_Receiving Quantity Difference'] = number_text(received - ordered)
+        category = form.get(f'inventory_category_{index}')
+        if category is None:
+            category = item.get('_Inventory Category') or item.get('inventory_category') or item.get('category') or item.get('Category')
+        if category not in ('Equipment', 'Consumable'):
+            raise ValueError(f'IAR item {index + 1}: explicitly review Equipment or Consumable classification before approval.')
+        item['_Inventory Category'] = category
         confirmed.append(item)
     return confirmed
 
@@ -3427,7 +3533,9 @@ def iar_inventory_items(items_json):
             if number is None or number < 0:
                 raise ValueError(f'IAR item {index}: {label} must be a valid, non-negative number. Correct it before approval.')
         description = it.get('description') or it.get('Description / Specification') or it.get('Description') or ''
-        cat = 'Equipment' if any(w in item_name.lower() for w in ['laptop','printer','chair','projector','air conditioner']) else 'Consumable'
+        cat = value('_Inventory Category', 'inventory_category', 'category', 'Category')
+        if cat not in ('Equipment', 'Consumable'):
+            raise ValueError(f'IAR item {index}: reviewed inventory classification is required before approval.')
         source_dataset_id = it.get('_Dataset Record ID') or it.get('_dataset_record_id')
         receipts.append((item_name, description, cat, qty, unit, unit_cost, source_dataset_id))
     return receipts
@@ -3460,7 +3568,7 @@ def iar_approve(id):
             flash(str(exc))
             return redirect(url_for('iar_review', id=id))
 
-        if any(item.get('_Receiving Contract Version') for item in confirmed):
+        if json.dumps(confirmed, default=str) != json.dumps(parse_items(row['items']), default=str):
             if con.execute('update iar set items=? where id=?', (json.dumps(confirmed, default=str), id)).rowcount != 1:
                 raise RuntimeError('Actual receipt quantities were not recorded.')
 
@@ -3487,7 +3595,13 @@ def iar_approve(id):
 
 @app.route('/iar/<int:id>/print')
 def iar_print(id):
-    row=q('select * from iar where id=?',(id,),one=True); po_row=q('select * from po where id=?',(row['po_id'],),one=True); items=parse_items(row['items'])
+    row=q('select * from iar where id=?',(id,),one=True)
+    if not row:
+        abort(404)
+    po_row=q('select * from po where id=?',(row['po_id'],),one=True)
+    if not po_row:
+        abort(404)
+    items=parse_items(row['items'])
     return render_template('print_iar.html', row=row, po=po_row, items=items, **managed_signatories.print_context(conn, 'iar', dict(row)), title='Print IAR')
 
 @app.route('/inventory')
@@ -3577,11 +3691,12 @@ def ris_ics():
         if not items:
             flash(f'No available {expected_category.lower()} inventory items were selected.')
             return redirect(url_for('ris_ics'))
-        no = next_document_no(typ, typ, 'ris_ics')
-        items = assign_item_identifiers(items, '_Issue Item ID', no)
-        exec_db('insert into ris_ics(no,type,office,status,created_at,items) values(?,?,?,?,?,?)',
-                (no, typ, office, 'For Review', now(), json.dumps(items, default=str)))
-        log(f'Created {typ}', 'RIS/ICS', no, f'{len(items)} inventory item(s) prepared for {office}')
+        with durable_ocr.transaction(globals()) as (con, uid):
+            no = next_document_no(typ, typ, 'ris_ics', connection=con)
+            items = assign_item_identifiers(items, '_Issue Item ID', no)
+            con.execute('insert into ris_ics(no,type,office,status,created_at,items) values(?,?,?,?,?,?)',
+                        (no, typ, office, 'For Review', now(), json.dumps(items, default=str)))
+            log(f'Created {typ}', 'RIS/ICS', no, f'{len(items)} inventory item(s) prepared for {office}', connection=con)
         flash(f'{no} created. Review all selected inventory items before approval.')
         return redirect(url_for('ris_ics'))
 
@@ -3711,32 +3826,52 @@ def ris_ics_approve(id):
 
 @app.route('/ris-ics/<int:id>/print')
 def ris_ics_print(id):
-    row=q('select * from ris_ics where id=?',(id,),one=True); items=parse_items(row['items'])
+    row=q('select * from ris_ics where id=?',(id,),one=True)
+    if not row:
+        abort(404)
+    items=parse_items(row['items'])
     return render_template('print_ris_ics.html', row=row, items=items, **managed_signatories.print_context(conn, 'ris_ics', dict(row)), title='Print RIS/ICS')
 
 @app.route('/reports')
 def reports():
-    totals = {
-        'ppmp_total': to_float(q('select coalesce(sum(total),0) v from ppmp', one=True)['v']),
-        'pr_total': to_float(q('select coalesce(sum(total),0) v from pr', one=True)['v']),
-        'po_total': to_float(q('select coalesce(sum(total),0) v from po', one=True)['v']),
-        'inventory_value': to_float(q('select coalesce(sum(qty*coalesce(unit_cost,0)),0) v from inventory', one=True)['v']),
-    }
-    counts = {name: q(f'select count(*) c from {table}', one=True)['c'] for name, table in [
+    modules = [
         ('PPMP','ppmp'),('APP','app_plan'),('PR','pr'),('AOQ','aoq'),('PO','po'),
         ('NLP','nlp'),('IAR','iar'),('Inventory','inventory'),('RIS/ICS','ris_ics')
-    ]}
+    ]
+    aggregations = [('ppmp_total','ppmp','total'),('pr_total','pr','total'),
+                    ('po_total','po','total'),('inventory_value','inventory','qty*coalesce(unit_cost,0)')]
+    # Fixed identifiers only. One statement/connection also gives one snapshot.
+    projections = [f'(select count(*) from {table}) as c{index}' for index, (_,table) in enumerate(modules)]
+    projections += [f'(select coalesce(sum({expression}),0) from {table}) as t{index}'
+                    for index, (_,table,expression) in enumerate(aggregations)]
+    metrics = q('select '+','.join(projections), one=True)
+    counts = {name:metrics[f'c{index}'] for index,(name,_) in enumerate(modules)}
+    totals = {name:to_float(metrics[f't{index}']) for index,(name,_,_) in enumerate(aggregations)}
     return render_template('reports.html', active='reports', totals=totals, counts=counts, title='Reports')
+
+
+def spreadsheet_safe_cell(value):
+    """Preserve numeric cells; prevent untrusted text from becoming formulas."""
+    if not isinstance(value, str):
+        return value
+    stripped = value
+    while stripped and (stripped[0].isspace() or ord(stripped[0]) < 32 or stripped[0] == '\ufeff'):
+        stripped = stripped[1:]
+    if (stripped.startswith(('=', '+', '-', '@', '＝', '＋', '－', '＠')) or
+            value.startswith(('\t', '\r', '\n', '\ufeff'))):
+        return "'" + value
+    return value
 
 
 def _csv_response(filename, headers, rows):
     output = io.StringIO(newline='')
-    writer = csv.writer(output)
-    writer.writerow(headers)
+    writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+    writer.writerow([spreadsheet_safe_cell(value) for value in headers])
     for row in rows:
-        writer.writerow(row)
+        writer.writerow([spreadsheet_safe_cell(value) for value in row])
     return Response('\ufeff' + output.getvalue(), mimetype='text/csv; charset=utf-8',
-                    headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+                    headers={'Content-Disposition': f'attachment; filename="{filename}"',
+                             'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @app.route('/reports/export/<report_type>.csv')
@@ -3762,7 +3897,7 @@ def report_export(report_type):
             ['Document Number','Type','Office/Custodian','Status','Created At','Items JSON'],
             [[r['no'],r['type'],r['office'],r['status'],r['created_at'],r['items']] for r in rows])
     if report_type == 'audit':
-        rows = q('select dt,user,action,module,ref,details from audit_trail order by id desc')
+        rows = q('select a.dt,a."user" as "user",a.action,a.module,a.ref,a.details from audit_trail a order by a.id desc')
         return _csv_response('audit_trail_report.csv',
             ['Date/Time','User','Action','Module','Reference','Details'],
             [[r['dt'],r['user'],r['action'],r['module'],r['ref'],r['details']] for r in rows])
@@ -3831,6 +3966,21 @@ def change_password():
     return redirect(url_for('account') + '#change-password')
 
 
+def create_user_account(username, password_hash, role):
+    """Commit an authorized account creation and its audit as one operation."""
+    with durable_ocr.transaction(globals()) as (con, uid):
+        actor = con.execute('select role from users where id=?', (uid,)).fetchone()
+        if not actor or actor['role'] != 'Admin':
+            abort(403)
+        if con.execute('select id from users where username=?', (username,)).fetchone():
+            abort(409, description='Account changed during creation. Reopen User Management.')
+        changed = con.execute('insert into users(username,password,role,status,created_at) values(?,?,?,?,?)',
+                              (username, password_hash, role, 'Active', now())).rowcount
+        if changed != 1:
+            raise RuntimeError('Account creation was not confirmed.')
+        log('Created User', 'User Management', username, f'Role: {role}', connection=con)
+
+
 @app.route('/users', methods=['GET','POST'])
 def users():
     guard = require_admin_access()
@@ -3849,9 +3999,14 @@ def users():
             elif q('select id from users where username=?', (username,), one=True):
                 flash('That username already exists.')
             else:
-                exec_db('insert into users(username,password,role,status,created_at) values(?,?,?,?,?)',
-                        (username, generate_password_hash(password), role, 'Active', now()))
-                log('Created User', 'User Management', username, f'Role: {role}')
+                from werkzeug.exceptions import HTTPException
+                try:
+                    create_user_account(username, generate_password_hash(password), role)
+                except HTTPException:
+                    raise
+                except Exception:
+                    return Response('Account creation could not be confirmed. Reopen User Management before retrying.',
+                                    status=503, mimetype='text/plain', headers={'Cache-Control': 'private, no-store'})
                 flash(f'User {username} created.')
         elif action == 'reset_password':
             user_id = request.form.get('user_id')
@@ -3891,9 +4046,11 @@ def health():
     tesseract_ok = bool(configure_tesseract() or shutil.which('tesseract'))
     fasttext_ok = bool(model_state.get('active'))
     mapper_ok = bool(mapper_state.get('active'))
-    ready = all([database_ok, tesseract_ok, fasttext_ok, mapper_ok])
+    inference_on = app.config.get('PSMS_INFERENCE_ENABLED',True)
+    ready = database_ok and (not inference_on or all([tesseract_ok,fasttext_ok,mapper_ok]))
     return {
         'application': 'ready' if ready else 'degraded',
+        'inference_enabled': inference_on,
         'database': database_ok,
         'tesseract': tesseract_ok,
         'fasttext_nlp': fasttext_ok,

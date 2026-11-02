@@ -30,9 +30,13 @@ def _active(con):
     return uid
 
 @contextmanager
-def transaction(api):
+def transaction(api, *, read_committed=False):
     con=api['conn']()
     try:
+        if read_committed:
+            # A creator waiting on a parent must see the preceding creator's
+            # committed child in its subsequent existence statement.
+            con.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
         uid=_active(con);yield con,uid;con.commit()
     except Exception:con.rollback();raise
     finally:con.close()
@@ -112,6 +116,8 @@ def _reprocess_nonce(api, con, uid, ptype):
 
 
 def ppmp_upload(api,ptype,reprocess=False):
+    from nlp_runtime_selection import require_available
+    require_available(getattr(api.get('app'),'config',{}))
     if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
     # The normal upload button uses the same verified, signed, idempotent test
     # path as /reprocess_ocr. A posted confirmation never grants permission.
@@ -128,7 +134,18 @@ def ppmp_upload(api,ptype,reprocess=False):
         extracted['filename']=name
         structured=api['map_ppmp_ocr_document'](extracted)
     if not (structured.get('model') or {}).get('active'):
-        return Response('The installed semantic model is unavailable. No official record was saved.',status=503,mimetype='text/plain')
+        # Fixed codes only: never return dependency exceptions, paths or source text.
+        code = (structured.get('model') or {}).get('diagnostic_code')
+        allowed = {'SEMANTIC_ARTIFACTS_MISSING', 'SEMANTIC_DEPENDENCY_MISSING', 'SEMANTIC_MODEL_LOAD_FAILED',
+                   'SEMANTIC_RELEASE_INVALID', 'RELEASE_ACTIVATION_BLOCKED', 'RELEASE_ARTIFACT_MISSING',
+                   'RELEASE_CHECKSUM_MISMATCH', 'RELEASE_DEPENDENCY_VERSION', 'RELEASE_PYTHON_VERSION',
+                   'RELEASE_LINUX_UNVERIFIED', 'RELEASE_NOT_TRUSTED', 'RELEASE_MANIFEST_NOT_PINNED',
+                   'RELEASE_PROFILE_PATH', 'RELEASE_METADATA_INVALID'}
+        response = Response('The installed semantic model is unavailable. No official record was saved.',
+                            status=503, mimetype='text/plain')
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['X-PSMS-Diagnostic'] = code if code in allowed else 'SEMANTIC_UNAVAILABLE'
+        return response
     rows=structured.get('rows') or []
     detected_category=(structured.get('document_metadata') or {}).get('category')
     row_categories={row.get('field_confidence',{}).get('_document_metadata',{}).get('category') for row in rows}
@@ -383,6 +400,8 @@ def aoq_load(api):
     return result
 
 def aoq_upload(api):
+    from nlp_runtime_selection import require_available
+    require_available(getattr(api.get('app'),'config',{}))
     try:pr_id=int(request.form.get('pr_id',''))
     except ValueError:abort(400)
     pr=api['q']("select * from pr where id=? and status='Approved'",(pr_id,),one=True)

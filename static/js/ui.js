@@ -174,3 +174,16 @@
     issueGrid.before(tabs); select(0);
   }
 })();
+
+// Reject oversized files before the host's gateway receives the upload.
+document.addEventListener('submit', function (event) {
+  const limit = Number(document.querySelector('meta[name="document-upload-limit"]')?.content);
+  if (!Number.isFinite(limit) || limit <= 0) return;
+  for (const input of event.target.querySelectorAll('input[type="file"]')) {
+    if (Array.from(input.files || []).some(file => file.size > limit)) {
+      event.preventDefault();
+      alert(`The selected document exceeds the ${limit.toLocaleString()}-byte upload limit. Split or reduce it before uploading.`);
+      return;
+    }
+  }
+}, true);

@@ -1,15 +1,98 @@
 __pycache__/
-*.pyc
-.venv/
+*.py[cod]
 .env
 .env.*
 !.env.example
-.vercel/
-data/
-uploads/
+venv/
+.venv/
 temp/
-output/
-*.sqlite*
-*.db
+uploads/
+
+# Local secrets/custody. Examples contain placeholders only; review before publishing.
+*.env
+*.env.*
+!*.env.example
+!.env.example
+secrets/
+.secrets/
+.aws/
 *.pem
 *.key
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+
+# Operational municipal workbooks and exported records stay on this computer.
+# These rules do NOT untrack files already present in the index/history.
+/data/
+/supabase/legacy_seed.sql
+**/LOCAL_ONLY/
+**/*_LOCAL_ONLY/
+
+# Local database state, dumps, backups and document staging.
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.dump
+*.backup
+*.backup.*
+*.bak
+*.uploading*
+pgdata/
+postgres-data/
+docker-data/
+volumes/
+/supabase/.temp/
+/supabase/.branches/
+
+# Generated/local tooling and archives; keep source, schemas and installed models.
+/output/
+node_modules/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.vscode/
+.vercel/
+*.log
+*.tmp
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+Thumbs.db
+.DS_Store
+
+# Private research/review corpora and provenance-unverified packaged samples.
+# Existing tracked versions/history remain publication blockers until reviewed.
+/training_data/
+/training/
+/training_v2/
+/legacy_training/
+/sample_files/
+**/*LOCAL_ONLY*
+**/blind_review.csv
+**/pilot_source_subset.csv
+**/policy_decisions.csv
+**/adjudication.csv
+.aoq-*/
+.phase1-*/
+.phase2-*/
+
+# User-supplied Colab models, datasets and experimental reports stay local.
+/Retrained_Colab_Models/
+
+# Private model sources and copy-only inference candidates are never published
+# by an ordinary Git add. Reviewed metadata and tools remain deliverable.
+/model/
+/models/
+/inference_releases/
+/experiments/
+
+# Generated Vercel copies of reviewed UI assets; originals remain in static/.
+/public/static/

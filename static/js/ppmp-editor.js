@@ -56,12 +56,14 @@
     const table=document.getElementById('ppmpTable');
     table.querySelectorAll('[data-review-row]').forEach(button => button.addEventListener('click', () => {
       const row=button.closest('tr'), it={row:button.dataset.reviewRow};
+      it.sourceSignature=row.querySelector(`[name="source_signature_${it.row}"]`)?.value || '';
       keys.forEach(k => { it[k]=row.querySelector(`[name="${k}_${it.row}"]`)?.value || ''; });
       it.budget=cleanMoney(it.budget); items=[it]; open();
     }));
     document.getElementById('edit_selected_btn').addEventListener('click',() => {
       items=Array.from(table.querySelectorAll('input[name=rows][type=checkbox]:checked')).map(cb => {
         const row=cb.closest('tr'), it={row:cb.value};
+        it.sourceSignature=row.querySelector(`[name="source_signature_${it.row}"]`)?.value || '';
         keys.forEach(k => { it[k]=row.querySelector(`[name="${k}_${cb.value}"]`)?.value || ''; }); it.budget=cleanMoney(it.budget); return it;
       }); open();
     });
@@ -83,7 +85,7 @@
     if (!saved) {
       saveCurrent(); const hidden=document.getElementById('hiddenEditFields'); hidden.replaceChildren();
       const add=(name,v) => { const input=document.createElement('input'); input.type='hidden'; input.name=name; input.value=v; hidden.append(input); };
-      items.forEach(it => { add('rows',it.row); keys.forEach(k => add(`${k}_${it.row}`,it[k])); });
+      items.forEach(it => { add('rows',it.row); add(`source_signature_${it.row}`,it.sourceSignature); keys.forEach(k => add(`${k}_${it.row}`,it[k])); });
     }
   });
 })();

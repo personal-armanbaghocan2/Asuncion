@@ -13,6 +13,7 @@ import math
 import os
 import re
 from collections import Counter
+from itertools import chain, islice
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from openpyxl import load_workbook
@@ -34,6 +35,10 @@ CANONICAL_FIELDS = [
     "accountable_person",
     "office",
 ]
+
+
+class DatasetCommitUncertain(RuntimeError):
+    """Retain both workbook versions when database commit/cleanup is uncertain."""
 
 CRITICAL_FIELDS = [
     "article",
@@ -112,7 +117,7 @@ def _to_float(value: Any) -> float:
         except Exception:
             pass
         return float(value)
-    text = str(value).replace("₱", "").replace(",", "").replace("PHP", "")
+    text = str(value).replace("â‚±", "").replace(",", "").replace("PHP", "")
     match = re.search(r"-?\d+(?:\.\d+)?", text)
     return float(match.group(0)) if match else 0.0
 
@@ -270,19 +275,23 @@ def _record_identity(record: Dict[str, Any], occurrence: int) -> str:
 
 def read_dynamic_workbook(path: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Read every sheet and every valid row without hard-coded sheet names."""
+    from workbook_limits import validate_dimensions, bounded_rows, parsing_budget
     wb = load_workbook(path, data_only=True, read_only=True)
     all_records: List[Dict[str, Any]] = []
     sheet_meta: List[Dict[str, Any]] = []
     try:
+        validate_dimensions(wb)
+        budget = parsing_budget()
         for ws in wb.worksheets:
-            rows = list(ws.iter_rows(values_only=True))
+            remaining = bounded_rows(ws, budget)
+            rows = list(islice(remaining, 80))
             if not rows:
                 sheet_meta.append({"sheet_name": ws.title, "header_row": 1, "row_count": 0, "columns": {}})
                 continue
             header_idx, mapping, labels = detect_header(rows)
             records: List[Dict[str, Any]] = []
             identity_counts: Counter[str] = Counter()
-            for zero_idx, row in enumerate(rows[header_idx + 1:], start=header_idx + 1):
+            for zero_idx, row in enumerate(chain(rows[header_idx + 1:], remaining), start=header_idx + 1):
                 if not any(value not in (None, "") for value in row):
                     continue
 
@@ -331,7 +340,7 @@ def read_dynamic_workbook(path: str) -> Tuple[List[Dict[str, Any]], List[Dict[st
                         raw_numeric_candidates.append(float(raw_value))
                         continue
                     raw_text = _clean_text(raw_value)
-                    numeric_text = raw_text.replace('₱', '').replace('PHP', '').replace(',', '')
+                    numeric_text = raw_text.replace('â‚±', '').replace('PHP', '').replace(',', '')
                     if re.fullmatch(r'-?\d+(?:\.\d+)?', numeric_text):
                         raw_numeric_candidates.append(float(numeric_text))
                     elif raw_text:
@@ -470,7 +479,7 @@ def ensure_schema(db_path: str) -> None:
         con.close()
 
 
-def sync_workbook(db_path: str, workbook_path: str, *, display_filename: Optional[str] = None, force: bool = False) -> Dict[str, Any]:
+def sync_workbook(db_path: str, workbook_path: str, *, display_filename: Optional[str] = None, force: bool = False, audit=None) -> Dict[str, Any]:
     """Synchronize all worksheets and valid rows without training an AI model."""
     # Schema/reset maintenance belongs to explicit operator initialization only.
     # Web imports use the existing repository without DDL or field resets.
@@ -497,43 +506,66 @@ def sync_workbook(db_path: str, workbook_path: str, *, display_filename: Optiona
 
     con = connect_db(db_path)
     new_count = updated_count = removed_count = 0
+    commit_started = False
     try:
         con.execute("begin")
-        existing_rows = {r["record_key"]: r for r in con.execute("select * from dataset_records")}
-        incoming_keys = {r["record_key"] for r in records}
-        for record in records:
-            normalized = {"article": _norm(record.get("article")), "description": _norm(record.get("description")), "property_number": _norm(record.get("property_number")), "unit": _norm(record.get("unit"))}
-            common = (
-                record["source_sheet"], record["source_row"], record.get("article", ""), record.get("description", ""),
-                record.get("property_number", ""), record.get("unit", ""), record.get("unit_value", 0),
-                record.get("balance_qty", 0), record.get("on_hand_qty", 0), record.get("shortage_qty", 0),
-                record.get("shortage_value", 0), record.get("remarks", ""), record.get("office", ""),
-                record.get("accountable_person", ""), json.dumps(record.get("raw_data") or {}, default=str),
-                json.dumps(normalized, default=str),
-            )
-            if record["record_key"] in existing_rows:
-                con.execute("""update dataset_records set sheet_name=?,source_row=?,article=?,description=?,property_number=?,unit=?,unit_value=?,balance_qty=?,on_hand_qty=?,shortage_qty=?,shortage_value=?,remarks=?,office=?,accountable_person=?,raw_data=?,normalized_data=?,anomaly_score=null,anomaly_label=null,anomaly_reasons=null,review_status=null,active=1,updated_at=? where record_key=?""", common + (_now(), record["record_key"]))
-                updated_count += 1
-            else:
-                con.execute("""insert into dataset_records(sheet_name,source_row,article,description,property_number,unit,unit_value,balance_qty,on_hand_qty,shortage_qty,shortage_value,remarks,office,accountable_person,raw_data,normalized_data,anomaly_score,anomaly_label,anomaly_reasons,review_status,active,imported_at,updated_at,record_key) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,null,null,null,null,1,?,?,?)""", common + (_now(), _now(), record["record_key"]))
-                new_count += 1
-        for key, old in existing_rows.items():
-            if old["active"] and key not in incoming_keys:
-                con.execute("update dataset_records set active=0,updated_at=? where record_key=?", (_now(), key))
-                removed_count += 1
-        con.execute("update dataset_sheets set active=0")
-        for sheet in sheets:
-            con.execute("""insert into dataset_sheets(sheet_name,header_row,row_count,columns_json,active,updated_at) values(?,?,?,?,1,?) on conflict(sheet_name) do update set header_row=excluded.header_row,row_count=excluded.row_count,columns_json=excluded.columns_json,active=1,updated_at=excluded.updated_at""", (sheet["sheet_name"], sheet["header_row"], sheet["row_count"], json.dumps(sheet["columns"], default=str), _now()))
         filename = display_filename or os.path.basename(workbook_path)
-        con.execute("""insert into dataset_config(id,filename,stored_path,file_hash,modified_ts,last_synced,sheet_count,row_count,model_version,status,last_error) values(1,?,?,?,?,?,?,?,null,?,null) on conflict(id) do update set filename=excluded.filename,stored_path=excluded.stored_path,file_hash=excluded.file_hash,modified_ts=excluded.modified_ts,last_synced=excluded.last_synced,sheet_count=excluded.sheet_count,row_count=excluded.row_count,model_version=null,status=excluded.status,last_error=null""", (filename, workbook_path, file_hash, modified_ts, _now(), len(sheets), len(records), "Ready"))
+        summary = persist_records(con, records, sheets, filename=filename,
+                                  stored_path=workbook_path, file_hash=file_hash, modified_ts=modified_ts)
+        if audit is not None:
+            audit(con, summary)
+        commit_started = True
         con.commit()
     except Exception:
-        con.rollback()
+        try:con.rollback()
+        finally:
+            if commit_started:
+                raise DatasetCommitUncertain('Dataset commit could not be confirmed; retain both workbook versions for reconciliation.') from None
         raise
     finally:
-        con.close()
-    return {"changed": True, "filename": display_filename or os.path.basename(workbook_path), "sheet_count": len(sheets), "row_count": len(records), "last_synced": _now(), "new": new_count, "updated": updated_count, "removed": removed_count}
+        try:con.close()
+        except Exception:
+            if commit_started:
+                raise DatasetCommitUncertain('Dataset cleanup could not be confirmed; retain both workbook versions for reconciliation.') from None
+            raise
+    return summary
 
+
+
+def persist_records(con, records, sheets, *, filename, stored_path, file_hash, modified_ts=None):
+    """Replace parsed source rows inside the caller transaction; never commit or run DDL."""
+    if not records:
+        raise ValueError("No valid inventory rows were detected in any worksheet.")
+    new_count = updated_count = removed_count = 0
+    existing_rows = {r["record_key"]: r for r in con.execute("select * from dataset_records")}
+    incoming_keys = {r["record_key"] for r in records}
+    for record in records:
+        normalized = {"article": _norm(record.get("article")), "description": _norm(record.get("description")), "property_number": _norm(record.get("property_number")), "unit": _norm(record.get("unit"))}
+        common = (
+            record["source_sheet"], record["source_row"], record.get("article", ""), record.get("description", ""),
+            record.get("property_number", ""), record.get("unit", ""), record.get("unit_value", 0),
+            record.get("balance_qty", 0), record.get("on_hand_qty", 0), record.get("shortage_qty", 0),
+            record.get("shortage_value", 0), record.get("remarks", ""), record.get("office", ""),
+            record.get("accountable_person", ""), json.dumps(record.get("raw_data") or {}, default=str),
+            json.dumps(normalized, default=str),
+        )
+        if record["record_key"] in existing_rows:
+            con.execute("""update dataset_records set sheet_name=?,source_row=?,article=?,description=?,property_number=?,unit=?,unit_value=?,balance_qty=?,on_hand_qty=?,shortage_qty=?,shortage_value=?,remarks=?,office=?,accountable_person=?,raw_data=?,normalized_data=?,anomaly_score=null,anomaly_label=null,anomaly_reasons=null,review_status=null,active=1,updated_at=? where record_key=?""", common + (_now(), record["record_key"]))
+            updated_count += 1
+        else:
+            con.execute("""insert into dataset_records(sheet_name,source_row,article,description,property_number,unit,unit_value,balance_qty,on_hand_qty,shortage_qty,shortage_value,remarks,office,accountable_person,raw_data,normalized_data,anomaly_score,anomaly_label,anomaly_reasons,review_status,active,imported_at,updated_at,record_key) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,null,null,null,null,1,?,?,?)""", common + (_now(), _now(), record["record_key"]))
+            new_count += 1
+    for key, old in existing_rows.items():
+        if old["active"] and key not in incoming_keys:
+            con.execute("update dataset_records set active=0,updated_at=? where record_key=?", (_now(), key))
+            removed_count += 1
+    con.execute("update dataset_sheets set active=0")
+    for sheet in sheets:
+        con.execute("""insert into dataset_sheets(sheet_name,header_row,row_count,columns_json,active,updated_at) values(?,?,?,?,1,?) on conflict(sheet_name) do update set header_row=excluded.header_row,row_count=excluded.row_count,columns_json=excluded.columns_json,active=1,updated_at=excluded.updated_at""", (sheet["sheet_name"], sheet["header_row"], sheet["row_count"], json.dumps(sheet["columns"], default=str), _now()))
+    con.execute("""insert into dataset_config(id,filename,stored_path,file_hash,modified_ts,last_synced,sheet_count,row_count,model_version,status,last_error) values(1,?,?,?,?,?,?,?,null,?,null) on conflict(id) do update set filename=excluded.filename,stored_path=excluded.stored_path,file_hash=excluded.file_hash,modified_ts=excluded.modified_ts,last_synced=excluded.last_synced,sheet_count=excluded.sheet_count,row_count=excluded.row_count,model_version=null,status=excluded.status,last_error=null""", (filename, stored_path, file_hash, modified_ts, _now(), len(sheets), len(records), "Ready"))
+    summary = {"changed": True, "filename": filename, "sheet_count": len(sheets), "row_count": len(records),
+               "last_synced": _now(), "new": new_count, "updated": updated_count, "removed": removed_count}
+    return summary
 
 def get_status(db_path: str) -> Dict[str, Any]:
     """Read status only; schema/import maintenance requires an explicit action."""

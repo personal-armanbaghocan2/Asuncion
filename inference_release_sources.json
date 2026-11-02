@@ -1,0 +1,245 @@
+{
+  "approval": {
+    "approved_profiles": [],
+    "deployment_review": null,
+    "quality_review": null,
+    "status": "local_validation_only"
+  },
+  "artifacts": {
+    "legacy/fasttext_feature_schema_v2.py": {
+      "bytes": 16277,
+      "sha256": "41be9ed2b4149f917d1b4becbd1a983f9bbd60c7caa133625056f5eaaf9746e5",
+      "source": "model/fasttext_nlp/fasttext_feature_schema_v2.py"
+    },
+    "legacy/fasttext_model.model": {
+      "bytes": 499778,
+      "sha256": "732864187eadb3d1fb030cd8b096607fd3a84fa884e45f899f59aea185a9d1ff",
+      "source": "model/fasttext_nlp/fasttext_model.model"
+    },
+    "legacy/fasttext_model.model.wv.vectors_ngrams.npy": {
+      "bytes": 48000128,
+      "sha256": "1fa1282b092100ca9f6f67b10d55a6731e10cccd123f285e97dedf782df38915",
+      "source": "model/fasttext_nlp/fasttext_model.model.wv.vectors_ngrams.npy"
+    },
+    "legacy/issue_classifier.joblib": {
+      "bytes": 48447,
+      "sha256": "ec56153ddfaae557a56d650d9bc3912302abfdbe16d8f8e6b97c4e3f6183cd5e",
+      "source": "model/fasttext_nlp/issue_classifier.joblib"
+    },
+    "legacy/labels.json": {
+      "bytes": 775,
+      "sha256": "f833f2b477eb6ee17b55aafbb66a60cfb1cc9b11cd7a7cb6d81031f57f1b0a5d",
+      "source": "model/fasttext_nlp/labels.json"
+    },
+    "legacy/status_classifier.joblib": {
+      "bytes": 22279,
+      "sha256": "480e155a4609870c9c32b6377e0070a3816e0fd1d19c6001bab72b2fe749ec8e",
+      "source": "model/fasttext_nlp/status_classifier.joblib"
+    },
+    "legacy/training_manifest.json": {
+      "bytes": 18393,
+      "sha256": "c39c1ab7bb30973dc2f186cb788c0f00b27cc8cf765b2818be5510eab83b30d2",
+      "source": "model/fasttext_nlp/training_manifest.json"
+    },
+    "rf/comparison.json": {
+      "bytes": 5028,
+      "sha256": "8e8e3a216c4cbbb1b605310839adab361cef431775b085f331d6aee8d8b23e05",
+      "source": "Retrained_Colab_Models/retrained_nlp/comparison.json"
+    },
+    "rf/configuration.json": {
+      "bytes": 2223,
+      "sha256": "33ffc465c28db9584d1d19ecd065ddfaebb0f2d0e0c6eb480ccf4872d461a212",
+      "source": "Retrained_Colab_Models/retrained_nlp/configuration.json"
+    },
+    "rf/environment.json": {
+      "bytes": 301,
+      "sha256": "beb07e2b85bf3c72e8128a3db1d13438de20897a49949040d4402998be525b0d",
+      "source": "Retrained_Colab_Models/retrained_nlp/environment.json"
+    },
+    "rf/fasttext_shared.model": {
+      "bytes": 8454967,
+      "sha256": "8ae80c65a953627a7f2dfa4084fd800aee826b852ac0bb19fce5fca3edba8356",
+      "source": "Retrained_Colab_Models/retrained_nlp/fasttext_shared.model"
+    },
+    "rf/feature_contract.json": {
+      "bytes": 2861,
+      "sha256": "02868b623cfcc00f161d65ab596dd88c3a44e0afd703e0c36a7b99fb527e1ebf",
+      "source": "Retrained_Colab_Models/retrained_nlp/feature_contract.json"
+    },
+    "rf/labels.json": {
+      "bytes": 889,
+      "sha256": "52583402ecdab014ccbea10be5398340a4e7feea3c3be51fa99f256e3936dbc5",
+      "source": "Retrained_Colab_Models/retrained_nlp/labels.json"
+    },
+    "rf/models/Random_Forest/setting_7/seed_42/issue.joblib": {
+      "bytes": 10582689,
+      "sha256": "ac5b45dcf1779d0e1ff613893c195e715c7d60a4a954e4671f8504e97abfdf01",
+      "source": "Retrained_Colab_Models/retrained_nlp/models/Random_Forest/setting_7/seed_42/issue.joblib"
+    },
+    "rf/models/Random_Forest/setting_7/seed_42/issue_parameters.json": {
+      "bytes": 457,
+      "sha256": "c2c25e90f9cb06126fc94d30efd1c7049f21d9f45732717fee10bc7644ad5b7d",
+      "source": "Retrained_Colab_Models/retrained_nlp/models/Random_Forest/setting_7/seed_42/issue_parameters.json"
+    },
+    "rf/models/Random_Forest/setting_7/seed_42/status.joblib": {
+      "bytes": 6375993,
+      "sha256": "4257015dbd802d37adee0eaec7a7dd1b89e1b23059ea3a73945c24165fd68289",
+      "source": "Retrained_Colab_Models/retrained_nlp/models/Random_Forest/setting_7/seed_42/status.joblib"
+    },
+    "rf/models/Random_Forest/setting_7/seed_42/status_parameters.json": {
+      "bytes": 457,
+      "sha256": "c2c25e90f9cb06126fc94d30efd1c7049f21d9f45732717fee10bc7644ad5b7d",
+      "source": "Retrained_Colab_Models/retrained_nlp/models/Random_Forest/setting_7/seed_42/status_parameters.json"
+    },
+    "rf/reload_probe_features.npy": {
+      "bytes": 4600,
+      "sha256": "e4711472229e3d148adc61c75b0b6f019a4871af904f045b66fe789b6c5ae3f9",
+      "source": "Retrained_Colab_Models/retrained_nlp/reload_probe_features.npy"
+    },
+    "rf/reload_probes.json": {
+      "bytes": 6177,
+      "sha256": "d39a2a6165296a82a4376dfb59137052aff99c88a4ba363ac90607d7fe715b20",
+      "source": "Retrained_Colab_Models/retrained_nlp/reload_probes.json"
+    },
+    "semantic/1_Pooling/config.json": {
+      "bytes": 94,
+      "sha256": "bb80272f7adad76ce93073c25e18113ee66be1e91f60bcdd72aa41d05b28247e",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/1_Pooling/config.json"
+    },
+    "semantic/README.md": {
+      "bytes": 10676,
+      "sha256": "3fc756c24ada7da8ea723c13c19cba30b02a4fb22f358cd5b9262eba6a974a3b",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/README.md"
+    },
+    "semantic/config.json": {
+      "bytes": 775,
+      "sha256": "301040dcdd830a1ae637029490265ad63ebd19742b902099947ce9620fe65da5",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/config.json"
+    },
+    "semantic/config_sentence_transformers.json": {
+      "bytes": 295,
+      "sha256": "8d06d764aa2f9652b47a54f4419dd513052d02e859376ac226f5f988853b04da",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/config_sentence_transformers.json"
+    },
+    "semantic/model.safetensors": {
+      "bytes": 90864192,
+      "sha256": "1377e9af0ca0b016a9f2aa584d6fc71ab3ea6804fae21ef9fb1416e2944057ac",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/model.safetensors"
+    },
+    "semantic/modules.json": {
+      "bytes": 448,
+      "sha256": "5286260f53f0f5d318eb02f1565fd30f7ec7c6d305f41ad29e2bb3ec974046a6",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/modules.json"
+    },
+    "semantic/sentence_bert_config.json": {
+      "bytes": 250,
+      "sha256": "5fee3fcdc4a727fad422f0fed0c867b0921eefa9051de221521956ed42eb4c19",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/sentence_bert_config.json"
+    },
+    "semantic/tokenizer.json": {
+      "bytes": 711661,
+      "sha256": "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/tokenizer.json"
+    },
+    "semantic/tokenizer_config.json": {
+      "bytes": 618,
+      "sha256": "e9becfd25977397187a9f9359494ed9682d6f93bb58dda91da6cb36e02ef770e",
+      "source": "models/ocr_mapper/all-MiniLM-L6-v2/tokenizer_config.json"
+    }
+  },
+  "feature_contract": {
+    "legacy": {
+      "classifier": "LogisticRegression",
+      "embedding_size": 120,
+      "issue_features": 659,
+      "issue_labels": [
+        "Requirement satisfied",
+        "Missing or ambiguous information",
+        "Below minimum",
+        "Above maximum",
+        "Exact or range mismatch",
+        "Quantity or unit mismatch",
+        "Specification mismatch",
+        "Different item",
+        "Missing item"
+      ],
+      "numeric_features": 59,
+      "schema": "FASTTEXT_NUMERIC_RELATION_V2",
+      "status_features": 668,
+      "status_labels": [
+        "Acceptable",
+        "Needs Review",
+        "Needs Recanvass",
+        "Reject"
+      ],
+      "status_uses_issue_probabilities": true
+    },
+    "retrained_rf": {
+      "classifier": "RandomForestClassifier",
+      "dtype": "float32",
+      "embedding_size": 100,
+      "issue_features": 559,
+      "issue_labels": [
+        "Requirement satisfied",
+        "Missing or ambiguous information",
+        "Below minimum",
+        "Above maximum",
+        "Exact or range mismatch",
+        "Quantity or unit mismatch",
+        "Specification mismatch",
+        "Different item",
+        "Missing item"
+      ],
+      "numeric_features": 59,
+      "schema": "FASTTEXT_NUMERIC_RELATION_V2",
+      "seed": 42,
+      "setting": 7,
+      "status_features": 559,
+      "status_labels": [
+        "Acceptable",
+        "Needs Review",
+        "Needs Recanvass",
+        "Reject"
+      ],
+      "status_uses_issue_probabilities": false
+    },
+    "semantic_ocr": {
+      "architecture": "all-MiniLM-L6-v2",
+      "embedding_size": 384,
+      "local_files_only": true,
+      "modules": [
+        "Transformer",
+        "Pooling",
+        "Normalize"
+      ]
+    }
+  },
+  "model_version": "asuncion-fasttext-v2-rf-setting7-seed42-minilm-v1",
+  "profiles": {
+    "legacy": "legacy",
+    "retrained_rf": "rf",
+    "semantic_ocr": "semantic"
+  },
+  "release_id": "nlp-20261101-local-v1",
+  "runtime": {
+    "linux_verified": false,
+    "locally_verified_python": "3.11.9",
+    "packages": {
+      "gensim": "4.4.0",
+      "joblib": "1.5.3",
+      "numpy": "2.4.6",
+      "safetensors": "0.8.0",
+      "scikit-learn": "1.8.0",
+      "scipy": "1.17.1",
+      "sentence-transformers": "5.7.0",
+      "threadpoolctl": "3.6.0",
+      "tokenizers": "0.23.2",
+      "torch": "2.14.1",
+      "transformers": "5.18.0"
+    },
+    "python_implementation": "CPython",
+    "python_major": 3,
+    "training_python": "3.13.16"
+  },
+  "schema": "ASUNCION_INFERENCE_RELEASE_V1"
+}
