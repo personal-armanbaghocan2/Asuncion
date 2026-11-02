@@ -135,6 +135,44 @@ class DatabaseIsolationTests(unittest.TestCase):
             missing = dict(environment); missing[key] = ''
             with self.subTest(setting=key), self.assertRaises(RuntimeError): self.validate(missing)
 
+    def test_plain_pooler_uri_gets_verified_tls_in_the_actual_driver(self):
+        for mode in ('session', 'transaction'):
+            environment = cloud_environment(self.certificate, connection_mode=mode)
+            parameters = conninfo_to_dict(environment['SUPABASE_DB_URL'])
+            parameters.pop('sslmode'); parameters.pop('sslrootcert')
+            parameters['password'] = 'SYNTHETIC:@/?#% password'
+            target = uri(parameters)
+            environment.update(SUPABASE_DB_URL=target, PSMS_DB_SSLROOTCERT=str(self.certificate),
+                               PSMS_PRODUCTION_DB_ENABLED='1')
+            with self.subTest(mode=mode), patch.dict(os.environ, environment, clear=True), \
+                    patch.object(db.psycopg, 'connect') as connect:
+                normalized = conninfo_to_dict(db.database_url())
+                self.assertEqual(normalized, dict(parameters, sslmode='verify-full',
+                                                  sslrootcert=str(self.certificate)))
+                connect.assert_not_called()  # Config parsing performs no I/O.
+                db.connect_db(target).close()  # Explicit URI must be normalized too.
+                self.assertEqual(conninfo_to_dict(connect.call_args.args[0]), normalized)
+                self.assertEqual(connect.call_args.kwargs['connect_timeout'], 5)
+                self.assertEqual('prepare_threshold' in connect.call_args.kwargs, mode=='transaction')
+        self.connect.assert_not_called()
+
+    def test_plain_uri_never_falls_back_to_unverified_tls_or_implicit_credentials(self):
+        environment = cloud_environment(self.certificate, connection_mode='session')
+        parameters = conninfo_to_dict(environment['SUPABASE_DB_URL'])
+        parameters.pop('sslmode'); parameters.pop('sslrootcert')
+        for certificate in ('', 'relative.crt', '//outside.invalid/ca.crt', str(self.certificate)+'.missing'):
+            with self.subTest(certificate=certificate), self.assertRaises(RuntimeError):
+                self.validate(dict(environment, SUPABASE_DB_URL=uri(parameters),
+                                   PSMS_DB_SSLROOTCERT=certificate))
+        environment['PSMS_DB_SSLROOTCERT'] = str(self.certificate)
+        for key, value in (('sslmode','require'), ('sslmode','prefer'), ('sslmode','disable'),
+                           ('sslrootcert',str(self.certificate)+'.missing'), ('password',''),
+                           ('port',''), ('user','postgres.'+PROJECT), ('host','outside.invalid')):
+            invalid = dict(parameters, **{key:value})
+            with self.subTest(parameter=key, value=value), self.assertRaises(RuntimeError):
+                self.validate(dict(environment, SUPABASE_DB_URL=uri(invalid)))
+        self.connect.assert_not_called()
+
     def test_cloud_rejects_owner_api_internal_roles_and_wrong_login(self):
         environment = cloud_environment(self.certificate)
         for role in ('postgres', 'postgres.' + PROJECT, 'anon', 'authenticated', 'service_role',

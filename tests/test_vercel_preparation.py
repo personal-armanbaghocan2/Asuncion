@@ -136,7 +136,13 @@ class InitialProductionTests(unittest.TestCase):
         cls.stack=ExitStack();cls.addClassCleanup(cls.stack.close)
         root=Path(cls.stack.enter_context(tempfile.TemporaryDirectory(prefix='.first-online-',dir=ROOT)))
         certificate=root/'synthetic-ca.crt';certificate.write_text('SYNTHETIC CONFIG ONLY')
-        environment=cloud_environment(certificate,mode='production')
+        environment=cloud_environment(certificate,mode='production',connection_mode='session')
+        from psycopg.conninfo import conninfo_to_dict
+        from urllib.parse import quote
+        parameters=conninfo_to_dict(environment['SUPABASE_DB_URL'])
+        environment.update(SUPABASE_DB_URL=('postgresql://'+quote(parameters['user'],safe='')+':'+
+            quote(parameters['password'],safe='')+'@'+parameters['host']+':5432/'+parameters['dbname']),
+            PSMS_DB_SSLROOTCERT=str(certificate))
         environment.update(PSMS_SECRET_KEY='synthetic-first-production-session-key-not-live',
             VERCEL='1',PSMS_PRODUCTION_DB_ENABLED='1',PSMS_DURABLE_WORKBOOKS_ENABLED='1',
             PSMS_INFERENCE_ENABLED='0',PSMS_INFERENCE_CACHE_ENABLED='1',PSMS_DATA_DIR=str(root))
