@@ -239,7 +239,7 @@ class InitialProductionTests(unittest.TestCase):
             base=Path(temporary)
             (base/'app.py').write_text('SYNTHETIC SOURCE')
             (base/releases.REGISTRY).write_text('{}')
-            (base/'Dockerfile.vercel').write_text('ENV PSMS_INFERENCE_ENABLED=0\nCOPY runtime/ /app/\n')
+            (base/'Dockerfile.vercel').write_text('ENV PSMS_INFERENCE_ENABLED=0 PSMS_NLP_RUNTIME=legacy\nCOPY runtime/ /app/\n')
             (base/'vercel.json').write_text('{}')
             (base/'.vercelignore').write_text('**\n!runtime/\n!runtime/**\n')
             with patch.object(delivery,'source_files',return_value={'app.py',releases.REGISTRY}):

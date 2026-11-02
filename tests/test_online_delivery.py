@@ -37,7 +37,7 @@ class ContextTests(unittest.TestCase):
             archive_bytes=20000,archive_sha256='0'*64)
         self.pin_modified_manifest()
         (self.base/'app.py').write_text('SYNTHETIC APPLICATION SOURCE')
-        (self.base/'Dockerfile.vercel').write_text('ENV PSMS_INFERENCE_ENABLED=0\nCOPY runtime/ /app/\n')
+        (self.base/'Dockerfile.vercel').write_text('ENV PSMS_INFERENCE_ENABLED=0 PSMS_NLP_RUNTIME=legacy\nCOPY runtime/ /app/\n')
         (self.base/'vercel.json').write_text('{}')
         (self.base/'.vercelignore').write_text('**\n!runtime/\n!runtime/**\n')
         (self.base/'UNREVIEWED-CANARY.txt').write_text('SYNTHETIC-PRIVATE-CANARY')
@@ -64,6 +64,36 @@ class ContextTests(unittest.TestCase):
         for target in (self.base/'app.py', self.base.parent/'unowned'):
             with self.assertRaisesRegex(releases.ReleaseError,'NEW_PRIVATE_OUTPUT'):
                 delivery.destination(target,base=self.base)
+
+    def test_rf_context_requires_rf_approval_and_selects_rf_during_image_build(self):
+        self.manifest['approval']=self.entry['approval']=dict(status='approved',
+            approved_profiles=['legacy','semantic_ocr'],quality_review='SYNTHETIC',deployment_review='SYNTHETIC')
+        self.entry['manifest']=self.manifest
+        self.entry['delivery']=dict(url='https://synthetic.invalid/immutable.zip',
+            archive_bytes=20000,archive_sha256='0'*64)
+        self.pin_modified_manifest()
+        (self.base/'app.py').write_text('SYNTHETIC SOURCE')
+        (self.base/'Dockerfile.vercel').write_text('ENV PSMS_INFERENCE_ENABLED=0 PSMS_NLP_RUNTIME=legacy\nCOPY runtime/ /app/\n')
+        (self.base/'vercel.json').write_text('{}')
+        (self.base/'.vercelignore').write_text('**\n!runtime/\n!runtime/**\n')
+        target=self.base/'output/rf-context'
+        with self.assertRaises(releases.ReleaseError):
+            delivery.context(target,self.identifier,base=self.base,nlp_runtime='retrained_rf')
+        self.assertFalse(target.exists())
+        self.manifest['approval']['approved_profiles'].append('retrained_rf')
+        self.pin_modified_manifest();before=(self.base/releases.REGISTRY).read_bytes()
+        with patch.object(delivery,'source_files',return_value={'app.py',releases.REGISTRY,releases.SOURCE_CONTRACT}):
+            report=delivery.context(target,self.identifier,base=self.base,nlp_runtime='retrained_rf')
+        self.assertEqual(report['nlp_runtime'],'retrained_rf')
+        docker=(target/'Dockerfile.vercel').read_text()
+        self.assertIn('PSMS_INFERENCE_ENABLED=1',docker)
+        self.assertIn('PSMS_NLP_RUNTIME=retrained_rf',docker)
+        self.assertEqual((self.base/releases.REGISTRY).read_bytes(),before)
+        self.assertIn('PSMS_NLP_RUNTIME=legacy',(self.base/'Dockerfile.vercel').read_text())
+
+    def test_reviewed_git_delivery_contains_existing_linux_gate_dependencies(self):
+        from deploy.model_release_gate import CODE
+        self.assertLessEqual(set(CODE),delivery.source_files(ROOT)|set(delivery.DEPLOY_FILES))
 
 
 class ProductionRFTests(unittest.TestCase):

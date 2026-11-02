@@ -16,6 +16,14 @@ on:
         required: false
         default: ''
         type: string
+      nlp_runtime:
+        description: Selected classifier; RF requires explicit retrained_rf release approval
+        required: true
+        default: legacy
+        type: choice
+        options:
+          - legacy
+          - retrained_rf
       deploy_approved:
         description: Owner authorizes this exact commit/release for the existing production project
         required: true
@@ -36,7 +44,7 @@ jobs:
     timeout-minutes: 45
     environment: production
     env:
-      PSMS_NLP_RUNTIME: legacy
+      PSMS_NLP_RUNTIME: ${{ inputs.nlp_runtime }}
       RELEASE_ID: ${{ inputs.release_id }}
       INFERENCE_MODE: ${{ inputs.inference_mode }}
     steps:
@@ -51,7 +59,7 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - name: Prepare source-only context below 90 MB with explicit inference mode
-        run: python -B deploy/online_delivery.py context --inference-mode "$INFERENCE_MODE" --release "$RELEASE_ID" --output output/vercel-container
+        run: python -B deploy/online_delivery.py context --inference-mode "$INFERENCE_MODE" --release "$RELEASE_ID" --runtime "$PSMS_NLP_RUNTIME" --output output/vercel-container
       - name: Deploy the prepared context to the existing project
         working-directory: output/vercel-container
         env:
