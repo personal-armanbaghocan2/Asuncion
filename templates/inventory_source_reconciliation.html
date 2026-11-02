@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Review Inventory Source Refresh</h2>
+<p>The retained workbook contains {{preview.accepted_count}} structurally valid item rows. {{preview.retired_count}} existing active records would become inactive source entries.</p>
+<p>Confirmation preserves every stored record, linked procurement document and original workbook version. It deletes no records and grants no procurement approval. Check the source rows below before continuing. Lists show at most 200 rows each.</p>
+<h3>Item rows retained by the parser</h3>
+<table class="table"><thead><tr><th>Sheet</th><th>Source row</th><th>Item</th><th>Unit</th></tr></thead><tbody>
+{% for row in preview.accepted %}<tr><td>{{row.source_sheet}}</td><td>{{row.source_row}}</td><td>{{row.description or row.article}}</td><td>{{row.unit}}</td></tr>{% endfor %}
+</tbody></table>
+<h3>Existing source entries proposed for inactivation</h3>
+<table class="table"><thead><tr><th>Record ID</th><th>Sheet</th><th>Source row</th><th>Stored description</th></tr></thead><tbody>
+{% for row in preview.retired %}<tr><td>{{row.id}}</td><td>{{row.sheet_name}}</td><td>{{row.source_row}}</td><td>{{row.description}}</td></tr>{% else %}<tr><td colspan="4">No existing source entries would be inactivated.</td></tr>{% endfor %}
+</tbody></table>
+<form method="post" action="{{url_for('ppmp_dataset')}}">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+<input type="hidden" name="action" value="refresh_dataset">
+<input type="hidden" name="source_version" value="{{preview.source_version}}">
+<input type="hidden" name="source_fingerprint" value="{{preview.fingerprint}}">
+<label><input type="checkbox" name="reconcile_confirm" value="yes" required> I reviewed the retained items and proposed inactive entries.</label>
+<button class="btn primary" type="submit">Confirm source refresh</button>
+<a class="btn" href="{{url_for('ppmp_dataset')}}">Cancel</a>
+</form>
+{% endblock %}

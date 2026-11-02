@@ -256,7 +256,7 @@ def predict_pair(model_root, pr_text, po_text):
 def model_status(model_root):
     try:
         load_assets(model_root)
-        return dict(active=True, message='Experimental retrained RF ready for synthetic human-reviewed testing; no automatic approval.',
+        return dict(active=True, message='Experimental retrained RF ready for authorized human-reviewed testing; no automatic approval.',
                     manifest=dict(deployed_model='FastText + Random Forest', runtime='retrained_rf'))
     except RetrainedModelError as error:
         return dict(active=False, message=str(error))
