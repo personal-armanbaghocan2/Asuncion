@@ -214,10 +214,13 @@ empty-registry first-release image cannot activate an unapproved model.
 
 For the existing FastText + Random Forest, the CURRENT registry is still
 unapproved. Keep the working website's inference flag at 0 until the existing
-**Original model release verification** workflow completes successfully and the
 owner approves `retrained_rf` explicitly using the existing finalizer procedure
-in `docs/reports/MODEL_RELEASE_OWNER_REVIEW.md`. The old 8/9 Linux result is not
-a completed gate. No model approval or new Linux result is implied by this guide.
+in `docs/reports/MODEL_RELEASE_OWNER_REVIEW.md`. GitHub Linux verification #4 has
+passed; reuse its bound evidence under
+`output/model_approval_preparation/linux-evidence`. Do not repeat it. The prepared
+v2 decision supports `AUTHORIZED_ONLINE_REVIEW_ONLY`, with explicit acceptance
+of experimental limitations, authorized documents and mandatory human review.
+The decision remains `NOT_APPROVED`; successful compatibility is not owner consent.
 
 After genuine approval, publish the NEW immutable release parts privately and
 verify their transport hashes. Configure only Vercel Production:
@@ -242,8 +245,9 @@ legacy. No production setting is changed automatically by source preparation.
 
 Acceptance: authenticated `/health` must report the matching `nlp_runtime` and
 `inference_release_id`, enabled/active inference and database readiness. Process
-fictional supported documents through their existing review screens, link a
-fictional approved PR/PO, then run NLP Verification. Verify the saved record shows
+an explicitly authorized supported document through its existing review screen,
+link the appropriate authorized PR/PO, then run NLP Verification. Verify the saved record shows
 FastText + Random Forest, 559 features, status/issue probabilities and warnings,
 and remains For Review after refreshing. A health flag alone does not prove the
-upload/OCR/model/database workflow. Production end-to-end acceptance is pending.
+upload/OCR/model/database workflow. Do not approve an official procurement transaction
+merely to test model output. Production end-to-end acceptance is pending.

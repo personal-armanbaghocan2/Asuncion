@@ -1,10 +1,113 @@
-# Original model release: owner review and final package
+# NLP v2: authorized online review
 
-Decision status: **NOT APPROVED**. Original models are ready for a bounded owner
-review, but **not ready for final release approval today**. A complete concurrent
-Linux process-exit result and an explicit quality/deployment decision are missing.
-No original model, approval, production registry, database or deployed site was
-changed by this preparation. No Linux/Docker/model campaign was run locally.
+CURRENT STATUS: READY FOR EXPLICIT OWNER REVIEW; NOT APPROVED OR DEPLOYED.
+
+Prepared decision: `output/model_approval_preparation/owner-decision.json`.
+Proposed scope: `AUTHORIZED_ONLINE_REVIEW_ONLY`; profiles: `legacy`,
+`semantic_ocr`, `retrained_rf`. Owner name/time are blank and all acceptance
+flags remain false. Prepared review statements do not constitute a signature.
+
+[GitHub Linux verification #4](https://github.com/personal-armanbaghocan2/Asuncion/actions/runs/41454681193)
+passed: exit code 0, two workers, 13.33 seconds including process exit, one CPU,
+2,147,483,648-byte limit and 945,201,152-byte peak. The supplied evidence is
+`output/model_approval_preparation/linux-evidence/verification.json`, SHA-256
+`76730388af5b4e1199b1486d6d7a5e28eecf4315b8817e5a330c955d02675df3`.
+Verified source: `e3aa015f681fbb957870b24c3e523f63fa2b5f39`.
+All recorded inference-code hashes match. The dependency lock is pinned to the
+exact verified LF bytes, with no dependency-version change. Do not repeat Linux
+verification for this approval-scope change.
+
+## Current owner approval and activation
+
+Only explicitly authorized documents may be uploaded to the existing Vercel and
+Supabase system for online integration testing. Outputs remain advisory and
+review-only. Existing roles, CSRF, state checks, audit records and human
+confirmation remain mandatory. NLP cannot automatically approve procurement
+transactions. This does not authorize unrestricted municipal operation or bulk
+disclosure of records.
+
+RF labels remain AI_PROPOSED_UNVERIFIED, probabilities are uncalibrated and
+independent accuracy is not established. Known false Acceptable predictions and
+inconsistent heads remain limitations. Accuracy improvements may follow testing;
+this scope does not impose another accuracy campaign before integration.
+
+The owner must review the prepared decision, enter their own name and actual UTC
+approval time, set decision to APPROVE, and explicitly accept all three flags:
+`limitations_accepted`, `experimental_rf_limitations_accepted`, and
+`authorized_online_review_conditions_accepted`. Until then finalization refuses
+approval. The earlier synthetic-only scope remains supported for existing decisions.
+
+After genuine approval, run:
+
+```powershell
+python -B deploy/finalize_model_release.py --decision output/model_approval_preparation/owner-decision.json --linux-evidence output/model_approval_preparation/linux-evidence/verification.json --candidate-dir output/hobby_delivery/model-proposal/private-models/nlp-online-original-v1 --output output/model_approval_preparation/final-v2 --register
+```
+
+This creates new immutable v2 parts and transport hashes. `--register` atomically
+adds the validated metadata while preserving existing entries and the deployment
+pointer; offline selection remains unchanged. No upload or deployment occurs.
+
+Upload only new `.part` files to the ROOT of the PRIVATE bucket
+`psms-private-model-releases`. Preserve v1 objects and bucket privacy. Obtain
+fresh per-object signed download URLs for v2, then run:
+
+```powershell
+.\deploy\Set-PrivateModelTokens.ps1 -DescriptorPath output/model_approval_preparation/final-v2/registry-entry.APPROVED.json -CopyForVercel
+python -B deploy/verify_model_parts.py --descriptor output/model_approval_preparation/final-v2/registry-entry.APPROVED.json --remote
+```
+
+Store token JSON only in Vercel Production `PSMS_MODEL_PART_TOKENS`. Commit only
+reviewed source and registered metadata; exclude weights, output, tokens and signed
+URLs. Keep existing database, administrator, TLS CA and workbook settings.
+
+After finalization and registration, regenerate the exact source review so its
+inventory includes the approved registry entry. In the owner's normal terminal:
+
+```powershell
+python -B deploy/online_delivery.py review --output output/model_approval_preparation/approved-source-review
+if ($LASTEXITCODE -ne 0) { throw 'Source review failed.' }
+$deliveryFiles = Get-Content -LiteralPath output/model_approval_preparation/approved-source-review/github-files.txt
+git add -- $deliveryFiles
+git diff --cached --stat
+git diff --cached --check
+```
+
+Review the full staged diff before committing. Do not include unrelated staged
+changes. Only after that review:
+
+```powershell
+git commit -m "feat(nlp): enable approved online review release"
+git push -u origin feature/online-integration
+```
+
+Merge the reviewed change into the existing production branch through the usual
+owner-controlled GitHub process. Keep automatic Vercel Git deployment disabled.
+Set Production `PSMS_INFERENCE_ENABLED=1`, `PSMS_NLP_RUNTIME=retrained_rf`,
+`PSMS_INFERENCE_RELEASE_ID=nlp-online-original-v2`, `PSMS_INFERENCE_CACHE_ENABLED=1`.
+Run Existing Vercel production deployment with `inference_mode=approved_release`,
+`nlp_runtime=retrained_rf`, `release_id=nlp-online-original-v2`, `deploy_approved=true`.
+
+After the production branch contains the reviewed commit, the equivalent manual
+dispatch command is:
+
+```powershell
+gh workflow run online-production.yml --repo personal-armanbaghocan2/Asuncion --ref main -f inference_mode=approved_release -f nlp_runtime=retrained_rf -f release_id=nlp-online-original-v2 -F deploy_approved=true
+```
+
+This session has no cloud credentials or writable Git metadata. These commands
+must run using the owner's existing authorized access; no push or deployment has
+been performed here.
+
+Check health, then upload one authorized document, review OCR fields, run NLP for
+its linked procurement records, and confirm RF output, For Review status and
+persistence after refreshing. Do not approve an official transaction merely to
+test model output. Live end-to-end acceptance is not yet claimed.
+
+## Historical notes before successful run #4
+
+The remaining notes preserve earlier evidence/quality history. Their old pending
+Linux status and synthetic-only activation commands are superseded by the current
+instructions above; do not repeat the old verification or activation sequence.
 
 ## Existing verified evidence reused
 

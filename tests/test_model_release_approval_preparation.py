@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import inference_releases as releases
 from deploy import model_release_gate as gate
-from deploy.finalize_model_release import finalize,DECISION_SCHEMA
+from deploy.finalize_model_release import finalize,DECISION_SCHEMA,ONLINE_REVIEW_SCOPE
 from deploy.inference_release import archive_bytes
 from test_inference_releases import ReleaseTests
 
@@ -111,6 +111,51 @@ class ApprovalTests(unittest.TestCase):
         with self.assertRaisesRegex(releases.ReleaseError,'RF_EXPERIMENTAL_REVIEW_REQUIRED'):
             self.finalize()
         self.assertFalse((self.base/'output/final').exists())
+
+    def test_authorized_online_review_requires_owner_acceptance_and_retains_restrictions(self):
+        self.decision.update(use_scope=ONLINE_REVIEW_SCOPE,
+            approved_profiles=['legacy','semantic_ocr','retrained_rf'],
+            experimental_rf_limitations_accepted=True,
+            authorized_online_review_conditions_accepted=False)
+        self.decision_path.write_bytes(releases.canonical(self.decision))
+        with self.assertRaisesRegex(releases.ReleaseError,'AUTHORIZED_ONLINE_REVIEW_ACCEPTANCE_REQUIRED'):
+            self.finalize()
+        self.assertFalse((self.base/'output/final').exists())
+        self.decision['authorized_online_review_conditions_accepted']=True
+        self.decision_path.write_bytes(releases.canonical(self.decision))
+        before=(self.base/releases.REGISTRY).read_bytes()
+        self.finalize()
+        entry=releases.read_json(self.base/'output/final/registry-entry.APPROVED.json')['synthetic-final-v2']
+        approval=entry['approval']
+        self.assertEqual(approval['use_scope'],ONLINE_REVIEW_SCOPE)
+        for key in ('authorized_documents_only','review_only','human_confirmation_required'):
+            self.assertIs(approval[key],True)
+        self.assertIs(approval['automatic_procurement_approval'],False)
+        self.assertEqual(entry['manifest']['artifacts'],self.manifest['artifacts'])
+        self.assertEqual((self.base/releases.REGISTRY).read_bytes(),before)
+
+    def test_online_scope_does_not_allow_unsigned_decisions_or_unrestricted_use(self):
+        self.decision.update(use_scope=ONLINE_REVIEW_SCOPE,
+                             authorized_online_review_conditions_accepted=True)
+        for changes in ({'decision':'NOT_APPROVED'},{'approved_by':''},
+                        {'limitations_accepted':False},{'use_scope':'UNRESTRICTED_MUNICIPAL_USE'}):
+            invalid=dict(self.decision,**changes)
+            self.decision_path.write_bytes(releases.canonical(invalid))
+            with self.assertRaises(releases.ReleaseError):self.finalize()
+            self.assertFalse((self.base/'output/final').exists())
+
+    def test_registration_preserves_offline_pointer_and_existing_entries(self):
+        before=releases.read_json(self.base/releases.REGISTRY)
+        result=finalize(self.decision_path,self.evidence_path,self.root,self.base/'output/final',
+                        base=self.base,register=True)
+        after=releases.read_json(self.base/releases.REGISTRY)
+        self.assertTrue(result['registry_modified'])
+        self.assertEqual(after.get('deployment_release'),before.get('deployment_release'))
+        for key,value in before['releases'].items():self.assertEqual(after['releases'][key],value)
+        new=after['releases']['synthetic-final-v2']
+        self.assertEqual(new['manifest']['artifacts'],self.manifest['artifacts'])
+        self.assertNotIn('?',new['delivery']['parts'][0]['url'])
+        self.assertFalse(result['published']);self.assertFalse(result['deployed'])
 
     def test_child_success_file_cannot_override_a_process_exit_timeout(self):
         results=self.base/'results';results.mkdir()
