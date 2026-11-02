@@ -1,6 +1,6 @@
 ﻿# Deploy ONLY the generated source-only context; never the development checkout.
 # deploy/online_delivery.py copies the required code/templates/static by allowlist.
-**
+
 !Dockerfile.vercel
 !vercel.json
 !.dockerignore
