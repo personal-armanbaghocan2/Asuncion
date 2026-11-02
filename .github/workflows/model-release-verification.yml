@@ -1,0 +1,53 @@
+name: Original model release verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      verification_authorized:
+        description: Owner authorizes private candidate download and this verification only
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: original-model-release-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: ${{ inputs.verification_authorized }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          # Host helpers use only stdlib; model runtime is pinned to 3.13.16 in Docker.
+          python-version: '3.13'
+      - name: Prepare source-only unapproved candidate appliance
+        run: python -B deploy/model_release_gate.py prepare
+      - name: Build matching Bookworm CPU runtime without secrets or weights
+        run: docker build --platform linux/amd64 --tag asuncion-model-gate:verification output/model-release-gate/context
+      - name: Verify private parts and retain only hash-verified original model bytes
+        env:
+          PSMS_MODEL_PART_TOKENS: ${{ secrets.PSMS_MODEL_VERIFICATION_PART_TOKENS }}
+        run: python -B deploy/model_release_gate.py fetch
+      - name: Complete existing two-worker workload and actual process exit within 180 seconds
+        run: python -B deploy/model_release_gate.py run
+      - name: Publish sanitized evidence only, including failure checkpoints
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: original-model-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            output/model-release-gate/results/verification.json
+            output/model-release-gate/results/concurrent-checkpoints.jsonl
+            output/model-release-gate/results/resources.json
+            output/model-release-gate/results/fetch.json
