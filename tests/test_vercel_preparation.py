@@ -127,6 +127,42 @@ class AssetBuildTests(unittest.TestCase):
             and n.value.func.id == 'Flask' for n in tree.body))
 
 
+class PackagedDatabaseCATests(unittest.TestCase):
+    def test_public_ca_is_the_unchanged_locally_tested_certificate(self):
+        import ssl
+        from runtime_configuration import validate_packaged_database_ca
+        packaged=validate_packaged_database_ca(ROOT)
+        self.assertEqual(packaged.read_bytes(),(ROOT/'supabase-ca.crt').read_bytes())
+        context=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cafile=str(packaged))
+        self.assertEqual(context.cert_store_stats()['x509_ca'],1)
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(context.verify_mode,ssl.CERT_REQUIRED)
+
+    def test_ca_pin_accepts_git_newlines_and_rejects_extra_or_changed_material(self):
+        from runtime_configuration import PACKAGED_DATABASE_CA,validate_packaged_database_ca
+        original=(ROOT/PACKAGED_DATABASE_CA).read_bytes()
+        with tempfile.TemporaryDirectory(prefix='.packaged-ca-',dir=ROOT) as directory:
+            base=Path(directory);target=base/PACKAGED_DATABASE_CA
+            target.parent.mkdir();target.write_bytes(original.replace(b'\n',b'\r\n'))
+            validate_packaged_database_ca(base)
+            for content in (original+b'\n-----BEGIN PRIVATE KEY-----\nSYNTHETIC\n-----END PRIVATE KEY-----\n',
+                            original.replace(b'MII',b'NII',1),original+original):
+                target.write_bytes(content)
+                with self.assertRaisesRegex(RuntimeError,'PACKAGED_DATABASE_CA_INVALID'):
+                    validate_packaged_database_ca(base)
+
+    def test_only_the_reviewed_ca_is_allowlisted_and_image_uses_the_stable_path(self):
+        from deploy.online_delivery import source_files
+        from runtime_configuration import PACKAGED_DATABASE_CA
+        files=source_files()
+        self.assertEqual({p for p in files if p.endswith(('.crt','.pem','.key'))},{PACKAGED_DATABASE_CA})
+        docker=(ROOT/'Dockerfile.vercel').read_text()
+        self.assertIn('PSMS_DB_SSLROOTCERT=/app/certs/supabase-ca.crt',docker)
+        self.assertIn('RUN chmod 0444 /app/certs/supabase-ca.crt',docker)
+        self.assertLess(docker.index('RUN chmod 0444'),docker.index('USER psms'))
+
+
 class InitialProductionTests(unittest.TestCase):
     """Only initial website boot/off-switch/context; no live SQL/models/network."""
     @classmethod

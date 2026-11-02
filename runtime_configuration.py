@@ -18,6 +18,35 @@ _RESERVED_DATABASE_ROLES = frozenset((
     'authenticator', 'admin', 'root', 'dashboard_user', 'pgbouncer',
     'supavisor', 'realtime_admin',
 ))
+PACKAGED_DATABASE_CA = 'certs/supabase-ca.crt'
+# DER fingerprint of the owner's locally tested public Supabase Root 2021 CA.
+# DER remains stable across Git LF/CRLF conversion; never pin a private key.
+PACKAGED_DATABASE_CA_SHA256 = '807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6cafa'
+
+
+def validate_packaged_database_ca(base):
+    """Build/delivery check only. No database connection or local-profile change."""
+    import hashlib
+    import ssl
+    root = Path(base).resolve()
+    certificate = root / PACKAGED_DATABASE_CA
+    try:
+        if (certificate.is_symlink() or not certificate.resolve().is_relative_to(root)
+                or not certificate.is_file() or certificate.stat().st_size > 16384):
+            raise ValueError()
+        text = certificate.read_bytes().decode('ascii').strip()
+        if not re.fullmatch(r'-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----', text):
+            raise ValueError()
+        der = ssl.PEM_cert_to_DER_cert(text)
+        if hashlib.sha256(der).hexdigest() != PACKAGED_DATABASE_CA_SHA256:
+            raise ValueError()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cadata=text)
+        if context.cert_store_stats()['x509_ca'] != 1:
+            raise ValueError()
+    except Exception:
+        raise RuntimeError('PACKAGED_DATABASE_CA_INVALID') from None
+    return certificate
 
 
 def validate_database_configuration(dsn, *, environ=None):
