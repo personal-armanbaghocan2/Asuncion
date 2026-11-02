@@ -1959,8 +1959,12 @@ def ensure():
         return redirect(url_for('login'))
     try:
         account = server_sessions.account_for_session(conn, session.get(server_sessions.COOKIE_KEY), user_id)
-    except Exception:
+    except Exception as error:
         # A failed account lookup must not grant access or trigger setup/repair.
+        # Emit only a fixed category: driver text/tracebacks may contain secrets.
+        app.logger.warning('Account validation unavailable [%s]; cleanup_failed=%s.',
+                           server_sessions.failure_reason(error, stage='account_read'),
+                           getattr(error, 'cleanup_failed', False) is True)
         return Response('Account validation is temporarily unavailable. Please try again.',
                         status=503, mimetype='text/plain')
     if (not account or account.get('status') != 'Active'
@@ -1984,7 +1988,13 @@ def login():
     if request.method == 'POST':
         username = (request.form.get('username') or '').strip()
         password = request.form.get('password') or ''
-        user = q('select * from users where username=?', (username,), one=True)
+        try:
+            user = q('select * from users where username=?', (username,), one=True)
+        except Exception as error:
+            app.logger.warning('Sign-in account lookup unavailable [%s].',
+                               server_sessions.failure_reason(error, stage='account_lookup'))
+            return Response('Sign-in is temporarily unavailable. Please contact the administrator.',
+                            status=503, mimetype='text/plain')
         valid = False
         if user:
             stored = str(user['password'] or '')
