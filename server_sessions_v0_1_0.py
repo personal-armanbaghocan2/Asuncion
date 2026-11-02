@@ -13,14 +13,20 @@ VERSION='0.1.1-candidate'
 COOKIE_KEY='_auth_sid'
 TRIGGER='psms_revoke_auth_sessions_on_account_change'
 
-_STAGES = ('connect', 'readiness', 'account_lock', 'session_insert', 'commit', 'diagnostics')
+_STAGES = ('connect', 'read_only', 'readiness', 'account_read', 'account_lookup',
+           'account_lock', 'session_insert', 'commit', 'diagnostics')
 _ERROR_CODES = {'42883': 'missing_function', '42P01': 'missing_table',
                 '42703': 'incompatible_columns', '42501': 'permission_denied',
                 '25006': 'read_only_transaction', '23502': 'constraint_failure',
                 '23503': 'constraint_failure', '23505': 'constraint_failure',
-                '23514': 'constraint_failure'}
+                '23514': 'constraint_failure', '28P01': 'database_authentication_failed',
+                '28000': 'database_authentication_failed', '3D000': 'database_missing',
+                '53300': 'connection_limit', '57P03': 'server_unavailable',
+                '08001': 'connection_failed', '08006': 'connection_failed'}
+_CONNECT_CODES = ('tls_verification_failed', 'host_resolution_failed', 'timeout',
+                  'network_unavailable', 'configuration_rejected')
 _SAFE_REASONS = {stage+':'+code for stage in _STAGES
-                 for code in (*set(_ERROR_CODES.values()), 'failed')}
+                 for code in (*set(_ERROR_CODES.values()), *_CONNECT_CODES, 'failed')}
 _SAFE_REASONS.update(('unavailable', 'readiness:contract_rejected', 'cleanup:failed'))
 
 class Unavailable(RuntimeError):
@@ -30,8 +36,10 @@ class Unavailable(RuntimeError):
         self.cleanup_failed = False
 
 
-def failure_reason(error):
+def failure_reason(error, *, stage=None):
     """Return an allowlisted code only, never driver text, credentials or IDs."""
+    if not isinstance(error, Unavailable) and stage in _STAGES:
+        return failure_reason(_failure(stage, error))
     value = getattr(error, 'reason', 'unavailable')
     return value if type(value) is str and value in _SAFE_REASONS else 'unavailable'
 
@@ -39,6 +47,22 @@ def failure_reason(error):
 def _failure(stage, error):
     state = getattr(error, 'sqlstate', None)
     code = _ERROR_CODES.get(state, 'failed') if type(state) is str else 'failed'
+    if code == 'failed':
+        # libpq connection/TLS failures often have no SQLSTATE. Inspect text only
+        # to select fixed labels; NEVER return/log that text or exception info.
+        from psycopg import OperationalError
+        if isinstance(error, OperationalError):
+            text = str(error).casefold()
+            for fragments, category in (
+                (('certificate verify failed', 'root certificate file', 'server certificate'), 'tls_verification_failed'),
+                (('could not translate host name', 'failed to resolve host'), 'host_resolution_failed'),
+                (('timeout expired', 'connection timed out'), 'timeout'),
+                (('connection refused', 'network is unreachable', 'no route to host'), 'network_unavailable')):
+                if any(fragment in text for fragment in fragments):
+                    code = category
+                    break
+        elif stage == 'connect' and type(error) is RuntimeError:
+            code = 'configuration_rejected'
     return Unavailable('Session creation is unavailable.', reason=stage+':'+code)
 
 
@@ -186,18 +210,31 @@ def account_for_session(factory,token,user_id):
     digest=token_hash(token)
     if digest is None or type(user_id) is not int or user_id<=0:return None
     con=None
+    stage='connect'
+    primary_failure=None
     try:
         con=factory()
+        stage='read_only'
         con.execute('SET TRANSACTION READ ONLY')
+        stage='readiness'
         _ready(con)
+        stage='account_read'
         return con.execute("""select u.id,u.username,u.role,u.status,u.full_name,u.display_name,u.created_at,u.last_login from public.auth_sessions s
           join public.users u on u.id=s.user_id
           where s.token_hash=? and s.user_id=? and s.revoked_at is null
             and s.expires_at>clock_timestamp() and u.status='Active'
             and u.role in ('Admin','Staff','Inspector')""",(digest,user_id)).fetchone()
-    except Unavailable:raise
-    except Exception:raise Unavailable('Session validation is unavailable.') from None
-    finally:_clean(con)
+    except Unavailable as error:
+        primary_failure=error
+        raise
+    except Exception as error:
+        primary_failure=_failure(stage,error)
+        raise primary_failure from None
+    finally:
+        try:_clean(con)
+        except Unavailable:
+            if primary_failure is None:raise
+            primary_failure.cleanup_failed=True
 
 def revoke_current(factory,token,user_id,audit=None):
     digest=token_hash(token)
