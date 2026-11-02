@@ -8,6 +8,7 @@ import argparse
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -30,12 +31,14 @@ DEPLOY_FILES = ('Dockerfile.vercel','vercel.json','.gitignore','.dockerignore','
     'deploy/verify_online_image.py','deploy/validate_linux_runtime.py','deploy/source_release.py',
     'scripts/audits/online_backend_manifest.py','inference_release_sources.json',
     'tests/test_online_delivery.py','tests/run_online_delivery_checks.py','tests/test_vercel_preparation.py',
+    'tests/test_retrained_nlp.py',
     'tests/test_hobby_model_delivery.py','tests/run_hobby_delivery_checks.py',
     'tests/test_supabase_model_delivery.py','tests/run_private_model_delivery_checks.py','deploy/verify_model_parts.py',
     'deploy/Set-PrivateModelTokens.ps1','docs/guides/PRIVATE_MODEL_DELIVERY.md',
     'deploy/proposals/private_model_delivery_nlp_online_original_v1.PROPOSED.json',
     '.github/workflows/model-release-verification.yml','deploy/model_release_gate.Dockerfile',
     'deploy/model_release_gate.py','deploy/finalize_model_release.py',
+    'deploy/linux_validation/probe.py','tests/OCR_FILETYPE_REGRESSION_TEST.py',
     'deploy/proposals/model_release_owner_decision.PROPOSED.json',
     'tests/test_model_release_approval_preparation.py','tests/run_model_release_approval_checks.py',
     'docs/reports/MODEL_RELEASE_OWNER_REVIEW.md',
@@ -117,7 +120,7 @@ def initial(path,base=ROOT):
     (target/'required-untracked.txt').write_text('\n'.join(sorted(files-tracked))+'\n')
     (target/'inventory.json').write_bytes(releases.canonical(dict(files=inventory,
         inference_mode='disabled',secrets_or_model_weights_included=False,published=False)))
-    report=context(target/'vercel-source',None,base=base,inference_mode='disabled')
+    report=context(target/'vercel-source',None,base=base,inference_mode='disabled',nlp_runtime='legacy')
     return dict(report,github_files=len(files),required_untracked=len(files-tracked),output=str(target))
 
 
@@ -227,27 +230,29 @@ def package(path,identifier,directory=None,base=ROOT):
         archive_bytes=entry['delivery']['archive_bytes'],output=str(target),published=False)
 
 
-def context(path,identifier=None,base=ROOT,inference_mode=None):
+def context(path,identifier=None,base=ROOT,inference_mode=None,nlp_runtime=None):
     base=Path(base); target=destination(path,base)
     identifier=identifier or None
     mode=inference_mode or ('approved_release' if identifier else 'disabled')
+    selected=nlp_runtime if nlp_runtime is not None else os.environ.get('PSMS_NLP_RUNTIME','legacy')
+    releases.require(selected in ('legacy','retrained_rf'),'DELIVERY_NLP_RUNTIME_INVALID')
     releases.require(mode in ('disabled','approved_release'),'DELIVERY_INFERENCE_MODE_INVALID')
     if mode=='disabled':
         releases.require(identifier is None,'DELIVERY_DISABLED_RELEASE_CONFLICT')
-        return _copy_context(target,None,None,base)
+        return _copy_context(target,None,None,base,nlp_runtime=selected)
     releases.require(bool(identifier),'RELEASE_SELECTION_REQUIRED')
     # This must precede all output, including selection of the deployment pointer.
     evidence=releases.metadata(identifier,base=base,deployment=True,dependencies=False,
-        profiles=(__import__('os').environ.get('PSMS_NLP_RUNTIME','legacy'),'semantic_ocr'))
+        profiles=(selected,'semantic_ocr'))
     from runtime_model_cache import delivery_settings
     delivery_settings(identifier,evidence,base)
-    report=_copy_context(target,identifier,releases.entry_for(identifier,base),base)
+    report=_copy_context(target,identifier,releases.entry_for(identifier,base),base,nlp_runtime=selected)
     releases.metadata(identifier,base=target/'runtime',dependencies=False,
-        profiles=(__import__('os').environ.get('PSMS_NLP_RUNTIME','legacy'),'semantic_ocr'))
+        profiles=(selected,'semantic_ocr'))
     return report
 
 
-def _copy_context(target,identifier,entry,base):
+def _copy_context(target,identifier,entry,base,*,nlp_runtime='legacy'):
     """Exact source only. Never copy artifacts or download credentials."""
     files=source_files(base)
     target.mkdir(parents=True)
@@ -265,6 +270,8 @@ def _copy_context(target,identifier,entry,base):
         shutil.copyfile(releases.safe_path(base,name),target/name)
     docker=(target/'Dockerfile.vercel').read_text(encoding='utf-8-sig')
     releases.require(docker.count('PSMS_INFERENCE_ENABLED=0')==1,'DELIVERY_INFERENCE_BUILD_FLAG_REQUIRED')
+    releases.require(docker.count('PSMS_NLP_RUNTIME=legacy')==1,'DELIVERY_RUNTIME_BUILD_FLAG_REQUIRED')
+    docker=docker.replace('PSMS_NLP_RUNTIME=legacy','PSMS_NLP_RUNTIME='+nlp_runtime)
     if entry is not None:
         docker=docker.replace('PSMS_INFERENCE_ENABLED=0','PSMS_INFERENCE_ENABLED=1')
     (target/'Dockerfile.vercel').write_text(docker)
@@ -284,6 +291,7 @@ def _copy_context(target,identifier,entry,base):
     size=sum(p.stat().st_size for p in target.rglob('*') if p.is_file())
     releases.require(size < SOURCE_UPLOAD_LIMIT,'DELIVERY_HOBBY_SOURCE_LIMIT')
     return dict(release_id=identifier,files=len(actual),
+        nlp_runtime=nlp_runtime,
         inference_mode='approved_release' if entry is not None else 'disabled',
         source_bytes=size,model_bytes_uploaded=0,
         output=str(target),published=False)
@@ -295,6 +303,7 @@ def main():
     parser.add_argument('--output',required=True)
     parser.add_argument('--release')
     parser.add_argument('--inference-mode',choices=('disabled','approved_release'))
+    parser.add_argument('--runtime',dest='nlp_runtime',choices=('legacy','retrained_rf'))
     parser.add_argument('--directory',help='Private release (package) or existing transport proposal folder (supabase)')
     parser.add_argument('--project-ref',help='Existing Supabase project for private ROOT archive parts')
     args=parser.parse_args()
@@ -303,7 +312,7 @@ def main():
             releases.require(bool(args.release),'RELEASE_SELECTION_REQUIRED')
             result=supabase(args.output,args.release,args.directory,args.project_ref)
         elif args.action=='context':
-            result=context(args.output,args.release,inference_mode=args.inference_mode)
+            result=context(args.output,args.release,inference_mode=args.inference_mode,nlp_runtime=args.nlp_runtime)
         elif args.action=='package':
             releases.require(bool(args.release),'RELEASE_SELECTION_REQUIRED')
             result=package(args.output,args.release,args.directory)

@@ -211,3 +211,39 @@ Later model activation is separate: approve the immutable release, prepare an
 and set `PSMS_INFERENCE_ENABLED=1` deliberately. All existing approval, Linux,
 artifact/classifier/feature checks remain mandatory. Flipping the flag on this
 empty-registry first-release image cannot activate an unapproved model.
+
+For the existing FastText + Random Forest, the CURRENT registry is still
+unapproved. Keep the working website's inference flag at 0 until the existing
+**Original model release verification** workflow completes successfully and the
+owner approves `retrained_rf` explicitly using the existing finalizer procedure
+in `docs/reports/MODEL_RELEASE_OWNER_REVIEW.md`. The old 8/9 Linux result is not
+a completed gate. No model approval or new Linux result is implied by this guide.
+
+After genuine approval, publish the NEW immutable release parts privately and
+verify their transport hashes. Configure only Vercel Production:
+
+- `PSMS_INFERENCE_ENABLED=1`
+- `PSMS_NLP_RUNTIME=retrained_rf`
+- `PSMS_INFERENCE_RELEASE_ID=<EXACT_APPROVED_RELEASE_ID>`
+- `PSMS_INFERENCE_CACHE_ENABLED=1`
+- `PSMS_MODEL_PART_TOKENS`: object-scoped signed-download token JSON for the NEW
+  approved parts, stored only as a production secret; no service-role key.
+
+Keep the working database, packaged CA, session key and workbook settings.
+Leave the legacy broad read token unset. Never commit token values or signed URLs.
+The original local launcher still defaults to legacy inference and needs neither
+this production profile nor Supabase/network access for local model execution.
+
+Run the EXISTING production workflow with `inference_mode=approved_release`,
+`nlp_runtime=retrained_rf`, the approved release ID, and `deploy_approved=true`.
+The selected runtime is checked against release approval AND placed in the
+generated image's ENV before its build gate executes; it is no longer fixed to
+legacy. No production setting is changed automatically by source preparation.
+
+Acceptance: authenticated `/health` must report the matching `nlp_runtime` and
+`inference_release_id`, enabled/active inference and database readiness. Process
+fictional supported documents through their existing review screens, link a
+fictional approved PR/PO, then run NLP Verification. Verify the saved record shows
+FastText + Random Forest, 559 features, status/issue probabilities and warnings,
+and remains For Review after refreshing. A health flag alone does not prove the
+upload/OCR/model/database workflow. Production end-to-end acceptance is pending.

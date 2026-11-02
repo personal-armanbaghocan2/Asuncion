@@ -4061,6 +4061,8 @@ def health():
     return {
         'application': 'ready' if ready else 'degraded',
         'inference_enabled': inference_on,
+        'nlp_runtime': app.config.get('PSMS_NLP_RUNTIME','legacy'),
+        'inference_release_id': app.config.get('_PSMS_INFERENCE_RELEASE_ID') if inference_on else None,
         'database': database_ok,
         'tesseract': tesseract_ok,
         'fasttext_nlp': fasttext_ok,
