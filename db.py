@@ -24,8 +24,7 @@ def database_url() -> str:
     if environment_mode() in CLOUD_MODES and not os.environ.get('SUPABASE_DB_URL','').strip():
         raise RuntimeError('Explicit staging/production PostgreSQL configuration is required.')
     target = os.environ.get("SUPABASE_DB_URL", DEFAULT_LOCAL_URL).strip()
-    validate_database_configuration(target)
-    return target
+    return validate_database_configuration(target)
 
 
 def _translate_sql(sql: str) -> str:
@@ -51,8 +50,7 @@ def _translate_sql(sql: str) -> str:
 
 class Connection:
     def __init__(self, dsn: str | None = None):
-        target = dsn or database_url()
-        validate_database_configuration(target)
+        target = validate_database_configuration(dsn or database_url())
 
         # Cloud activation never bypasses target, backend-role or TLS validation.
         # Production stays disabled until its separately reviewed migration/cutover.

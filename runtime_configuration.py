@@ -21,11 +21,13 @@ _RESERVED_DATABASE_ROLES = frozenset((
 
 
 def validate_database_configuration(dsn, *, environ=None):
-    """Validate explicit libpq parameters offline; never connect or return secrets.
+    """Return validated conninfo offline; callers must never log the result.
 
     Cloud preparation requires PSMS_ENV=staging/production and explicit
     PSMS_DB_EXPECTED_HOST, PSMS_DB_EXPECTED_DATABASE, PSMS_DB_BACKEND_ROLE,
     PSMS_SUPABASE_PROJECT_REF and PSMS_DB_CONNECTION_MODE expectations.
+    A URI may omit TLS parameters: use verify-full and the operator-configured
+    PSMS_DB_SSLROOTCERT file. Explicit URI TLS settings are never overwritten.
     These string checks do not authenticate a server or establish SQL privileges.
     db.Connection requires cloud activation independently of this validator.
     """
@@ -40,7 +42,7 @@ def validate_database_configuration(dsn, *, environ=None):
     if not isinstance(dsn, str) or not dsn.strip():
         raise RuntimeError('Explicit staging/production database configuration is required.' if cloud else
                            'An explicit local database target is required.')
-    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
     try:
         parameters = conninfo_to_dict(dsn)
     except Exception:
@@ -57,7 +59,7 @@ def validate_database_configuration(dsn, *, environ=None):
     if not cloud:
         if host.lower() not in LOCAL_DATABASE_HOSTS:
             raise RuntimeError('Local/test database profiles require an approved loopback host.')
-        return
+        return dsn
     if pooler_flag not in ('0', '1'):
         raise RuntimeError('PSMS_DB_TRANSACTION_POOLER must explicitly select a supported setting.')
 
@@ -65,6 +67,15 @@ def validate_database_configuration(dsn, *, environ=None):
                 'PSMS_DB_BACKEND_ROLE', 'PSMS_SUPABASE_PROJECT_REF', 'PSMS_DB_CONNECTION_MODE')
     if not all(environment.get(key, '').strip() for key in required):
         raise RuntimeError('Complete cloud database identity expectations are required.')
+    tls_defaults = {}
+    if 'sslmode' not in parameters:
+        tls_defaults['sslmode'] = 'verify-full'
+    if 'sslrootcert' not in parameters:
+        certificate = environment.get('PSMS_DB_SSLROOTCERT', '').strip()
+        if not certificate:
+            raise RuntimeError('Cloud requires sslrootcert in the URI or PSMS_DB_SSLROOTCERT pointing to a trusted local CA file.')
+        tls_defaults['sslrootcert'] = certificate
+    parameters.update(tls_defaults)
     if set(parameters) != _CLOUD_PARAMETERS or not all(parameters.values()):
         raise RuntimeError('Cloud requires only explicit host, port, database, login and verified TLS parameters.')
     role = environment['PSMS_DB_BACKEND_ROLE'].strip()
@@ -99,6 +110,7 @@ def validate_database_configuration(dsn, *, environ=None):
     if (parameters['sslmode'] != 'verify-full' or certificate.startswith(('//', '\\\\'))
             or not Path(certificate).is_absolute() or not Path(certificate).is_file()):
         raise RuntimeError('Cloud requires verify-full TLS and an explicit existing local root certificate.')
+    return make_conninfo(dsn, **tls_defaults) if tls_defaults else dsn
 
 
 def validate_local_launcher():

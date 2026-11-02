@@ -97,6 +97,7 @@ This file list is not a new audit/certification of older repository history.
 | `PSMS_DB_EXPECTED_HOST` | Exact existing Supabase direct/pooler hostname, without scheme; must match DSN |
 | `PSMS_DB_CONNECTION_MODE` | Existing reviewed endpoint mode: `transaction`, `session`, or supported `direct` |
 | `PSMS_DB_TRANSACTION_POOLER` | `1` for transaction/6543; `0` for session/direct/5432 |
+| `PSMS_DB_SSLROOTCERT` | `/etc/ssl/certs/ca-certificates.crt`, image default; use a reviewed Supabase CA file in the image if the endpoint requires it |
 | `SUPABASE_DB_URL` | Restricted backend DSN described below, secret in Vercel Production only |
 | `TESSERACT_CMD` | `/usr/bin/tesseract`, image default |
 
@@ -106,8 +107,12 @@ Leave `PSMS_INFERENCE_RELEASE_ID`, `PSMS_MODEL_PART_TOKENS`,
 approval is required for the website-off-inference mode. HF/Transformers offline
 flags stay enabled. Do not set PG* override variables or debug/testing flags.
 
-The DSN must contain exactly host, port, dbname, user, password, sslmode and
-sslrootcert. Keep verified TLS and a certificate file that actually exists IN
+The DSN accepts the Supabase Session Pooler `postgresql://` URI with explicit
+host, port, database, login and URL-encoded password. Missing `sslmode` defaults
+to `verify-full`; missing `sslrootcert` uses `PSMS_DB_SSLROOTCERT`. Those validated
+TLS settings are passed to psycopg, not merely checked. Explicit weaker modes
+are rejected, and explicit URI certificate settings take precedence.
+Keep verified TLS and a certificate file that actually exists IN
 THE LINUX IMAGE. System roots are `/etc/ssl/certs/ca-certificates.crt`; use them
 only when they validate the chosen endpoint. A laptop certificate path will
 block startup. If that endpoint needs a project-specific public CA instead,
