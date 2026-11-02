@@ -58,9 +58,12 @@ def _json(root, name):
 def verify_artifacts(model_root):
     """Verify every declared file before executing feature code or loading pickle."""
     try:
-        root = Path(model_root).resolve(strict=True)
+        root = Path(model_root).resolve()
         from inference_releases import profile_evidence
+        # A source-only cold start has no directory until release verification
+        # materializes the approved private cache. Keep retrieval/integrity gates first.
         release = profile_evidence(root, 'retrained_rf')
+        root = root.resolve(strict=True)
         if release is not None:
             # The application-pinned serving manifest verifies all release files;
             # historical classifiers and research charts are not serving inputs.
