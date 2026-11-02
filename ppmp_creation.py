@@ -90,10 +90,13 @@ def create(api, ptype):
         # Serialize workbook-source consumption across sessions and instances.
         con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))', ('ppmp-excel:'+ptype,))
         allow_repeat = repeat_sources_enabled(api, con)
-        rows = api['read_excel'](ptype) if excel_ids else []
+        from durable_workbooks import enabled
+        rows = (api['read_excel'](ptype, connection=con) if enabled() else api['read_excel'](ptype)) if excel_ids else []
         selected = {str(row.get('_row')): row for row in rows}
         if any(code not in selected for code in excel_ids):
             abort(409, description='A selected source item is no longer available. Reopen the category.')
+        if any(str(selected[code].get('_excel_sheet', '')).strip().upper() != ptype for code in excel_ids):
+            abort(409, description='A selected source item belongs to another category. Reopen the category.')
         if any(not request.form.get('source_signature_'+code) or request.form.get('source_signature_'+code) != source_signature(selected[code]) for code in excel_ids):
             abort(409, description='A selected workbook item changed. Review its current saved values and confirm again.')
         used_rows, used_signatures = set(), set()

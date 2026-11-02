@@ -7,9 +7,9 @@ hybrid score, no similarity threshold, and no fallback model.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
+import warnings
 from threading import RLock
 from dataclasses import dataclass
 from types import ModuleType
@@ -39,12 +39,14 @@ class RuntimeAssets:
 
 _CACHE: RuntimeAssets | None = None
 _CACHE_ROOT: str | None = None
+_CACHE_RELEASE_ID: str | None = None
 _LOAD_LOCK = RLock()
 
 
 def required_paths(model_root: str) -> Dict[str, str]:
     return {
         "fasttext": os.path.join(model_root, "fasttext_model.model"),
+        "fasttext_embedding_sidecar": os.path.join(model_root, "fasttext_model.model.wv.vectors_ngrams.npy"),
         "status_classifier": os.path.join(model_root, "status_classifier.joblib"),
         "issue_classifier": os.path.join(model_root, "issue_classifier.joblib"),
         "labels": os.path.join(model_root, "labels.json"),
@@ -54,15 +56,21 @@ def required_paths(model_root: str) -> Dict[str, str]:
 
 
 def _load_feature_module(path: str) -> ModuleType:
-    spec = importlib.util.spec_from_file_location("deployed_fasttext_feature_schema_v2", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not create a loader for the deployed feature module.")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from inference_releases import execute_feature
+    # Compiling in memory also keeps immutable release directories free of pyc.
+    return execute_feature(path, "deployed_fasttext_feature_schema_v2")
+
+
+def _verify_release(model_root):
+    from inference_releases import profile_evidence
+    return profile_evidence(model_root, 'legacy')
 
 
 def model_status(model_root: str) -> Dict[str, Any]:
+    try:
+        release = _verify_release(model_root)
+    except RuntimeError:
+        return {"active": False, "message": "Inference release failed verification."}
     paths = required_paths(model_root)
     missing = [
         os.path.relpath(path, model_root)
@@ -83,6 +91,15 @@ def model_status(model_root: str) -> Dict[str, Any]:
         with open(paths["manifest"], "r", encoding="utf-8") as handle:
             manifest = json.load(handle)
         feature_module = _load_feature_module(paths["feature_module"])
+
+        if release is not None:
+            from inference_releases import CONTRACTS, ISSUES
+            contract = CONTRACTS['legacy']
+            if not (labels.get('issue_labels') == ISSUES
+                    and manifest.get('issue_feature_dimension', manifest.get('feature_dimension')) == contract['issue_features']
+                    and manifest.get('status_feature_dimension') == contract['status_features']
+                    and manifest.get('status_classifier_uses_issue_probabilities') is True):
+                return {'active': False, 'message': 'FASTTEXT_RELEASE_FEATURE_CONTRACT'}
 
         if labels.get("status_labels") != EXPECTED_STATUS_LABELS:
             return {
@@ -125,24 +142,31 @@ def model_status(model_root: str) -> Dict[str, Any]:
             "and issue classifiers directly control the outputs."
         ),
         "manifest": manifest,
+        "release_verified": release is not None,
     }
 
 
 def clear_cache() -> None:
-    global _CACHE, _CACHE_ROOT
+    global _CACHE, _CACHE_ROOT, _CACHE_RELEASE_ID
     _CACHE = None
     _CACHE_ROOT = None
+    _CACHE_RELEASE_ID = None
 
 
 def load_assets(model_root: str) -> RuntimeAssets:
+    from inference_releases import require_inference
+    require_inference()
     with _LOAD_LOCK:
         return _load_assets(model_root)
 
 
 def _load_assets(model_root: str) -> RuntimeAssets:
-    global _CACHE, _CACHE_ROOT
+    global _CACHE, _CACHE_ROOT, _CACHE_RELEASE_ID
     normalized_root = os.path.abspath(model_root)
+    from inference_releases import configured_identifier
     if _CACHE is not None and _CACHE_ROOT == normalized_root:
+        if _CACHE_RELEASE_ID != configured_identifier():
+            raise RuntimeError('Inference release selection changed; restart with verified settings.')
         return _CACHE
 
     status = model_status(normalized_root)
@@ -164,9 +188,26 @@ def _load_assets(model_root: str) -> RuntimeAssets:
         manifest = json.load(handle)
 
     feature_module = _load_feature_module(paths["feature_module"])
-    fasttext_model = FastText.load(paths["fasttext"])
-    status_classifier = joblib.load(paths["status_classifier"])
-    issue_classifier = joblib.load(paths["issue_classifier"])
+    try:
+        from sklearn.exceptions import InconsistentVersionWarning
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', InconsistentVersionWarning)
+            fasttext_model = FastText.load(paths["fasttext"])
+            status_classifier = joblib.load(paths["status_classifier"])
+            issue_classifier = joblib.load(paths["issue_classifier"])
+    except Exception:
+        raise RuntimeError('FASTTEXT_MODEL_LOAD_FAILED') from None
+
+    if status.get('release_verified'):
+        from sklearn.linear_model import LogisticRegression
+        from inference_releases import CONTRACTS
+        contract = CONTRACTS['legacy']
+        if not (fasttext_model.vector_size == contract['embedding_size']
+                and type(status_classifier) is LogisticRegression
+                and type(issue_classifier) is LogisticRegression
+                and set(status_classifier.classes_) == set(range(len(labels['status_labels'])))
+                and set(issue_classifier.classes_) == set(range(len(labels['issue_labels'])))):
+            raise RuntimeError('FASTTEXT_RELEASE_MODEL_CONTRACT')
 
     base_dimension = int(
         feature_module.expected_feature_dimension(int(fasttext_model.vector_size))
@@ -204,6 +245,7 @@ def _load_assets(model_root: str) -> RuntimeAssets:
         feature_module=feature_module,
     )
     _CACHE_ROOT = normalized_root
+    _CACHE_RELEASE_ID = configured_identifier()
     return _CACHE
 
 

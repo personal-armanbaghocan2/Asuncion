@@ -109,6 +109,7 @@ register_schema(PPMP_FIELDS)
 _MODEL = None
 _MODEL_LOAD_LOCK = RLock()
 _MODEL_ERROR = None
+_MODEL_ERROR_CODE = 'SEMANTIC_NOT_LOADED'
 _SCHEMA_EMBEDDINGS = None
 
 
@@ -137,26 +138,59 @@ def load_local_model():
 
 def _load_local_model():
     """Load only from disk. Never triggers a runtime network download."""
-    global _MODEL, _MODEL_ERROR, _SCHEMA_EMBEDDINGS
-    if _MODEL is not None:
+    global _MODEL, _MODEL_ERROR, _MODEL_ERROR_CODE, _SCHEMA_EMBEDDINGS
+    # Resolve and verify an explicit release before any cached/source model use.
+    # A failed release must not quietly select the original model directory.
+    try:
+        from inference_releases import selected, profile_evidence, configured_identifier, ReleaseError, SEMANTIC, require_inference
+        require_inference()
+        identifier = configured_identifier()
+        if (_MODEL is not None and getattr(_MODEL, '_psms_release_id', None) == identifier
+                and (identifier or getattr(_MODEL, '_psms_release_root', str(MODEL_DIR)) == str(MODEL_DIR))):
+            return _MODEL
+        release = selected()
+        model_dir = release['root'] / 'semantic' if release else MODEL_DIR
+        if release is not None and os.environ.get('OCR_SEMANTIC_MODEL_PATH'):
+            if MODEL_DIR.resolve() != model_dir.resolve():
+                raise ReleaseError('RELEASE_PROFILE_PATH')
+        profile_evidence(model_dir, 'semantic_ocr')
+    except RuntimeError as error:
+        _MODEL_ERROR = 'Inference release failed verification.'
+        safe = {'INFERENCE_DISABLED', 'RELEASE_ACTIVATION_BLOCKED', 'RELEASE_ARTIFACT_MISSING', 'RELEASE_CHECKSUM_MISMATCH',
+                'RELEASE_DEPENDENCY_VERSION', 'RELEASE_PYTHON_VERSION', 'RELEASE_LINUX_UNVERIFIED',
+                'RELEASE_NOT_TRUSTED', 'RELEASE_MANIFEST_NOT_PINNED', 'RELEASE_PROFILE_PATH',
+                'RELEASE_METADATA_INVALID'}
+        _MODEL_ERROR_CODE = str(error) if isinstance(error, ReleaseError) and str(error) in safe else 'SEMANTIC_RELEASE_INVALID'
+        return None
+    if _MODEL is not None and getattr(_MODEL, '_psms_release_root', str(MODEL_DIR)) == str(model_dir):
         return _MODEL
-    if not MODEL_DIR.exists():
-        _MODEL_ERROR = f"Local OCR semantic model not found at {MODEL_DIR}"
+    if not model_dir.is_dir() or not all((model_dir / name).is_file() for name in SEMANTIC if name != 'README.md'):
+        _MODEL_ERROR = 'Required local semantic inference artifacts are missing.'
+        _MODEL_ERROR_CODE = 'SEMANTIC_ARTIFACTS_MISSING'
         return None
     try:
         from sentence_transformers import SentenceTransformer
         try:
-            model = SentenceTransformer(str(MODEL_DIR), local_files_only=True)
+            model = SentenceTransformer(str(model_dir), local_files_only=True)
         except TypeError:  # older compatible versions
             os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            model = SentenceTransformer(str(MODEL_DIR))
+            model = SentenceTransformer(str(model_dir))
         meanings = [PPMP_FIELDS[k]["meaning"] for k in PPMP_FIELDS]
         _SCHEMA_EMBEDDINGS = model.encode(meanings, normalize_embeddings=True)
+        if release is not None:
+            import numpy as np
+            if np.asarray(_SCHEMA_EMBEDDINGS).shape != (len(meanings), 384) or not np.isfinite(_SCHEMA_EMBEDDINGS).all():
+                raise RuntimeError('SEMANTIC_RELEASE_FEATURE_CONTRACT')
         _MODEL = model
+        model._psms_release_root = str(model_dir)
+        model._psms_release_id = identifier
         _MODEL_ERROR = None
+        _MODEL_ERROR_CODE = 'READY'
         return model
     except Exception as exc:
-        _MODEL_ERROR = str(exc)
+        _MODEL_ERROR = 'SEMANTIC_MODEL_LOAD_FAILED'
+        _MODEL_ERROR_CODE = ('SEMANTIC_DEPENDENCY_MISSING' if isinstance(exc, ImportError) else
+                             'SEMANTIC_MODEL_LOAD_FAILED')
         return None
 
 
@@ -167,6 +201,7 @@ def model_status() -> Dict[str, Any]:
         "path": str(MODEL_DIR),
         "message": "Local semantic mapper active." if model else (_MODEL_ERROR or "Local semantic mapper unavailable."),
         "rapidfuzz": bool(fuzzy_ratio),
+        "diagnostic_code": 'READY' if model is not None else _MODEL_ERROR_CODE,
     }
 
 

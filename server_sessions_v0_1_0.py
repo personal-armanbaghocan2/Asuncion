@@ -190,7 +190,7 @@ def account_for_session(factory,token,user_id):
         con=factory()
         con.execute('SET TRANSACTION READ ONLY')
         _ready(con)
-        return con.execute("""select u.id,u.username,u.role,u.status from public.auth_sessions s
+        return con.execute("""select u.id,u.username,u.role,u.status,u.full_name,u.display_name,u.created_at,u.last_login from public.auth_sessions s
           join public.users u on u.id=s.user_id
           where s.token_hash=? and s.user_id=? and s.revoked_at is null
             and s.expires_at>clock_timestamp() and u.status='Active'

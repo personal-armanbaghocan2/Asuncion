@@ -27,7 +27,7 @@ def validate_database_configuration(dsn, *, environ=None):
     PSMS_DB_EXPECTED_HOST, PSMS_DB_EXPECTED_DATABASE, PSMS_DB_BACKEND_ROLE,
     PSMS_SUPABASE_PROJECT_REF and PSMS_DB_CONNECTION_MODE expectations.
     These string checks do not authenticate a server or establish SQL privileges.
-    db.Connection keeps cloud connections disabled independently of this validator.
+    db.Connection requires cloud activation independently of this validator.
     """
     environment = os.environ if environ is None else environ
     mode = environment_mode(environment)
@@ -119,8 +119,12 @@ def environment_mode(environ=None):
 
 
 def configure(app):
+    from transfer_limits import document_limit, request_limit, on_vercel
     mode=environment_mode()
-    app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',MAX_CONTENT_LENGTH=9*1024*1024)
+    if on_vercel() and mode not in CLOUD_MODES:
+        raise RuntimeError('Vercel requires an explicit staging/production configuration.')
+    app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',
+                      MAX_CONTENT_LENGTH=request_limit(),DOCUMENT_UPLOAD_LIMIT=document_limit())
     app.config['PSMS_ENV'] = mode
     if mode in CLOUD_MODES:
         validate_database_configuration(os.environ.get('SUPABASE_DB_URL', ''))
@@ -136,8 +140,22 @@ def configure(app):
 
     app.add_url_rule('/health/live', 'runtime_liveness', liveness, methods=['GET'])
 
+    @app.before_request
+    def reject_untrusted_host():
+        # Flask records routing errors before before_request. Stop a rejected
+        # host before authentication tries url_for() without a URL adapter.
+        from flask import request
+        from werkzeug.exceptions import SecurityError
+        if isinstance(request.routing_exception, SecurityError):
+            raise request.routing_exception
+
     @app.after_request
     def safe_response_headers(response):
+        if on_vercel() and response.content_length is not None and response.content_length > request_limit():
+            from flask import Response
+            response = Response('This retained document or export exceeds the hosted transfer limit. '
+                'The stored record was preserved; use an approved private transfer path.',
+                status=413,mimetype='text/plain',headers={'Cache-Control':'private, no-store'})
         response.headers.setdefault('X-Content-Type-Options', 'nosniff')
         response.headers.setdefault('Referrer-Policy', 'same-origin')
         return response

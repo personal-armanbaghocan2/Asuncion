@@ -1,12 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "python deploy/build_vercel_assets.py",
-  "env": {
-    "PSMS_ENV": "staging"
-  },
-  "functions": {
-    "app.py": {
-      "excludeFiles": "{tests/**,docs/**,data/**,uploads/**,temp/**,output/**,experiments/**,**/__pycache__/**}"
-    }
+  "framework": "container",
+  "fluid": true,
+  "git": {
+    "deploymentEnabled": false
   }
 }

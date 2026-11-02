@@ -1,0 +1,36 @@
+# Vercel Container Function: build from deploy/online_delivery.py's exact context.
+# The Git checkout alone intentionally contains no runtime/ or private weights.
+FROM python:3.13.16-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PSMS_ENV=production VERCEL=1 PORT=8080 PSMS_BIND_HOST=0.0.0.0 \
+    PSMS_NLP_RUNTIME=legacy PSMS_DATA_DIR=/tmp/psms HOME=/tmp \
+    PSMS_INFERENCE_ENABLED=0 PSMS_PRODUCTION_DB_ENABLED=1 PSMS_DURABLE_WORKBOOKS_ENABLED=1 \
+    PSMS_INFERENCE_CACHE_ENABLED=1 PSMS_THREADS=2 \
+    TESSERACT_CMD=/usr/bin/tesseract \
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 TOKENIZERS_PARALLELISM=false \
+    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates libgomp1 tesseract-ocr tesseract-ocr-eng fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system psms \
+    && useradd --system --gid psms --home-dir /app psms
+
+WORKDIR /app
+COPY runtime/deploy/requirements-staging-linux-amd64.lock.txt ./deploy/
+# Reuse the existing exact CPU dependency versions, without re-resolution.
+RUN pip install --no-cache-dir --only-binary=:all: --no-deps \
+       -r deploy/requirements-staging-linux-amd64.lock.txt \
+    && pip check
+
+# runtime/ contains reviewed source and pinned approved release metadata only.
+# Original weights are privately fetched on model use, outside the image build.
+# It never contains credentials, municipal records, uploads or training data.
+COPY runtime/ /app/
+USER psms
+RUN python -B deploy/verify_online_image.py
+EXPOSE 8080
+CMD ["python", "serve.py"]

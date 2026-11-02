@@ -9,13 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import importlib.metadata
-import importlib.util
 import json
 from pathlib import Path, PurePosixPath
 import platform
 from threading import RLock
 from typing import Any
 import warnings
+from inference_releases import configured_identifier
 
 MANIFEST_SHA256 = '76937d298701ba832ec004ab694c69ef8b60687b9f4d8fe2d335f4a2dc75c61b'
 FEATURE_SHA256 = '41be9ed2b4149f917d1b4becbd1a983f9bbd60c7caa133625056f5eaaf9746e5'
@@ -59,10 +59,18 @@ def verify_artifacts(model_root):
     """Verify every declared file before executing feature code or loading pickle."""
     try:
         root = Path(model_root).resolve(strict=True)
-        _require(_sha(root / 'artifact_manifest.json') == MANIFEST_SHA256,
+        from inference_releases import profile_evidence
+        release = profile_evidence(root, 'retrained_rf')
+        if release is not None:
+            # The application-pinned serving manifest verifies all release files;
+            # historical classifiers and research charts are not serving inputs.
+            manifest = {'files': {name[3:]: record['sha256'] for name, record in
+                        release['manifest']['artifacts'].items() if name.startswith('rf/')}}
+        else:
+            _require(_sha(root / 'artifact_manifest.json') == MANIFEST_SHA256,
                  'RETRAINED_MANIFEST_NOT_PINNED')
-        manifest = _json(root, 'artifact_manifest.json')
-        _require(manifest['schema'] == 'SHARED_FASTTEXT_THREE_CLASSIFIERS_EXPERIMENT_V1'
+            manifest = _json(root, 'artifact_manifest.json')
+            _require(manifest['schema'] == 'SHARED_FASTTEXT_THREE_CLASSIFIERS_EXPERIMENT_V1'
                  and manifest['smoke_only'] is False and manifest['fasttext_models'] == 1,
                  'RETRAINED_ARTIFACT_VERSION')
         for name, digest in manifest['files'].items():
@@ -73,7 +81,7 @@ def verify_artifacts(model_root):
             _require(path.is_relative_to(root) and _sha(path) == digest,
                      'RETRAINED_CHECKSUM_MISMATCH')
         heads = [p for p in manifest['files'] if p.endswith('.joblib')]
-        _require(len(heads) == 48, 'RETRAINED_HEAD_COUNT')
+        _require(len(heads) == (2 if release else 48), 'RETRAINED_HEAD_COUNT')
         contract = _json(root, 'feature_contract.json')
         _require(contract['schema'] == SCHEMA and contract['embedding_size'] == 100
                  and contract['total_features'] == 559 and contract['dtype'] == 'float32'
@@ -98,7 +106,9 @@ def verify_artifacts(model_root):
                  'RETRAINED_DEPENDENCY_VERSION_MISMATCH')
         return dict(root=root, files_verified=len(manifest['files']), heads_verified=len(heads),
                     contract=contract, training_environment=environment,
-                    python_version=platform.python_version(), manifest_sha256=MANIFEST_SHA256)
+                    python_version=platform.python_version(),
+                    feature_path=(release['root'] / 'legacy/fasttext_feature_schema_v2.py' if release else None),
+                    manifest_sha256=release['manifest_sha256'] if release else MANIFEST_SHA256)
     except RetrainedModelError:
         raise
     except Exception:
@@ -138,11 +148,17 @@ def build_features(assets, pr_text, po_text):
 
 def load_assets(model_root):
     """Load once per process after integrity, dependency, shape and reload checks."""
+    from inference_releases import require_inference
+    require_inference()
     with _LOCK:
         key = str(Path(model_root).resolve())
         if key in _CACHE:
+            _require(_CACHE[key].verification.get('selected_release_id') ==
+                     configured_identifier(),
+                     'RETRAINED_RELEASE_SELECTION_CHANGED')
             return _CACHE[key]
         evidence = verify_artifacts(model_root)
+        evidence['selected_release_id'] = configured_identifier()
         root = evidence['root']
         try:
             import numpy as np
@@ -152,11 +168,10 @@ def load_assets(model_root):
             from sklearn.exceptions import InconsistentVersionWarning
             # Execute only the existing reviewed feature utility. The exported
             # training scripts and source modules are never imported.
-            feature_path = Path(__file__).parent / 'model/fasttext_nlp/fasttext_feature_schema_v2.py'
+            feature_path = evidence.get('feature_path') or Path(__file__).parent / 'model/fasttext_nlp/fasttext_feature_schema_v2.py'
             _require(_sha(feature_path) == FEATURE_SHA256, 'RETRAINED_FEATURE_SOURCE_CHANGED')
-            spec = importlib.util.spec_from_file_location('retrained_frozen_features', feature_path)
-            features = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(features)
+            from inference_releases import execute_feature
+            features = execute_feature(feature_path, 'retrained_frozen_features')
             _require(features.FEATURE_SCHEMA == SCHEMA
                      and features.NUMERIC_FEATURE_NAMES == evidence['contract']['numeric_feature_names']
                      and features.expected_feature_dimension(100) == 559,
@@ -223,7 +238,7 @@ def predict_pair(model_root, pr_text, po_text):
                     po_token_count=len(assets.features.tokenize(po_text)),
                     model_manifest=dict(deployed_model='FastText + Random Forest',
                         architecture='100-dimensional shared FastText; independent unscaled 559-feature RF heads',
-                        runtime='retrained_rf', artifact_manifest_sha256=MANIFEST_SHA256,
+                        runtime='retrained_rf', artifact_manifest_sha256=assets.verification['manifest_sha256'],
                         setting=7, classifier_seed=42, target_policy='AI_PROPOSED_UNVERIFIED',
                         production_promotion_allowed=False),
                     diagnostics=dict(warnings=notes, automatic_approval=False, probability_calibrated=False,

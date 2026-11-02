@@ -14,14 +14,17 @@ FORMATS={'.png':'PNG','.jpg':'JPEG','.jpeg':'JPEG','.bmp':'BMP','.tif':'TIFF','.
 ALLOWED=set(FORMATS)|{'.pdf','.docx','.xlsx','.xlsm','.csv','.txt'}
 
 def validate(upload, only_pdf=False):
+    from transfer_limits import document_limit, on_vercel
+    limit = document_limit()
     if not upload or not upload.filename:abort(400,description='Choose a supported document.')
     name=upload.filename
     if len(name)>120 or any(c in name for c in ('/','\\','\x00')) or any(ord(c)<32 for c in name):
         abort(400,description='Use a plain document filename of at most 120 characters.')
     ext=Path(name).suffix.lower()
     if ext not in ({'.pdf'} if only_pdf else ALLOWED):abort(400,description='Unsupported document format.')
-    content=upload.stream.read(LIMIT+1)
-    if not content or len(content)>LIMIT:abort(400,description='Document must be between 1 byte and 8 MiB.')
+    content=upload.stream.read(limit+1)
+    if not content or len(content)>limit:
+        abort(413 if on_vercel() else 400,description=f'Document exceeds the {limit:,}-byte upload limit. Split or reduce the file; no source record was changed.')
     try:
         if ext in FORMATS:
             with Image.open(BytesIO(content)) as image:
@@ -48,6 +51,12 @@ def validate(upload, only_pdf=False):
                     if entry.filename.endswith('.xml'):
                         xml=archive.read(entry)
                         if b'<!DOCTYPE' in xml.upper() or b'<!ENTITY' in xml.upper():raise ValueError()
+            if ext in ('.xlsx', '.xlsm'):
+                from openpyxl import load_workbook
+                from workbook_limits import validate_dimensions
+                workbook = load_workbook(BytesIO(content), read_only=True, data_only=True, keep_links=False)
+                try:validate_dimensions(workbook)
+                finally:workbook.close()
         else:
             if len(content)>2*1024*1024:raise ValueError()
             text=content.decode('utf-8-sig')

@@ -1,9 +1,9 @@
 """PostgreSQL/Supabase database access for the PSMS application.
 
 The application uses the PostgreSQL database that backs Supabase.  For the
-municipality's offline-first deployment, point ``SUPABASE_DB_URL`` at a local
-Supabase instance. Cloud profiles validate explicit connection settings, but
-cloud connections remain disabled pending a separate backend/activation review.
+local development, point ``SUPABASE_DB_URL`` at a local Supabase instance.
+Cloud profiles validate explicit connection settings and require separate
+environment-based activation after database migration and owner review.
 """
 from __future__ import annotations
 
@@ -54,11 +54,11 @@ class Connection:
         target = dsn or database_url()
         validate_database_configuration(target)
 
-        # Preserve local connections and block production cloud access.
-        # Staging requires explicit activation after security checks.
+        # Cloud activation never bypasses target, backend-role or TLS validation.
+        # Production stays disabled until its separately reviewed migration/cutover.
         mode = environment_mode()
 
-        if mode == "production":
+        if mode == "production" and os.environ.get("PSMS_PRODUCTION_DB_ENABLED") != "1":
             raise RuntimeError(
                 "Production cloud database connections are not authorized."
             )

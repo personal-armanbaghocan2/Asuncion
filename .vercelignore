@@ -1,0 +1,40 @@
+﻿# Deploy ONLY the generated source-only context; never the development checkout.
+# deploy/online_delivery.py copies the required code/templates/static by allowlist.
+**
+!Dockerfile.vercel
+!vercel.json
+!.dockerignore
+!runtime/
+!runtime/**
+# Defense in depth for any accidental extra file in a prepared context.
+**/.env*
+**/secrets/**
+**/.aws/**
+**/.git/**
+**/.venv/**
+**/venv/**
+**/node_modules/**
+**/__pycache__/**
+**/.cache/**
+**/output/**
+**/data/**
+**/uploads/**
+**/inference_releases/**
+**/*.model
+**/*.npy
+**/*.joblib
+**/*.safetensors
+**/*.zip
+**/*.part
+**/*.tar*
+**/*.7z
+**/*.xlsx
+**/*.xlsm
+**/*.xls
+**/*.csv
+**/*.pem
+**/*.key
+**/*.pyc
+**/*.log
+**/*.dump
+**/*.backup

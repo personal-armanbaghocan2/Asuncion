@@ -1,0 +1,9 @@
+# Colab export runtime dependencies. Isolated tests and authorized synthetic staging only.
+# Combine with requirements.txt; this file does not install training packages.
+# Training Python: 3.13.16. Windows 3.11.9 synthetic parity is tested separately.
+numpy==2.4.6
+scipy==1.17.1
+gensim==4.4.0
+scikit-learn==1.8.0
+joblib==1.5.3
+threadpoolctl==3.6.0

@@ -1,0 +1,65 @@
+name: Existing Vercel production deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      inference_mode:
+        description: First website deployment keeps OCR/NLP disabled
+        required: true
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - approved_release
+      release_id:
+        description: Leave empty when disabled; required only for an approved model release
+        required: false
+        default: ''
+        type: string
+      deploy_approved:
+        description: Owner authorizes this exact commit/release for the existing production project
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: existing-vercel-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ inputs.deploy_approved }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      PSMS_NLP_RUNTIME: legacy
+      RELEASE_ID: ${{ inputs.release_id }}
+      INFERENCE_MODE: ${{ inputs.inference_mode }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Prepare source-only context below 90 MB with explicit inference mode
+        run: python -B deploy/online_delivery.py context --inference-mode "$INFERENCE_MODE" --release "$RELEASE_ID" --output output/vercel-container
+      - name: Deploy the prepared context to the existing project
+        working-directory: output/vercel-container
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          test -n "$VERCEL_ORG_ID"
+          test -n "$VERCEL_PROJECT_ID"
+          test -n "$VERCEL_TOKEN"
+          npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"

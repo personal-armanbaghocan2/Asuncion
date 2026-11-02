@@ -1,0 +1,17 @@
+{
+  "deployment_release": null,
+  "releases": {
+    "nlp-20261101-local-v1": {
+      "approval": {
+        "approved_profiles": [],
+        "deployment_review": null,
+        "quality_review": null,
+        "status": "local_validation_only"
+      },
+      "directory": "inference_releases/nlp-20261101-local-v1",
+      "manifest_sha256": "83c4617c63966f29e6690f575d992bb9c583a6070e109ba66f34692d7ef06143",
+      "model_version": "asuncion-fasttext-v2-rf-setting7-seed42-minilm-v1"
+    }
+  },
+  "schema": "ASUNCION_INFERENCE_RELEASE_V1"
+}
