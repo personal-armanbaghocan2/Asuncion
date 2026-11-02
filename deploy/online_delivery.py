@@ -53,7 +53,9 @@ INITIAL_DEPLOY_FILES=('Dockerfile.vercel','vercel.json','.gitignore','.dockerign
 
 def source_files(base=ROOT):
     base=Path(base)
-    files=runtime_sources(base) | {'requirements.txt','deploy/retrained-nlp-constraints.txt',
+    from runtime_configuration import PACKAGED_DATABASE_CA, validate_packaged_database_ca
+    validate_packaged_database_ca(base)
+    files=runtime_sources(base) | {PACKAGED_DATABASE_CA,'requirements.txt','deploy/retrained-nlp-constraints.txt',
         'deploy/requirements-staging-linux-amd64.lock.txt','deploy/verify_online_image.py',
         'deploy/validate_linux_runtime.py',
         'inference_release_registry.json',releases.SOURCE_CONTRACT,'runtime_model_cache.py'}

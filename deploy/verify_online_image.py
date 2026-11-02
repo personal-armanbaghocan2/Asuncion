@@ -16,6 +16,11 @@ def main():
     from deploy.validate_linux_runtime import deny_network
     sys.addaudithook(deny_network)
     import inference_releases as releases
+    from runtime_configuration import validate_packaged_database_ca
+    try:
+        validate_packaged_database_ca(ROOT)
+    except RuntimeError:
+        print('ONLINE_IMAGE_DATABASE_CA_FAILED'); return 1
     try:
         if not releases.inference_enabled():
             from deploy.runtime_diagnostics import native_probe

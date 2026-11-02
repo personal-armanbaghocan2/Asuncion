@@ -38,7 +38,7 @@ end-to-end municipal workflow. Initial acceptance uses fictional records only.
 
 ## Exact reviewed delivery set
 
-Prepared set: `output/first_online_deployment/github-files.txt` with source
+Prepared set including the TLS correction: `output/supabase_ca_delivery/github-files.txt` with source
 copies/hashes in `github-source/` and `inventory.json`. Required new files are
 listed in `required-untracked.txt`. `vercel-source/` is the source-only CLI context.
 The list excludes private weights, archives/parts, tokens/signed URLs, datasets,
@@ -57,11 +57,11 @@ are provided for OWNER execution only; no Git mutation was performed here:
 ```powershell
 git status --short
 git diff --cached --name-only
-git add --pathspec-from-file=output/first_online_deployment/github-files.txt
+git add --pathspec-from-file=output/supabase_ca_delivery/github-files.txt
 git diff --cached --stat
 git diff --cached --check
 git diff --cached
-git commit --only --pathspec-from-file=output/first_online_deployment/github-files.txt -m "deploy: prepare first online release with durable workbooks and inference disabled"
+git commit --only --pathspec-from-file=output/supabase_ca_delivery/github-files.txt -m "fix: package the Supabase database CA for production TLS"
 git push -u origin HEAD
 ```
 
@@ -97,7 +97,7 @@ This file list is not a new audit/certification of older repository history.
 | `PSMS_DB_EXPECTED_HOST` | Exact existing Supabase direct/pooler hostname, without scheme; must match DSN |
 | `PSMS_DB_CONNECTION_MODE` | Existing reviewed endpoint mode: `transaction`, `session`, or supported `direct` |
 | `PSMS_DB_TRANSACTION_POOLER` | `1` for transaction/6543; `0` for session/direct/5432 |
-| `PSMS_DB_SSLROOTCERT` | `/etc/ssl/certs/ca-certificates.crt`, image default; use a reviewed Supabase CA file in the image if the endpoint requires it |
+| `PSMS_DB_SSLROOTCERT` | `/app/certs/supabase-ca.crt`, image default and required Vercel Production override |
 | `SUPABASE_DB_URL` | Restricted backend DSN described below, secret in Vercel Production only |
 | `TESSERACT_CMD` | `/usr/bin/tesseract`, image default |
 
@@ -112,22 +112,37 @@ host, port, database, login and URL-encoded password. Missing `sslmode` defaults
 to `verify-full`; missing `sslrootcert` uses `PSMS_DB_SSLROOTCERT`. Those validated
 TLS settings are passed to psycopg, not merely checked. Explicit weaker modes
 are rejected, and explicit URI certificate settings take precedence.
-Keep verified TLS and a certificate file that actually exists IN
-THE LINUX IMAGE. System roots are `/etc/ssl/certs/ca-certificates.crt`; use them
-only when they validate the chosen endpoint. A laptop certificate path will
-block startup. If that endpoint needs a project-specific public CA instead,
-provide its reviewed trust file in the image; do not weaken TLS.
+The image packages the owner's locally tested `supabase-ca.crt` unchanged at
+`/app/certs/supabase-ca.crt`, readable by the nonroot runtime. It is one PUBLIC
+Supabase Root 2021 CA certificate, valid April 2021 through April 2031, with DER
+SHA-256 `807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6cafa`.
+Packaging and the image build reject changed certificate material, private keys,
+or extra PEM blocks. The original root file remains available for local use.
+No certificate is fetched during build or runtime.
 
-Shared transaction-pooler template (replace placeholders PRIVATELY in Vercel,
+Update Vercel Production `PSMS_DB_SSLROOTCERT` to the image path. IMPORTANT: if
+`SUPABASE_DB_URL` includes `sslrootcert`, remove that query parameter to use the
+environment setting, or change its value to `/app/certs/supabase-ca.crt`.
+An old URI certificate path overrides the environment setting. Keep
+`sslmode=verify-full`; never switch to require/verify-ca or disable hostname
+checks. A laptop certificate path will block startup.
+
+Local parsing/packaging proves certificate identity, not the live pooler chain.
+The owner's successful local connection is endpoint evidence only if it used
+this same Session Pooler hostname/5432 and verify-full. After deployment, confirm
+`/health/live`, normal administrator sign-in and authenticated `/health` with
+`database=true`. No SQL, credential or permission change is part of this TLS fix.
+
+Shared session-pooler template (replace placeholders PRIVATELY in Vercel,
 not in source or a shell command; URL-encode the password):
 
 ```text
-postgresql://psms_vercel_backend.fenrqjzupidswgrjzdgn:<BACKEND_PASSWORD>@<ACTUAL_SHARED_POOLER_HOST>:6543/postgres?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca-certificates.crt
+postgresql://psms_vercel_backend.fenrqjzupidswgrjzdgn:<BACKEND_PASSWORD>@<ACTUAL_SHARED_POOLER_HOST>:5432/postgres?sslmode=verify-full
 ```
 
-Use `PSMS_DB_CONNECTION_MODE=transaction`, `PSMS_DB_TRANSACTION_POOLER=1` and
-the exact same host/database expectations for that template. A shared session
-pooler uses port 5432, mode `session`, flag 0, and the same project-scoped login.
+Use `PSMS_DB_CONNECTION_MODE=session`, `PSMS_DB_TRANSACTION_POOLER=0` and
+the exact same host/database expectations for that template. A shared transaction
+pooler uses port 6543, mode `transaction`, flag 1, and the same project-scoped login.
 Direct mode uses `db.fenrqjzupidswgrjzdgn.supabase.co`, port 5432, flag 0 and login
 `psms_vercel_backend`. Do not use postgres/admin/service-role credentials.
 No password, endpoint reachability or TLS trust was inferred or changed here.
@@ -162,7 +177,7 @@ from the same prepared context with existing project IDs already set in the
 terminal environment and an authenticated Vercel CLI session:
 
 ```powershell
-Set-Location output/first_online_deployment/vercel-source
+Set-Location output/supabase_ca_delivery/vercel-source
 npx --yes vercel@latest deploy --prod --yes
 ```
 

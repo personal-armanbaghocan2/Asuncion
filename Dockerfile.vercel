@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PSMS_NLP_RUNTIME=legacy PSMS_DATA_DIR=/tmp/psms HOME=/tmp \
     PSMS_INFERENCE_ENABLED=0 PSMS_PRODUCTION_DB_ENABLED=1 PSMS_DURABLE_WORKBOOKS_ENABLED=1 \
     PSMS_INFERENCE_CACHE_ENABLED=1 PSMS_THREADS=2 \
-    PSMS_DB_SSLROOTCERT=/etc/ssl/certs/ca-certificates.crt \
+    PSMS_DB_SSLROOTCERT=/app/certs/supabase-ca.crt \
     TESSERACT_CMD=/usr/bin/tesseract \
     HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
     HF_HUB_DISABLE_TELEMETRY=1 TOKENIZERS_PARALLELISM=false \
@@ -31,6 +31,7 @@ RUN pip install --no-cache-dir --only-binary=:all: --no-deps \
 # Original weights are privately fetched on model use, outside the image build.
 # It never contains credentials, municipal records, uploads or training data.
 COPY runtime/ /app/
+RUN chmod 0444 /app/certs/supabase-ca.crt
 USER psms
 RUN python -B deploy/verify_online_image.py
 EXPOSE 8080
