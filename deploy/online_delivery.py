@@ -26,7 +26,7 @@ from scripts.audits.online_backend_manifest import runtime_sources
 
 SOURCE_UPLOAD_LIMIT = 90_000_000  # decimal MB; headroom below Hobby's 100 MB CLI limit
 
-DEPLOY_FILES = ('Dockerfile.vercel','vercel.json','.gitignore','.dockerignore','.vercelignore',
+DEPLOY_FILES = ('Dockerfile.vercel','vercel.json','.gitignore','.gitattributes','.dockerignore','.vercelignore',
     '.github/workflows/online-production.yml','deploy/online_delivery.py',
     'deploy/verify_online_image.py','deploy/validate_linux_runtime.py','deploy/source_release.py',
     'scripts/audits/online_backend_manifest.py','inference_release_sources.json',
@@ -42,6 +42,7 @@ DEPLOY_FILES = ('Dockerfile.vercel','vercel.json','.gitignore','.dockerignore','
     'deploy/proposals/model_release_owner_decision.PROPOSED.json',
     'tests/test_model_release_approval_preparation.py','tests/run_model_release_approval_checks.py',
     'docs/reports/MODEL_RELEASE_OWNER_REVIEW.md',
+    'docs/guides/FIRST_PRODUCTION_DEPLOYMENT.md',
     'docs/guides/ONLINE_CONTAINER_DEPLOYMENT.md')
 
 INITIAL_DEPLOY_FILES=('Dockerfile.vercel','vercel.json','.gitignore','.dockerignore','.vercelignore',

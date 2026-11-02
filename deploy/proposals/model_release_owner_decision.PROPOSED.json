@@ -1,0 +1,19 @@
+{
+  "schema": "ASUNCION_MODEL_OWNER_DECISION_V1",
+  "decision": "NOT_APPROVED",
+  "release_id": "nlp-online-original-v2",
+  "candidate_release_id": "nlp-online-original-v1",
+  "candidate_manifest_sha256": "a81581a5d8eaec6f194c78cdc90ba3d7056b82c4593a244b3b4c18c171ae6769",
+  "linux_evidence_sha256": null,
+  "workflow_run_url": "",
+  "source_commit": "",
+  "approved_by": "",
+  "approved_at_utc": "",
+  "approved_profiles": [],
+  "quality_review": "",
+  "deployment_review": "",
+  "limitations_accepted": false,
+  "experimental_rf_limitations_accepted": false,
+  "authorized_online_review_conditions_accepted": false,
+  "use_scope": "AUTHORIZED_ONLINE_REVIEW_ONLY"
+}
