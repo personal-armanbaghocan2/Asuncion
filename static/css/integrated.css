@@ -100,3 +100,5 @@
   .login-redesign .login-form-intro{font-size:13px}
   .login-redesign .login-official-footer p{font-size:10px}
 }
+/* Keep creation validation visible without replacing the procurement page. */
+[data-creation-invalid],input[aria-invalid="true"]{outline:2px solid #a62d27;outline-offset:3px;}

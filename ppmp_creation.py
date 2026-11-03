@@ -5,7 +5,7 @@ import os
 import re
 import secrets
 
-from flask import abort, current_app, flash, redirect, request, session, url_for
+from flask import abort, current_app, flash, g, jsonify, redirect, request, session, url_for
 from itsdangerous import BadData, URLSafeTimedSerializer
 from psycopg.conninfo import conninfo_to_dict
 import durable_ocr_v0_1_0 as durable
@@ -63,8 +63,11 @@ def repeat_sources_enabled(api, connection=None):
 def create(api, ptype):
     if ptype not in ('DBM', 'NON-DBM', 'LIB'):
         abort(404)
+    excel_ids, ocr_ids = request.form.getlist('rows'), request.form.getlist('ocr_rows')
+    if not excel_ids and not ocr_ids:
+        return validation_error(api,ptype,'selection', 'Select at least one reviewed item before creating a PPMP.')
     if request.form.get('confirm_reviewed') != 'yes':
-        abort(400, description='Confirm the selected saved values before creating official PPMP records.')
+        return validation_error(api,ptype,'confirmation', 'Please confirm the selected reviewed values before continuing.')
     try:
         token = _signer().loads(request.form.get('creation_token', ''), max_age=3600)
     except BadData:
@@ -73,20 +76,30 @@ def create(api, ptype):
             token.get('session') != sessions.token_hash(session.get(sessions.COOKIE_KEY)) or
             not re.fullmatch(r'[0-9a-f]{48}', str(token.get('nonce', '')))):
         abort(403)
-    excel_ids, ocr_ids = request.form.getlist('rows'), request.form.getlist('ocr_rows')
     if not 1 <= len(excel_ids)+len(ocr_ids) <= 200 or len(set(excel_ids)) != len(excel_ids) or len(set(ocr_ids)) != len(ocr_ids):
         abort(400, description='Select 1 to 200 distinct eligible items.')
     fingerprint = hashlib.sha256(json.dumps([ptype, sorted(excel_ids), sorted(ocr_ids),
         [(code, request.form.get('ocr_revision_'+code)) for code in sorted(ocr_ids)],
         [(code, request.form.get('source_signature_'+code)) for code in sorted(excel_ids)]], separators=(',', ':')).encode()).hexdigest()
-    with durable.transaction(api) as (con, uid):
+    g.document_stage='creation_session'
+    with durable.transaction(api,read_committed=True) as (con, uid):
+        g.document_stage='creation_receipt'
         con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))', ('ppmp-create:'+token['nonce'],))
-        previous = con.execute("select details from audit_trail where action='Confirmed PPMP Creation' and module='PPMP' and ref=?", (token['nonce'],)).fetchone()
+        # Audit is append-only for the restricted backend. Keep the durable
+        # retry receipt with the created records instead of requiring audit SELECT.
+        previous = []
+        for record in con.execute('select no,items from ppmp where type=? and strpos(items,?)>0',
+                                  (ptype,token['nonce'])).fetchall():
+            receipts=[item.get('_PPMP Creation') for item in api['parse_items'](record['items'])
+                      if isinstance(item,dict) and isinstance(item.get('_PPMP Creation'),dict)
+                      and item['_PPMP Creation'].get('nonce')==token['nonce']]
+            if receipts:
+                if any(receipt.get('fingerprint')!=fingerprint or receipt.get('actor')!=uid for receipt in receipts):
+                    abort(409, description='This creation request already completed with different selections. Reopen the category.')
+                previous.append(record['no'])
         if previous:
-            if previous['details'] != fingerprint:
-                abort(409, description='This creation request already completed with different selections. Reopen the category.')
             flash('This PPMP creation request already completed. No duplicate records were created.')
-            return redirect(url_for('ppmp_home'))
+            return creation_complete()
         # Serialize workbook-source consumption across sessions and instances.
         con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))', ('ppmp-excel:'+ptype,))
         allow_repeat = repeat_sources_enabled(api, con)
@@ -108,24 +121,45 @@ def create(api, ptype):
                         used_signatures.add(str(item['_excel_signature']))
             if any(code in used_rows or selected[code].get('_excel_signature') in used_signatures for code in excel_ids):
                 abort(409, description='A selected source item was already used. No records were created.')
-        created = durable.create_reviewed_ocr(api, ptype, con, uid, ocr_ids)
+        receipt=dict(nonce=token['nonce'],fingerprint=fingerprint,actor=uid)
+        created = durable.create_reviewed_ocr(api, ptype, con, uid, ocr_ids, creation=receipt)
         for code in sorted(excel_ids):
             item = dict(selected[code])
+            item['_PPMP Creation']=dict(receipt)
             errors = api['planning_item_errors']([item])
             if errors:
                 abort(422, description='Source item '+code+': '+' '.join(errors))
             year = api['current_year']()
+            g.document_stage='creation_number'
             no = api['next_document_no'](f'PPMP-{ptype}', f'PPMP-{ptype.replace("-", "")}', 'ppmp', year=year, connection=con)
             items = api['assign_item_identifiers']([item], '_PPMP Item ID', no)
             total = api['items_total'](items)
             if total is None:
                 abort(422, description='Source item '+code+' has no valid budget.')
+            g.document_stage='creation_insert'
             con.execute('''insert into ppmp(no,type,office,year,status,created_at,items,total,source_dataset_record_id)
                 values(?,?,?,?,'Draft',?,?,?,?)''', (no, ptype, str(item.get('_Dataset Requesting Office') or 'General Services Office'),
                 year, api['now'](), durable.payload(items), total, int(api['to_float'](item.get('_Dataset Record ID'))) or None))
+            g.document_stage='creation_audit'
             api['log']('Created PPMP', 'PPMP', no, 'Reviewed workbook source item '+code+
                        ('; intentional isolated repeat-source test' if allow_repeat else ''), connection=con)
             created.append(no)
         api['log']('Confirmed PPMP Creation', 'PPMP', token['nonce'], fingerprint, connection=con)
+        g.document_stage='creation_commit'
     flash('Official PPMP draft records created: '+', '.join(created)+'. Procurement approval remains separate.')
+    return creation_complete()
+
+
+def creation_complete():
+    if request.accept_mimetypes.best=='application/json':
+        return jsonify(saved=True,redirect=url_for('ppmp_home'))
     return redirect(url_for('ppmp_home'))
+
+
+def validation_error(api,ptype,field, message):
+    if request.accept_mimetypes.best!='application/json':
+        return api['render_ppmp_category'](ptype,dict(field=field,message=message)),422
+    response=jsonify(saved=False,field=field,message=message)
+    response.status_code=422
+    response.headers['Cache-Control']='private, no-store'
+    return response

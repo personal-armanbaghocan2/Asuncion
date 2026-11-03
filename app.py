@@ -1882,7 +1882,6 @@ def ppmp_edit_table(ptype):
     if not selected_rows:
         flash('Select at least one PPMP item before saving changes.')
         return redirect(url_for('ppmp_type', ptype=ptype))
-
     field_map = {
         'general': 'General Description and Objective of the Project to be Procured',
         'type': 'Type of the Project to be Procured',
@@ -2698,16 +2697,20 @@ def ppmp_type(ptype):
         elif refresh['preserved']:
             flash('Saved records with OCR, downstream or uncertain source lineage were preserved. Review source changes explicitly.')
         return redirect(url_for('ppmp_type', ptype=ptype))
+    if request.method == 'POST':
+        if request.form.get('action') == 'save_table':
+            return redirect(url_for('ppmp_edit_table', ptype=ptype))
+        abort(400, description='Unknown PPMP action.')
+    return render_ppmp_category(ptype)
+
+
+def render_ppmp_category(ptype, creation_validation=None):
     data, used_rows, total_excel_rows = available_excel_rows(ptype)
     for source_row in data:
         source_row['_creation_signature'] = ppmp_creation.source_signature(source_row)
     meta = excel_meta()
     if meta.get('unavailable'):
         flash('Workbook source selection is temporarily unavailable. Saved records and OCR drafts remain available for review.')
-    if request.method == 'POST':
-        if request.form.get('action') == 'save_table':
-            return redirect(url_for('ppmp_edit_table', ptype=ptype))
-        abort(400, description='Unknown PPMP action.')
     ocr_state = load_ppmp_ocr_state()
     ocr_rows = durable_ocr.ppmp_rows(globals(), ptype, state=ocr_state)
     if ocr_rows and not ocr_state:
@@ -2721,18 +2724,15 @@ def ppmp_type(ptype):
         row.pop('fields_json', None)
         row.pop('confidence_json', None)
         row['source_url'] = url_for('ppmp_original_source', ptype=ptype, sid=row['source_id']) if row.get('source_id') else ''
-        row['diagnostics_url'] = url_for('ppmp_source_diagnostics', ptype=ptype, sid=row['source_id']) if row.get('source_id') and is_admin() else ''
-    return render_template('ppmp_type.html', active='ppmp', ptype=ptype, data=data, used_count=len(used_rows), total_excel_rows=total_excel_rows, title=f'PPMP - {ptype}', excel=os.path.basename(EXCEL_PATH), excel_meta=meta, ocr_state=ocr_state, ocr_rows=ocr_rows, ocr_field_labels=ocr_field_labels, creation_token=ppmp_creation.creation_token(ptype))
+    return render_template('ppmp_type.html', active='ppmp', ptype=ptype, data=data, used_count=len(used_rows), total_excel_rows=total_excel_rows, title=f'PPMP - {ptype}', excel=os.path.basename(EXCEL_PATH), excel_meta=meta, ocr_state=ocr_state, ocr_rows=ocr_rows, ocr_field_labels=ocr_field_labels, creation_token=ppmp_creation.creation_token(ptype), creation_validation=creation_validation,
+                           selected_excel=request.form.getlist('rows') if creation_validation else [],
+                           selected_ocr=request.form.getlist('ocr_rows') if creation_validation else [])
 
 
 @app.route('/ppmp/<ptype>/sources/<uuid:sid>')
 def ppmp_original_source(ptype, sid):
     return durable_ocr.protected(durable_ocr.ppmp_source, globals(), ptype, sid)
 
-
-@app.route('/ppmp/<ptype>/sources/<uuid:sid>/diagnostics')
-def ppmp_source_diagnostics(ptype, sid):
-    return durable_ocr.protected(durable_ocr.ppmp_source, globals(), ptype, sid, True)
 
 @app.route('/ppmp/<int:id>/items', methods=['POST'])
 def ppmp_update_saved_items(id):
