@@ -2,12 +2,12 @@
 <section id="document-history" class="card document-history" aria-labelledby="document-history-title">
   <div class="toolbar"><div><h3 id="document-history-title">My uploaded documents</h3><p class="muted">Saved originals, extraction progress and review status. Official approval remains a separate workflow.</p></div></div>
   {% if history.unavailable %}
-  <p class="notice" role="status" data-category="info">Document history is temporarily unavailable. Existing documents remain preserved. The reviewed document-processing installation may be required.</p>
+  <p class="notice" role="status" data-category="info">Document history is temporarily unavailable. Existing documents remain preserved. Please report reference {{history.reference or 'unavailable'}} to the administrator.</p>
   {% else %}
   <form method="get" class="history-filters" aria-label="Document history filters" action="#document-history">
     <input type="hidden" name="_nav" value="{{navigation_token()}}">
     {% for name,value in history.preserved_args %}<input type="hidden" name="{{name}}" value="{{value}}">{% endfor %}
-    <label>Search filename or source ID<input name="h_q" value="{{history.filters.h_q}}" maxlength="200" type="search"></label>
+    <label>Search filename or document reference<input name="h_q" value="{{history.filters.h_q}}" maxlength="200" type="search"></label>
     <label>Sort<select name="h_sort">{% for value,label in [('newest','Newest uploads'),('oldest','Oldest uploads'),('name_asc','Filename A–Z'),('name_desc','Filename Z–A'),('modified_newest','Recently modified'),('modified_oldest','Least recently modified'),('type','File type'),('category','Category'),('status','Status')] %}<option value="{{value}}" {{'selected' if history.filters.h_sort==value}}>{{label}}</option>{% endfor %}</select></label>
     <label>Category<select name="h_category"><option value="">All categories</option>{% for value in history.categories %}<option value="{{value}}" {{'selected' if history.filters.h_category==value}}>{{value}}</option>{% endfor %}</select></label>
     <label>File type<select name="h_type"><option value="">All types</option>{% for value in history.types %}<option value="{{value}}" {{'selected' if history.filters.h_type==value}}>{{value[1:]|upper}}</option>{% endfor %}</select></label>

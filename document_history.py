@@ -8,7 +8,7 @@ import json
 import re
 import uuid
 
-from flask import abort, request, session, url_for
+from flask import abort, current_app, request, session, url_for
 from werkzeug.exceptions import ServiceUnavailable
 
 from account_profiles import connection
@@ -122,7 +122,45 @@ def _group_stats(value):
     return ','.join(columns)
 
 
-def _catalog_sql():
+def _ppmp_catalog_sql():
+    """PPMP history needs no AOQ draft/quotation privileges or JSON expansion."""
+    legacy=_legacy_sort('d.updated_at')
+    return f"""WITH owned AS (
+      SELECT s.id,s.owner_id,s.kind,s.filename,s.extension,s.category AS source_category,s.created_at
+      FROM psms_documents.sources s WHERE s.owner_id=? AND s.kind=?
+    ), catalog AS (
+      SELECT s.*,p.*,r.status AS run_status,
+        greatest(to_char(s.created_at,'YYYY-MM-DD HH24:MI:SS'),coalesce(p.draft_modified,''),
+          coalesce(to_char(coalesce(r.completed_at,r.started_at),'YYYY-MM-DD HH24:MI:SS'),'')) AS modified_sort
+      FROM owned s LEFT JOIN LATERAL (
+        SELECT count(*) FILTER(WHERE d.status<>'CANCELLED') AS total,
+          count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='DBM') AS dbm,
+          count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='NON-DBM') AS non_dbm,
+          count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='LIB') AS lib,
+          count(*) FILTER(WHERE d.status<>'CANCELLED' AND (d.status='CATEGORY_REVIEW' OR d.ppmp_category NOT IN ('DBM','NON-DBM','LIB'))) AS unclassified,
+          count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND (d.reviewed OR d.converted OR d.status IN ('REVIEWED','CONVERTED_TO_PPMP'))) AS reviewed,
+          count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND (d.converted OR d.status='CONVERTED_TO_PPMP')) AS converted,
+          max({legacy}) AS draft_modified,
+          string_agg(concat_ws(' ',d.temp_code,official.no),' ') AS search_references
+        FROM public.ppmp_ocr_drafts d LEFT JOIN public.ppmp official ON official.id=d.official_ppmp_id
+        WHERE d.source_id=s.id AND d.owner_id=s.owner_id
+      ) p ON true LEFT JOIN LATERAL (
+        SELECT status,started_at,completed_at FROM psms_documents.processing_runs
+        WHERE source_id=s.id AND owner_id=s.owner_id ORDER BY started_at DESC,id DESC LIMIT 1
+      ) r ON true
+    ), labeled AS (
+      SELECT c.*,CASE WHEN (CASE WHEN dbm>0 THEN 1 ELSE 0 END+CASE WHEN non_dbm>0 THEN 1 ELSE 0 END+
+        CASE WHEN lib>0 THEN 1 ELSE 0 END+CASE WHEN unclassified>0 THEN 1 ELSE 0 END)>1 THEN 'MIXED'
+        WHEN dbm>0 THEN 'DBM' WHEN non_dbm>0 THEN 'NON-DBM' WHEN lib>0 THEN 'LIB' ELSE 'UNASSIGNED' END AS category,
+        coalesce(run_status,CASE WHEN total>0 THEN 'COMPLETE' ELSE 'INCOMPLETE' END) AS processing_status,
+        CASE WHEN total>0 AND converted=total THEN 'CONFIRMED'
+          WHEN total>0 AND reviewed=total THEN 'REVIEWED' ELSE 'NEEDS_REVIEW' END AS review_status
+      FROM catalog c
+    ) SELECT * FROM labeled"""
+
+
+def _catalog_sql(kind=None):
+    if kind=='ppmp':return _ppmp_catalog_sql()
     legacy = _legacy_sort('d.updated_at')
     item_count = _json_count('a.payload', 'procurement_item_count')
     quote_count = _json_count('a.payload', 'quotation_count')
@@ -141,7 +179,7 @@ def _catalog_sql():
         CASE WHEN s.kind='aoq' THEN CASE WHEN source_groups.total>0 THEN source_groups.unclassified ELSE {fallback_total} END
           ELSE coalesce(p.unclassified,0) END AS unclassified,coalesce(p.reviewed,0) AS reviewed,
         coalesce(p.converted,0) AS converted,a.id AS draft_id,a.status AS aoq_status,
-        a.official_aoq_id,
+        a.official_aoq_id,coalesce(official.no,'') AS search_references,
         CASE WHEN source_groups.total>0 THEN source_groups.total ELSE {fallback_total} END AS aoq_total,
         greatest({quote_count},coalesce(quotations.row_count,0)) AS quotation_count,
         {suppliers} AS supplier_count,r.status AS run_status,
@@ -196,6 +234,7 @@ def _catalog_sql():
         SELECT status,started_at,completed_at FROM psms_documents.processing_runs
         WHERE source_id=s.id AND owner_id=s.owner_id ORDER BY started_at DESC,id DESC LIMIT 1
       ) r ON true
+      LEFT JOIN public.aoq official ON official.id=a.official_aoq_id
     ), labeled AS (
       SELECT c.*,CASE WHEN kind='ppmp' THEN ppmp_total ELSE aoq_total END AS total,
         CASE WHEN (CASE WHEN dbm>0 THEN 1 ELSE 0 END+CASE WHEN non_dbm>0 THEN 1 ELSE 0 END+
@@ -218,7 +257,7 @@ def _where(filters):
             clauses.append(column + '=?')
             params.append(filters[key])
     if filters['h_q']:
-        clauses.append("strpos(lower(concat_ws(' ',filename,id::text)),lower(?))>0")
+        clauses.append("strpos(lower(concat_ws(' ',filename,id::text,search_references)),lower(?))>0")
         params.append(filters['h_q'])
     category = filters['h_category']
     if category:
@@ -308,18 +347,22 @@ def listing(api, kind):
     reset_values = dict(_preserved_args())
     reset_values.update(request.view_args or {})
     result['reset_url'] = url_for(request.endpoint, **reset_values) + '#document-history'
-    sql = _catalog_sql()
+    sql = _catalog_sql(kind)
     where, params = _where(filters)
+    stage='readiness'
     try:
         with connection(api) as (con, uid):
             processing.ready(con)
+            stage='count'
             count = con.execute('SELECT count(*) AS total FROM (' + sql + where + ') history_count', (uid, kind, *params)).fetchone()
             result['total'] = int(count['total']) if count else 0
+            stage='page'
             rows = con.execute(sql + where + ' ORDER BY ' + SORTS[filters['h_sort']] + ' LIMIT 21 OFFSET ?',
                                (uid, kind, *params, (page - 1) * PAGE_SIZE)).fetchall()
             result['has_next'] = len(rows) > PAGE_SIZE
             result['rows'] = [_decorate(row, result['group']) for row in rows[:PAGE_SIZE]]
             if kind == 'ppmp' and result['rows']:
+                stage='official_links'
                 official = con.execute('''SELECT d.source_id,p.id,p.no,p.status FROM public.ppmp_ocr_drafts d
                     JOIN public.ppmp p ON p.id=d.official_ppmp_id WHERE d.owner_id=?
                     AND d.source_id=ANY(?::uuid[]) ORDER BY p.id LIMIT 100''',
@@ -330,8 +373,18 @@ def listing(api, kind):
                     if parent is not None:
                         parent['official_links'].append(dict(label=record['no'] or 'PPMP', status=record['status'],
                             url=url_for('ppmp_review', id=record['id'])))
-    except ServiceUnavailable:
-        result.update(unavailable=True, rows=[], groups=[], has_next=False, total=0)
+    except ServiceUnavailable as error:
+        reference=uuid.uuid4().hex[:16]
+        cause=error
+        sqlstate='unavailable'
+        for _ in range(6):
+            value=getattr(cause,'sqlstate',None)
+            if isinstance(value,str) and re.fullmatch(r'[0-9A-Z]{5}',value):sqlstate=value;break
+            cause=getattr(cause,'__context__',None)
+            if cause is None:break
+        current_app.logger.warning('Document history failed kind=%s stage=%s sqlstate=%s reference=%s',
+                                   kind,stage,sqlstate,reference)
+        result.update(unavailable=True, reference=reference,rows=[], groups=[], has_next=False, total=0)
     if result['has_next']:
         result['next_url'] = _page_url(filters, page + 1)
     groups = {}

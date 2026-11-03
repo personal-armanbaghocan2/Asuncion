@@ -89,3 +89,66 @@
     }
   });
 })();
+
+/* Official draft creation keeps validation and failures on the current page. */
+(() => {
+  'use strict';
+  const form=document.getElementById('ppmpSourceForm');
+  const button=document.querySelector('[data-ppmp-create]');
+  const feedback=document.getElementById('ppmpCreationFeedback');
+  if(!form||!button||!feedback)return;
+  const confirmation=form.querySelector('[name="confirm_reviewed"]');
+  const selectors='input[name="rows"],input[name="ocr_rows"]';
+  let busy=false;
+  function clear(){
+    feedback.hidden=true;
+    form.querySelectorAll('[data-creation-invalid]').forEach(control=>{
+      control.removeAttribute('aria-invalid');control.removeAttribute('data-creation-invalid');
+    });
+  }
+  function show(message,field,item){
+    feedback.textContent=message;feedback.hidden=false;
+    const controls=field==='confirmation'?[confirmation]:field==='selection'?[...form.querySelectorAll(selectors)]:
+      field==='item'?[...form.querySelectorAll(selectors)].filter(control=>control.value===item):[];
+    controls.forEach(control=>{control.setAttribute('aria-invalid','true');control.setAttribute('data-creation-invalid','true');});
+    (controls[0]||feedback).focus();
+  }
+  form.addEventListener('change',event=>{
+    if(event.target===confirmation||event.target.matches(selectors))clear();
+  });
+  form.addEventListener('submit',async event=>{
+    if(event.submitter!==button)return;
+    event.preventDefault();
+    if(busy)return;
+    clear();
+    if(![...form.querySelectorAll(selectors)].some(control=>control.checked)){
+      show('Select at least one reviewed item before creating a PPMP.','selection');return;
+    }
+    if(!confirmation.checked){
+      show('Please confirm the selected reviewed values before continuing.','confirmation');return;
+    }
+    busy=true;
+    try{
+      if(typeof window.psmsConfirm==='function'&&!await window.psmsConfirm({message:'Create official PPMP drafts from the selected reviewed values? Procurement approval remains separate.'}))return;
+      const body=new FormData(form);body.set('action','create_ppmp');body.delete('ocr_file');
+      button.disabled=true;form.setAttribute('aria-busy','true');
+      const response=await fetch(form.action||window.location.href,{method:'POST',body,
+        credentials:'same-origin',headers:{Accept:'application/json'}});
+      if(response.redirected&&new URL(response.url).pathname==='/login'){
+        window.location.assign(response.url);return;
+      }
+      const data=response.headers.get('content-type')?.includes('application/json')?await response.json():{};
+      if(response.ok&&data.saved===true&&data.redirect){
+        const target=new URL(data.redirect,window.location.origin);
+        if(target.origin!==window.location.origin)throw new Error('INVALID_LOCAL_REDIRECT');
+        window.location.assign(target.href);return;
+      }
+      const reference=/^[0-9a-f]{16}$/.test(data.reference||'')?' Reference: '+data.reference:'';
+      show((data.item?data.item+': ':'')+(data.message||'Creation could not be confirmed. Your selections remain here. Reopen the latest review before retrying.')+reference,data.field,data.item);
+    }catch(error){
+      show('Creation could not be confirmed. Your selections remain here. Check the saved PPMP records before retrying.');
+    }finally{
+      busy=false;button.disabled=false;form.removeAttribute('aria-busy');
+    }
+  });
+})();

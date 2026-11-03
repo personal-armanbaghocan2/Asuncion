@@ -37,7 +37,11 @@ def transaction(api, *, read_committed=False):
             # A creator waiting on a parent must see the preceding creator's
             # committed child in its subsequent existence statement.
             con.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
-        uid=_active(con);yield con,uid;con.commit()
+        uid=_active(con)
+        con.execute("select set_config('psms.workbook_actor',?,true)",
+                    (json.dumps(dict(uid=uid,sid=sessions.token_hash(session.get(sessions.COOKIE_KEY)))),))
+        yield con,uid
+        con.commit()
     except Exception:con.rollback();raise
     finally:con.close()
 
@@ -373,37 +377,52 @@ def ppmp_post(api,ptype):
     else:abort(400)
     return redirect(url_for('ppmp_type',ptype=ptype))
 
-def create_reviewed_ocr(api,ptype,con,uid,ids):
+def create_reviewed_ocr(api,ptype,con,uid,ids,creation=None):
     created=[]
     for temp_id in sorted(ids):
+        g.document_stage='creation_draft_lock'
         row=_ppmp_locked(con,uid,ptype,temp_id)
         if row['converted'] and row['official_ppmp_id']:
             existing=con.execute('select no from ppmp where id=?',(row['official_ppmp_id'],)).fetchone()
             created.append(existing['no']);continue
-        if row['revision']!=revision(request.form.get('ocr_revision_'+temp_id)):abort(409,description='Reviewed data changed. Refresh and confirm again.')
-        if row['status']!='REVIEWED' or not row['reviewed']:abort(400,description='Review and correct each selected row first.')
+        if row['revision']!=revision(request.form.get('ocr_revision_'+temp_id)):
+            creation_item_error(temp_id,'Reviewed data changed. Reopen and confirm this item again.',409)
+        if row['status']!='REVIEWED' or not row['reviewed']:
+            creation_item_error(temp_id,'Review and correct this item before creating an official draft.')
         fields=api['normalize_reviewed_ocr_fields'](api['_json_dict'](row['fields_json']))
         try:item=api['validated_ppmp_item_from_review'](fields,ptype)
-        except ValueError:abort(400,description='Stored review fields are invalid; reopen Review.')
+        except ValueError:creation_item_error(temp_id,'Stored review fields are invalid. Reopen this item review.')
         budget=api['parse_currency_decimal'](item.get(api['OCR_PPMP_FIELDS']['budget']['label']))
-        if budget is None:abort(400,description='Estimated Budget is invalid.')
+        if budget is None:creation_item_error(temp_id,'Estimated Budget is invalid. Correct this item before continuing.')
         document_metadata=api['_json_dict'](row['confidence_json']).get('_document_metadata') or {}
         source_year=str(document_metadata.get('fiscal_year') or '')
         year=int(source_year) if re.fullmatch(r'20\d{2}',source_year) else api['current_year']()
         office=str(document_metadata.get('office') or '').strip() or 'General Services Office'
+        g.document_stage='creation_number'
         no=api['next_document_no'](f'PPMP-{ptype}',f'PPMP-{ptype.replace("-", "")}', 'ppmp',year=year,connection=con)
+        if creation is not None:item['_PPMP Creation']=dict(creation)
         item.update({'_OCR Source':row['extraction_method'],'_OCR Filename':row['source_filename'],'_OCR Temp ID':temp_id,'_OCR Confidence':row['average_confidence']})
         item['_OCR Field Evidence']=api['_json_dict'](row['confidence_json'])
         item['_OCR Source ID']=str(row.get('source_id') or '')
         items=api['assign_item_identifiers']([item],'_PPMP Item ID',no)
+        g.document_stage='creation_insert'
         did=con.execute('''insert into ppmp(no,type,office,year,status,created_at,items,total,source_type,ocr_source_filename,ocr_raw_text,
             ocr_average_confidence,ocr_verified,ocr_verified_by,ocr_verified_at,ocr_extraction_timestamp)
             values(?,?,?,?,'Draft',?,?,?,?,?,?,?,?,?,?,?) returning id''',
             (no,ptype,office,year,api['now'](),payload(items),float(budget),'OCR',row['source_filename'],row['raw_ocr_text'],
              row['average_confidence'],True,row['reviewed_by'],row['reviewed_at'],row['created_at'])).fetchone()['id']
+        g.document_stage='creation_draft_update'
         con.execute("update ppmp_ocr_drafts set status='CONVERTED_TO_PPMP',converted=true,official_ppmp_id=?,converted_at=?,updated_at=?,revision=revision+1 where id=?",(did,api['now'](),api['now'](),row['id']))
+        g.document_stage='creation_audit'
         audit(api,con,'Created PPMP from Confirmed OCR','PPMP',no);created.append(no)
     return created
+
+
+def creation_item_error(temp_id,message,status=422):
+    from werkzeug.exceptions import UnprocessableEntity,Conflict
+    error=(Conflict if status==409 else UnprocessableEntity)(description=message)
+    error.creation_item=temp_id if re.fullmatch(r'OCR-TEMP-[0-9]{1,20}',temp_id) else ''
+    raise error
 
 
 def aoq_load(api):
@@ -554,7 +573,13 @@ def aoq_source(api,did):
 
 def protected(operation,*args):
     try:return operation(*args)
-    except HTTPException:raise
+    except HTTPException as error:
+        if hasattr(error,'creation_item') and request.accept_mimetypes.best=='application/json':
+            response=jsonify(saved=False,field='item',item=error.creation_item,message=error.description)
+            response.status_code=error.code
+            response.headers['Cache-Control']='private, no-store'
+            return response
+        raise
     except Exception as error:
         # Never log exception text/tracebacks, SQL, filenames, tokens or document
         # contents. SQLSTATE and fixed stages are sufficient to distinguish a
@@ -569,7 +594,9 @@ def protected(operation,*args):
         if isinstance(error,TimeoutError):code='DOCUMENT_PROCESSING_TIMEOUT'
         if isinstance(error,MemoryError):code='DOCUMENT_RESOURCE_LIMIT'
         stage=getattr(g,'document_stage','review')
-        if stage not in {'validation','source_lookup','extraction','mapping','draft_persistence','review'}:
+        if stage not in {'validation','source_lookup','extraction','mapping','draft_persistence','review',
+                         'creation_session','creation_receipt','creation_draft_lock','creation_number',
+                         'creation_insert','creation_draft_update','creation_audit','creation_commit'}:
             stage='review'
         if stage=='extraction' and type(error) is RuntimeError:
             code={
@@ -597,8 +624,15 @@ def protected(operation,*args):
             'DOCUMENT_BUSY':'Document processing is busy. Reopen the saved review and retry shortly.',
             'DOCUMENT_UNREADABLE':'No readable item text or table was found. Use a clear scan, a searchable PDF, or a supported native workbook.',
         }
-        response=Response(messages.get(code,'Document processing could not be confirmed. Reopen the saved review before retrying; no success is assumed.')+
-                          ' Reference: '+reference,status=422 if code=='DOCUMENT_UNREADABLE' else 503,mimetype='text/plain')
+        message=messages.get(code,'Document processing could not be confirmed. Reopen the saved review before retrying; no success is assumed.')
+        status=422 if code=='DOCUMENT_UNREADABLE' else 503
+        if request.accept_mimetypes.best=='application/json':
+            response=jsonify(saved=False,message=message,reference=reference)
+            response.status_code=status
+        else:
+            from flask import render_template,make_response
+            response=make_response(render_template('operation_error.html',active='',title='Operation needs attention',
+                message=message+' Reference: '+reference,status=status),status)
         response.headers['Cache-Control']='private, no-store'
         response.headers['X-PSMS-Diagnostic']=code
         response.headers['X-PSMS-Reference']=reference

@@ -1,9 +1,9 @@
-"""Optional session-bound internal GET links; never a replacement for authorization.
+"""Required session-bound internal GET links; never a replacement for authorization.
 
 The URL contains only an opaque MAC. Its private input binds the validated
 account's ID, server-session digest, endpoint and canonical route arguments.
 Ordinary query filters remain editable; route/resource checks still run normally.
-Authenticated bare URLs remain usable for bookmarks, refresh and shared pages.
+Missing, foreign or invalid navigation context requires a fresh sign-in.
 Register after account/session validation and before route execution.
 """
 import base64
@@ -119,9 +119,9 @@ def register(app):
 
     @app.url_defaults
     def signed_internal_url(endpoint, values):
-        # The dashboard is the ordinary authenticated launch destination.
-        # Keep the existing login redirect and shared menu entry stable.
-        if endpoint not in PUBLIC_ENDPOINTS and endpoint != 'dashboard':
+        # Sign the post-login dashboard too: bare launch URLs follow the same
+        # policy as protected details, APIs, pagination and document downloads.
+        if endpoint not in PUBLIC_ENDPOINTS:
             token = _token(app, endpoint, values)
             if token:
                 values[PARAMETER] = token
@@ -139,13 +139,14 @@ def register(app):
         if _validated_identity() is None:
             return _denied(401)
         supplied = request.args.getlist(PARAMETER)
-        # A plain URL carries no sender identity. Current server-session and
-        # resource authorization decide access; URL tokens never authenticate.
-        if not supplied:
-            return None
+        # A static URL cannot identify copying. Require the same navigation
+        # context for every protected GET, including a manually typed URL.
+        # Never mint replacement context from an untrusted/foreign destination.
         if len(supplied) != 1 or not _SIGNATURE.fullmatch(supplied[0]):
-            return _denied(403)
+            session.clear()
+            return _denied(401)
         expected = _token(app, request.endpoint, request.view_args or {})
         if not expected or not hmac.compare_digest(supplied[0], expected):
-            return _denied(403)
+            session.clear()
+            return _denied(401)
         return None

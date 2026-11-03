@@ -18,7 +18,7 @@
 </section>
 <div class="dash-kpis">
 {% for label,glyph,tone,endpoint in [('Total PPMP Records','document','blue','ppmp_home'),('For Review','clipboard','amber','dashboard'),('Approved Documents','check','green','dashboard'),('Low Stock Alerts','box','red','inventory')] %}
-<a class="dash-kpi {{tone}}" href="{{url_for(endpoint)}}{% if loop.index==2 %}#pending-reviews{% elif loop.index==3 %}#document-status{% elif loop.index==4 %}?stock=low{% endif %}"><span class="dash-kpi-icon">{{dash_icon(glyph)}}</span><span class="dash-kpi-copy"><b>{{label}}</b><strong>{{'{:,}'.format(d.kpis[loop.index0])}}</strong></span><span class="dash-kpi-mini">{{dash_icon('clock' if loop.index==2 else 'circle-check' if loop.index==3 else 'warning' if loop.index==4 else glyph)}}</span></a>
+<a class="dash-kpi {{tone}}" href="{{url_for(endpoint,stock='low') if loop.index==4 else url_for(endpoint)}}{% if loop.index==2 %}#pending-reviews{% elif loop.index==3 %}#document-status{% endif %}"><span class="dash-kpi-icon">{{dash_icon(glyph)}}</span><span class="dash-kpi-copy"><b>{{label}}</b><strong>{{'{:,}'.format(d.kpis[loop.index0])}}</strong></span><span class="dash-kpi-mini">{{dash_icon('clock' if loop.index==2 else 'circle-check' if loop.index==3 else 'warning' if loop.index==4 else glyph)}}</span></a>
 {% endfor %}
 </div>
 <div class="dash-main-grid">

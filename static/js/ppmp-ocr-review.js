@@ -158,8 +158,6 @@
     preview.removeAttribute('src');
     if (document.getElementById('ocrSourceComparison').open && !preview.hidden) preview.src = preview.dataset.sourceUrl;
     document.getElementById('ocrPreviewUnavailable').hidden = !preview.hidden;
-    const diagnosticLink = document.getElementById('ocrDiagnostics');
-    diagnosticLink.hidden = !item.diagnostics_url; diagnosticLink.href = item.diagnostics_url || '';
     differenceConfirm.checked = item.source_changes_confirmed === true;
     updateDifference();
     const errors = document.getElementById('ocrItemErrors'); errors.replaceChildren();
