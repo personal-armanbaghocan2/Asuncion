@@ -1,0 +1,18 @@
+/* Shared additions preserve the established sidebar, module layout and forms. */
+.notice,.notice[data-category="info"],.notice[data-category="message"]{background:#f2f5f6;color:#344750;border:1px solid #cad5db;border-left:4px solid #69818e}
+.notice[data-category="error"],.notice[data-category="danger"]{background:#fff1f0;color:#8f2020;border-color:#e6abab;border-left-color:#b52e2e}
+.notice[data-category="success"]{background:#eaf7ee;color:#135c32;border-color:#a9d5b7;border-left-color:#238044}
+.profile-avatar,.profile-photo,.welcome-avatar{object-fit:cover;flex-shrink:0;border-radius:50%;background:#e7f1eb}
+.profile-avatar{display:inline-block;vertical-align:middle;border:1px solid #bfd3c6}
+.profile-photo{width:96px;height:96px;margin:8px 0 16px}
+.welcome-avatar{width:36px;height:36px;vertical-align:middle;margin-right:9px}
+.intake-item{margin-top:16px}.intake-item>summary{cursor:pointer;padding:6px 0}.intake-item textarea{width:100%;min-height:64px}.intake-item .form-grid{margin:16px 0}
+.public-message{max-width:680px;margin:10vh auto;padding:20px}
+.live-update-notice{position:sticky;top:0;z-index:12}.live-update-notice[hidden]{display:none}
+.login-hero{isolation:isolate;background:#183b31;overflow:hidden}
+.login-hall-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;z-index:-2}
+.login-hero:before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,#001b19a3 0%,#001b1926 34%,#001b19e8 100%);z-index:-1}
+.login-hero:after{display:none}.login-copy{align-self:end;padding-top:220px;text-shadow:0 1px 6px #0008}.login-hero-brand{align-self:start}.login-hero-foot{color:#fff}.login-hero-brand span,.login-copy>p,.login-benefits small{color:#eef8f2}
+.account-form+.account-form{margin-top:24px}.account-meta strong{overflow-wrap:anywhere}
+@media(max-width:900px){.login-hero{display:flex!important;min-height:280px;height:auto;margin:12px;padding:22px;border-radius:18px}.login-copy{padding-top:80px;margin-top:auto}.login-copy h1{font-size:25px}.login-benefits{display:none}.login-hero-foot{margin-top:18px}.login-form-side{min-height:0;padding:24px}.login-split{min-height:100dvh}.account-grid{grid-template-columns:1fr}}
+@media print{.live-update-notice{display:none!important}}

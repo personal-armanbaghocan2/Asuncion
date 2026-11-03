@@ -1,0 +1,2 @@
+{% extends 'base.html' if session.get('logged_in') else 'public_shell.html' %}
+{% block content %}<section class="card"><h2>Operation needs attention</h2><p class="notice" data-category="error" role="alert">{{message}}</p><p>Response {{status}}. No success or procurement approval is assumed.</p><a class="btn" href="{{url_for('dashboard') if session.get('logged_in') else url_for('login')}}">Return to the system</a></section>{% endblock %}

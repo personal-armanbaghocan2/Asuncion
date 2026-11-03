@@ -1,7 +1,7 @@
 {% extends 'base.html' %}{% block content %}
 <div class="toolbar page-head"><h2>PR–PO NLP Verification</h2><div class="actions"><span class="badge {{'ok' if model_state.active else 'bad'}}">FastText {{'Active' if model_state.active else 'Unavailable'}}</span><a class="btn small blue" href="{{url_for('nlp_algorithms')}}">Model Information</a></div></div>
 {% if not model_state.active %}<div class="warning-box">{{model_state.message}} Verification is unavailable until the compatible model is installed.</div>{% endif %}
-{% if model_state.get('manifest', {}).get('runtime') == 'retrained_rf' %}<div class="warning-box">Experimental Random Forest: authorized online review only. Use only authorized documents. AI_PROPOSED_UNVERIFIED labels; probabilities are uncalibrated. Review deterministic findings and original PR/PO documents before human confirmation. No automatic procurement approval.</div>{% endif %}
+{% if model_state.get('manifest', {}).get('runtime') == 'retrained_rf' %}<div class="warning-box">Experimental Random Forest: authorized document review only. Use only authorized documents. AI_PROPOSED_UNVERIFIED labels; probabilities are uncalibrated. Review deterministic findings and original PR/PO documents before human confirmation. No automatic procurement approval.</div>{% endif %}
 <form method="post" class="source-bar" id="nlpSourceForm"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label class="wide-field">Approved PO<select name="po_id" required data-record-selector="approved PO"><option value="">Select approved PO</option>{% for p in selector_pos %}<option value="{{p.id}}" data-search="{{p.search_terms}} {{p.supplier}} {{p.pr_no}}" data-can-run="{{'true' if p.can_run and model_state.active else 'false'}}" data-can-compare="{{'true' if p.can_compare else 'false'}}" {{'selected' if comparison_source and comparison_source.id == p.id}}>{{p.no}} · {{(p.item_preview or p.pr_no)|truncate(55)}} · {{p.supplier|truncate(40)}}</option>{% endfor %}</select></label>
 {% if comparison_enabled %}<button class="btn blue" type="submit" name="action" value="compare" id="compareSourceButton">Compare Source Items</button>{% endif %}
@@ -36,6 +36,7 @@
     document.getElementById('nlpSelectionNotice').hidden = !results || select.value === initial;
   }
   select.addEventListener('change', update);
+  select.addEventListener('psms:options-updated', update);
   update();
 })();
 </script>

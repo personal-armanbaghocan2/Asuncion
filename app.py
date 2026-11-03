@@ -82,21 +82,40 @@ def inject_layout_context():
         'header_date': datetime.datetime.now().strftime('%A, %B %-d, %Y') if os.name != 'nt' else datetime.datetime.now().strftime('%A, %B %d, %Y').replace(' 0', ' '),
         'offline_mode': True,
         'current_account': dict(account) if account else None,
+        'sync_topics': live_updates.topics_for_page,
+        'record_pagination': getattr(g,'psms_pagination',None),
+        'pagination_url': pagination_url,
     }
 
 import signatory_management_v0_1_0 as managed_signatories
 import procurement_creation
+import ppmp_intake as item_intake
+import account_profiles
+import ui_feedback
+ui_feedback.register(app)
+import live_updates
+import request_queries
+app.teardown_request(request_queries.close)
 
 def conn():
     return managed_signatories.Connection(connect_db(DATABASE_URL))
 
 def q(sql, params=(), one=False):
-    con = conn()
-    try:
-        rows = con.execute(sql, params).fetchall()
-        return rows[0] if one and rows else rows
-    finally:
-        con.close()
+    return request_queries.read(conn,sql,params,one)
+
+
+def paged_q(sql,params=()):
+    page=request.args.get('page','1')
+    if not re.fullmatch(r'[1-9][0-9]{0,3}',page):abort(400,description='Choose a valid record page.')
+    page=int(page);size=100
+    rows=q(sql.rstrip().rstrip(';')+f' limit {size+1} offset {(page-1)*size}',params)
+    g.psms_pagination=dict(page=page,has_next=len(rows)>size,size=size)
+    return rows[:size]
+
+
+def pagination_url(page):
+    filters={key:request.args[key] for key in ('q','sheet','category','stock','comparison_po_id','ocr_source') if key in request.args}
+    return url_for(request.endpoint,**dict(request.view_args or {}),page=page,**filters)
 
 def exec_db(sql, params=()):
     """Execute one write and return the inserted id when applicable."""
@@ -563,6 +582,9 @@ def posted_aoq_items():
     unit_costs = request.form.getlist('offer_unit_cost')
     amounts = request.form.getlist('offer_amount')
     remarks = _posted_list('offer_remarks')
+    categories = request.form.getlist('offer_category')
+    if any(value not in ('','DBM','NON-DBM','LIB') for value in categories):
+        abort(400,description='Choose a valid quotation item category.')
     count = max(len(names), len(descriptions), len(qtys), len(units), len(unit_costs), len(amounts), len(remarks))
     items = []
     for idx in range(count):
@@ -590,6 +612,8 @@ def posted_aoq_items():
             'amount': round(amount, 2) if isinstance(amount, float) and amount >= 0 else amount,
             'remarks': note,
         })
+        if idx<len(categories) and categories[idx]:
+            items[-1]['category']=categories[idx]
     return items
 
 
@@ -1790,6 +1814,8 @@ def nlp_dynamic_remarks(result, details=None):
 
 def trained_nlp_model_status():
     """Validate the exported FastText model without loading a fallback."""
+    # Never keep a page-read database transaction open during cold model retrieval.
+    request_queries.close()
     if not app.config.get('PSMS_INFERENCE_ENABLED',True):
         return {'active':False,'message':'OCR/NLP inference is disabled pending an approved release.',
                 'diagnostic_code':'INFERENCE_DISABLED'}
@@ -1933,6 +1959,24 @@ def ppmp_ocr_upload(ptype):
     return durable_ocr.protected(durable_ocr.ppmp_upload, globals(), ptype)
 
 
+@app.route('/ppmp/intake',methods=['GET','POST'])
+def ppmp_intake():
+    if request.method=='POST':
+        return durable_ocr.protected(item_intake.upload,globals())
+    return render_template('ppmp_intake.html',active='ppmp',title='PPMP Document Upload',
+                           source=None,items=[],labels=ppmp_review_labels(),categories=item_intake.CATEGORIES)
+
+
+@app.route('/ppmp/intake/<uuid:sid>',methods=['GET','POST'])
+def ppmp_intake_review(sid):
+    return durable_ocr.protected(item_intake.review,globals(),sid)
+
+
+@app.route('/ppmp/intake/<uuid:sid>/source')
+def ppmp_intake_source(sid):
+    return durable_ocr.protected(item_intake.source_file,globals(),sid)
+
+
 @app.route('/ppmp/<ptype>/check_ocr_upload', methods=['POST'])
 def ppmp_ocr_duplicate_check(ptype):
     return durable_ocr.protected(durable_ocr.ppmp_duplicate_check, globals(), ptype)
@@ -2057,7 +2101,14 @@ def logout():
 
 @app.after_request
 def add_no_cache_headers(response):
-    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    if request.endpoint=='static' and not session.modified:
+        from deploy.build_vercel_assets import ASSETS
+        if (request.view_args or {}).get('filename') in ASSETS:
+            response.headers['Cache-Control']='public, max-age=300, must-revalidate'
+            return response
+    if request.endpoint in ('account_photo','sync_revisions'):
+        return response  # Private, authenticated ETag revalidation is set by the image endpoint.
+    response.headers['Cache-Control'] = 'private, no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     return response
@@ -2463,7 +2514,7 @@ def ppmp_dataset():
 
 @app.route('/ppmp')
 def ppmp_home():
-    raw_rows=q('select * from ppmp order by id desc')
+    raw_rows=paged_q('select * from ppmp order by id desc')
     rows=[]
     for r in raw_rows:
         d=dict(r)
@@ -2809,7 +2860,7 @@ def app_plan():
         flash('APP generated successfully from the selected Source PPMP.')
         return redirect(url_for('app_plan'))
 
-    raw_plans = q("""select a.*, p.no ppmp_no, p.type ppmp_type, p.items ppmp_items, a.items app_items
+    raw_plans = paged_q("""select a.*, p.no ppmp_no, p.type ppmp_type, p.items ppmp_items, a.items app_items
                      from app_plan a
                      left join ppmp p on p.id=a.ppmp_id
                      order by a.id desc""")
@@ -2910,7 +2961,7 @@ def pr():
     if request.method == 'POST':
         return procurement_creation.create_pr(globals(), request.form.get('app_id'))
 
-    raw_prs = q('''select r.*, p.no ppmp_no, p.type ppmp_type, a.no app_no
+    raw_prs = paged_q('''select r.*, p.no ppmp_no, p.type ppmp_type, a.no app_no
                    from pr r
                    left join ppmp p on p.id=r.ppmp_id
                    left join app_plan a on a.id=r.app_id
@@ -3010,7 +3061,7 @@ def pr_print(id):
 def aoq():
     if request.method == 'POST':
         return durable_ocr.protected(durable_ocr.aoq_post, globals())
-    raw_aoq_rows = q('''select aq.*, r.no pr_no, r.office pr_office from aoq aq
+    raw_aoq_rows = paged_q('''select aq.*, r.no pr_no, r.office pr_office from aoq aq
                 left join pr r on r.id=aq.pr_id
                 order by aq.id desc''')
     rows=[]
@@ -3142,7 +3193,7 @@ def po():
 
     if request.method=='POST':
         return procurement_creation.create_po(globals(), request.form.get('aoq_id'))
-    rows=q("""select p.*, aq.no aoq_no, aq.winner, r.no pr_no
+    rows=paged_q("""select p.*, aq.no aoq_no, aq.winner, r.no pr_no
               from po p
               left join aoq aq on aq.id=p.aoq_id
               left join pr r on r.id=aq.pr_id
@@ -3282,7 +3333,7 @@ def nlp():
         from nlp_runtime_selection import require_available
         require_available(app.config)
         return procurement_creation.create_nlp(globals(), request.form.get('po_id'))
-    raw_rows=q('''select n.*, p.no po_no, p.supplier, aq.no aoq_no, r.no pr_no
+    raw_rows=paged_q('''select n.*, p.no po_no, p.supplier, aq.no aoq_no, r.no pr_no
                   from nlp n
                   join po p on p.id=n.po_id
                   left join aoq aq on aq.id=p.aoq_id
@@ -3442,7 +3493,7 @@ def nlp_algorithms():
 def iar():
     if request.method=='POST':
         return procurement_creation.create_iar(globals(), request.form.get('po_id'))
-    rows=q('''select i.*, p.no po_no, p.supplier, n.no nlp_no, aq.no aoq_no, r.no pr_no
+    rows=paged_q('''select i.*, p.no po_no, p.supplier, n.no nlp_no, aq.no aoq_no, r.no pr_no
               from iar i
               left join po p on p.id=i.po_id
               left join nlp n on n.po_id=p.id
@@ -3635,7 +3686,20 @@ def inventory():
     search_text = (request.args.get('q') or '').strip()
     category_filter = (request.args.get('category') or '').strip()
     stock_filter = (request.args.get('stock') or '').strip().lower()
-    all_rows = [dict(row) for row in q('select * from inventory order by id desc')]
+    where=[];params=[]
+    if search_text:
+        where.append("strpos(lower(concat_ws(' ',item_code,item,description,source_po)),lower(?))>0")
+        params.append(search_text)
+    if category_filter:
+        where.append('btrim(category)=?');params.append(category_filter)
+    stock_predicates={'in stock':'coalesce(qty,0)>5','in':'coalesce(qty,0)>5',
+        'low stock':'coalesce(qty,0)>0 and coalesce(qty,0)<=5','low':'coalesce(qty,0)>0 and coalesce(qty,0)<=5',
+        'out of stock':'coalesce(qty,0)<=0','out':'coalesce(qty,0)<=0'}
+    if stock_filter:
+        if stock_filter not in stock_predicates:abort(400,description='Choose a valid stock filter.')
+        where.append('('+stock_predicates[stock_filter]+')')
+    predicate=(' where '+' and '.join(where)) if where else ''
+    all_rows=[dict(row) for row in paged_q('select * from inventory'+predicate+' order by id desc',params)]
 
     def stock_state(row):
         quantity = to_float(row.get('qty'))
@@ -3648,20 +3712,11 @@ def inventory():
     for row in all_rows:
         row['stock_state'] = stock_state(row)
 
-    categories = sorted({str(row.get('category') or '').strip() for row in all_rows if row.get('category')})
-    normalized_query = search_text.lower()
-    rows = [
-        row for row in all_rows
-        if (not normalized_query or normalized_query in ' '.join(str(row.get(key) or '') for key in ('item_code', 'item', 'description', 'source_po')).lower())
-        and (not category_filter or row.get('category') == category_filter)
-        and (not stock_filter or row['stock_state'].lower().startswith(stock_filter))
-    ]
-    stock_summary = {
-        'total': len(all_rows),
-        'in_stock': sum(row['stock_state'] == 'In stock' for row in all_rows),
-        'low_stock': sum(row['stock_state'] == 'Low stock' for row in all_rows),
-        'out_of_stock': sum(row['stock_state'] == 'Out of stock' for row in all_rows),
-    }
+    categories=[row['category'] for row in q("select distinct btrim(category) category from inventory where category is not null and btrim(category)<>'' order by category")]
+    rows = all_rows  # Filtering and pagination are authoritative PostgreSQL queries.
+    stock_summary=q('''select count(*) total,count(*) filter(where coalesce(qty,0)>5) in_stock,
+        count(*) filter(where coalesce(qty,0)>0 and coalesce(qty,0)<=5) low_stock,
+        count(*) filter(where coalesce(qty,0)<=0) out_of_stock from inventory''',one=True)
     transactions = q('''select t.*, i.item_code, i.item from inventory_transactions t
                         left join inventory i on i.id=t.inventory_id order by t.id desc limit 50''')
     return render_template(
@@ -3726,7 +3781,7 @@ def ris_ics():
         flash(f'{no} created. Review all selected inventory items before approval.')
         return redirect(url_for('ris_ics'))
 
-    rows = q('select * from ris_ics order by id desc')
+    rows = paged_q('select * from ris_ics order by id desc')
     consumables = q("select * from inventory where category='Consumable' and qty>0 order by lower(item)")
     equipment = q("select * from inventory where category='Equipment' and qty>0 order by lower(item)")
     return render_template('ris_ics.html', active='ris', rows=rows, consumables=consumables,
@@ -3937,21 +3992,36 @@ def account():
         flash('Please sign in again to manage your account.')
         return redirect(url_for('login'))
     if request.method == 'POST':
-        full_name = (request.form.get('full_name') or '').strip()[:160]
-        display_name = (request.form.get('display_name') or '').strip()[:80]
-        exec_db('update users set full_name=?, display_name=? where id=?', (full_name, display_name, user_id))
-        log('Profile Updated', 'Account', session.get('username',''), 'User updated safe profile fields')
-        flash('Account profile updated.')
-        return redirect(url_for('account'))
+        return account_profiles.save(globals())
     row = q('select id,username,role,full_name,display_name,status,created_at,last_login from users where id=?', (user_id,), one=True)
     if not row:
         session.clear(); flash('Account no longer exists. Please sign in again.')
         return redirect(url_for('login'))
-    return render_template('account.html', active='account', account=dict(row), title='My Account')
+    from werkzeug.exceptions import ServiceUnavailable
+    try:
+        profile=account_profiles.state(globals());profile_ready=True
+    except ServiceUnavailable:
+        profile=dict(revision=0);profile_ready=False
+    return render_template('account.html', active='account', account=dict(row),profile=profile,
+                           profile_ready=profile_ready,title='My Account')
+
+
+@app.route('/account/photo')
+def account_photo():
+    return account_profiles.photo(globals())
+
+
+@app.route('/api/sync/revisions')
+def sync_revisions():
+    return live_updates.revisions(globals())
 
 
 @app.route('/account/change-password', methods=['POST'])
 def change_password():
+    if set(request.form)-{'csrf_token','current_password','new_password','confirm_password'}:
+        abort(400,description='Only password fields may be changed here.')
+    if any(len(request.form.get(key,''))>1024 for key in ('current_password','new_password','confirm_password')):
+        abort(400,description='Password input is too long.')
     user_id = session.get('user_id')
     user = q('select id,username,password from users where id=?', (user_id,), one=True) if user_id else None
     if not user:
@@ -3994,6 +4064,8 @@ def change_password():
 
 def create_user_account(username, password_hash, role):
     """Commit an authorized account creation and its audit as one operation."""
+    if role not in ('Staff','Inspector'):
+        abort(400,description='Only Staff and Inspector accounts may be created.')
     with durable_ocr.transaction(globals()) as (con, uid):
         actor = con.execute('select role from users where id=?', (uid,)).fetchone()
         if not actor or actor['role'] != 'Admin':
@@ -4018,8 +4090,8 @@ def users():
             username = (request.form.get('username') or '').strip()
             password = request.form.get('password') or ''
             role = (request.form.get('role') or 'Staff').strip()
-            if role not in ('Admin', 'Staff', 'Inspector'):
-                role = 'Staff'
+            if role not in ('Staff', 'Inspector'):
+                abort(400,description='Only Staff and Inspector accounts may be created.')
             if len(username) < 3 or len(password) < 8:
                 flash('Username must have at least 3 characters and password at least 8 characters.')
             elif q('select id from users where username=?', (username,), one=True):
@@ -4038,7 +4110,9 @@ def users():
             user_id = request.form.get('user_id')
             password = request.form.get('password') or ''
             user = q('select * from users where id=?', (user_id,), one=True)
-            if not user or len(password) < 8:
+            if user and user.get('role')=='Admin':
+                flash('Use My Account and your current password to change the administrator password.','error')
+            elif not user or len(password) < 8:
                 flash('Select a valid user and enter a password with at least 8 characters.')
             else:
                 try:
@@ -4060,7 +4134,7 @@ def users():
 
 @app.route('/audit')
 def audit():
-    rows = q('select * from audit_trail order by id desc limit 500')
+    rows = paged_q('select * from audit_trail order by id desc')
     return render_template('audit.html', active='audit', rows=rows, title='Audit Trail')
 
 

@@ -103,6 +103,7 @@ class SyntheticDatabase:
         text = ' '.join(sql.lower().split())
         self.calls.append((text, tuple(params)))
         if text == 'set transaction read only': return Cursor()
+        if text == "set local statement_timeout = '10s'": return Cursor()
         if text == 'set transaction isolation level read committed': return Cursor()
         if 'psms_auth_session_permissions_ready()' in text: return Cursor([dict(ready=True)])
         if text.startswith('select user_id from auth_sessions where user_id='):
@@ -125,6 +126,7 @@ class SyntheticDatabase:
             po=self.pos.get(int(params[0]))
             exists=any(n['po_id']==int(params[0]) for n in self.nlps.values())
             joined=self.joined(po) if po and po['status']=='Approved' and not exists else None
+            if "aq.status='approved'" in text and not self.eligible(po):joined=None
             return Cursor([dict(joined,pr_id=self.aoqs[po['aoq_id']]['pr_id'])] if joined else [])
         if text.startswith('select * from po where id='):
             row=self.pos.get(int(params[0]))
@@ -133,6 +135,8 @@ class SyntheticDatabase:
             return Cursor([n for n in self.nlps.values() if n['po_id']==int(params[0])][:1])
         if text.startswith('select aq.pr_id,r.no pr_no,r.items pr_items'):
             aoq=self.aoqs.get(params[0]);pr=self.prs.get(aoq['pr_id']) if aoq else None
+            if "aq.status='approved'" in text and (not aoq or aoq['status']!='Approved' or not pr or pr['status']!='Approved'):
+                return Cursor()
             return Cursor([dict(pr_id=pr['id'],pr_no=pr['no'],pr_items=pr['items'])] if pr else [])
         if text.startswith('select n.*,'):
             records = [dict(self.joined(self.pos[n['po_id']]), **n) for n in self.nlps.values()]
@@ -148,6 +152,7 @@ class SyntheticDatabase:
             rows = [p for p in self.pos.values() if p['status'] == 'Approved'
                     and not any(n['po_id'] == p['id'] for n in self.nlps.values())]
             if 'join nlp n on' in text and 'left join nlp' not in text: return Cursor()
+            if "aq.status='approved'" in text:rows=[p for p in rows if self.eligible(p)]
             return Cursor([p for p in rows if str(p['id']) == str(params[0])] if params else rows)
         if text.startswith('select * from aoq where id='): return Cursor([self.aoqs[int(params[0])]])
         if text.startswith('select * from pr where id='): return Cursor([self.prs[int(params[0])]])

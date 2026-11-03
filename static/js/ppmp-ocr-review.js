@@ -217,6 +217,7 @@
       const response = await fetch(form.getAttribute('action') || window.location.href, {method: 'POST', body, credentials: 'same-origin', redirect: 'error'});
       const result = (response.headers.get('content-type') || '').includes('application/json') ? await response.json() : null;
       if (!response.ok || !result?.saved) {
+        message.dataset.category='error';
         items.forEach(item => { item.errors = result?.errors?.[item.temp_id] || []; });
         const invalid = items.findIndex(item => item.errors.length); if (invalid >= 0) index = invalid; load();
         message.textContent = result?.message || (response.status === 409 ? 'Draft changed. Keep your corrections, then reopen the latest review before retrying.' : 'Save was not confirmed. Your edits remain here. Check saved draft revisions before retrying.');
@@ -242,7 +243,8 @@
       items = []; original = ''; dialog.close(); launcher?.focus();
       const officialConfirm = document.querySelector('[name="confirm_reviewed"]');
       if (officialConfirm) officialConfirm.checked = false;
-      window.psmsNotify?.(result.message || 'Review confirmed. Table updated.');
+      window.psmsNotify?.(result.message || 'Review confirmed. Table updated.','success');
+      if(typeof CustomEvent==='function')document.dispatchEvent(new CustomEvent('psms:form-saved',{detail:{form}}));
     } catch (_) { message.textContent = 'Save was not confirmed. Your corrections remain here. Check saved draft revisions before retrying.'; }
     finally { saving = false; saveButton.disabled = false; fields.forEach(field => { field.disabled = false; }); }
   });

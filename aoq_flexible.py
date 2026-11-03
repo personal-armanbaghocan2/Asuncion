@@ -391,6 +391,9 @@ def _read_pdf(filepath: str) -> Dict[str, Any]:
                 warnings.append("Only the first 30 PDF pages were processed.")
                 break
             native = (page.get_text("text") or "").strip()
+            # The same positioned words feed table reconstruction, evidence and
+            # outside-table context. Extract them once, without changing OCR.
+            native_words=page.get_text('words') if native else []
             if len(native) >= 20:
                 texts.append(f'--- Page {page_index + 1} ---\n{native}')
                 methods.add("native PDF text")
@@ -415,7 +418,7 @@ def _read_pdf(filepath: str) -> Dict[str, Any]:
                 award_texts.append(detected['raw_text'])
             page_tables = []
             try:
-                finder = page.find_tables()
+                finder = page.find_tables() if len(native)>=20 else None
                 for table_index, table in enumerate(getattr(finder, "tables", []) or [], start=1):
                     extracted = table.extract() or []
                     if extracted:
@@ -437,7 +440,7 @@ def _read_pdf(filepath: str) -> Dict[str, Any]:
             if native and not page_tables:
                 from procurement_document_layout import positioned_table
                 words = [dict(left=w[0], top=w[1], width=w[2]-w[0], height=w[3]-w[1], text=w[4])
-                         for w in page.get_text('words')]
+                         for w in native_words]
                 table = positioned_table(words, source=f'PDF page {page_index + 1}, positioned text',
                                          page=page_index + 1, coordinate_space='PDF page points')
                 if table:
@@ -445,7 +448,7 @@ def _read_pdf(filepath: str) -> Dict[str, Any]:
             # A scanned page's grid already owns its physical cells.
             if len(native) >= 20:
                 page_evidence.append(dict(page=page_index+1, coordinate_space='PDF page points',
-                    words=[dict(left=w[0], top=w[1], width=w[2]-w[0], height=w[3]-w[1], text=w[4]) for w in page.get_text('words')]))
+                    words=[dict(left=w[0], top=w[1], width=w[2]-w[0], height=w[3]-w[1], text=w[4]) for w in native_words]))
                 from procurement_document_layout import positioned_shared_fields
                 shared_field_evidence.extend(positioned_shared_fields(page_evidence[-1]['words'], tables=page_tables,
                     source=f'PDF page {page_index+1}, native field cards', page=page_index+1, coordinate_space='PDF page points'))
@@ -456,7 +459,7 @@ def _read_pdf(filepath: str) -> Dict[str, Any]:
                     else:
                         from procurement_document_layout import ordered_word_text
                         outside_words = []
-                        for word in page.get_text('words'):
+                        for word in native_words:
                             centre = fitz.Point((word[0]+word[2])/2,(word[1]+word[3])/2)
                             if not any(table.get('bbox') and centre in fitz.Rect(table['bbox']) for table in page_tables):
                                 outside_words.append(dict(text=word[4],left=word[0],top=word[1],width=word[2]-word[0],height=word[3]-word[1]))

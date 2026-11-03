@@ -1,5 +1,5 @@
 /* Offline charts. No dependencies, network requests, or generated sample values. */
-(() => {
+function renderDashboard() {
   'use strict';
   const source = document.getElementById('dashboard-data');
   if (!source) return;
@@ -86,11 +86,13 @@
   points.forEach(([x,y],i)=>{const dot=el('circle',{cx:x,cy:y,r:3.3,fill:'#169b5d'});dot.append(el('title',{},`Total: ${totals[i]}`));chart.append(dot);});
   const all=document.getElementById('show-all-reviews');
   function showReviews(e) {e?.preventDefault(); const more=document.getElementById('more-reviews');if(more){more.hidden=!more.hidden;all?.setAttribute('aria-expanded',String(!more.hidden));}}
-  all?.setAttribute('aria-controls','more-reviews');all?.setAttribute('aria-expanded','false');all?.addEventListener('click',showReviews);
+  all?.setAttribute('aria-controls','more-reviews');all?.setAttribute('aria-expanded','false');if(all)all.onclick=showReviews;
   const viewAll=document.querySelector('#pending-reviews .dash-heading>a');
-  viewAll.href='#pending-reviews';viewAll.addEventListener('click',e=>{if(all)showReviews(e);});
+  viewAll.href='#pending-reviews';viewAll.onclick=e=>{if(all)showReviews(e);};
   document.querySelectorAll('.dash-table-scroll').forEach(wrap=>{
     wrap.tabIndex=0;wrap.setAttribute('role','region');
     wrap.setAttribute('aria-label',wrap.closest('.dash-panel').querySelector('h3').textContent.trim()+' table; scroll for more columns');
   });
-})();
+}
+renderDashboard();
+document.addEventListener('psms:dashboard-data',renderDashboard);

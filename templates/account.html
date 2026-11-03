@@ -3,13 +3,16 @@
 <div class="account-grid">
   <section class="card account-card">
     <h3>Profile</h3>
-    <form method="post" class="stack account-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if not profile_ready %}<p class="notice" data-category="error">Profile changes require the reviewed account migration. Your login and password-change workflow remain available.</p>{% endif %}
+    <img class="profile-photo" src="{{url_for('account_photo')}}" alt="Your profile picture" width="96" height="96">
+    <form method="post" class="stack account-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="profile"><input type="hidden" name="revision" value="{{profile.revision}}">
       <label>Username<input value="{{account.username}}" disabled></label>
       <label>Full name<input name="full_name" value="{{account.full_name or ''}}" maxlength="160"></label>
-      <label>Display name<input name="display_name" value="{{account.display_name or ''}}" maxlength="80"></label>
       <div class="account-meta"><div><span>Role</span><strong>{{account.role}}</strong></div><div><span>Status</span><strong>{{account.status or 'Active'}}</strong></div><div><span>Created</span><strong>{{account.created_at or 'Not recorded'}}</strong></div><div><span>Last login</span><strong>{{account.last_login or 'Not recorded'}}</strong></div></div>
-      <div class="actions"><button class="btn primary" type="submit">Save profile</button></div>
+      <div class="actions"><button class="btn primary" type="submit" {{'disabled' if not profile_ready}}>Save profile</button></div>
     </form>
+    <form method="post" enctype="multipart/form-data" class="stack account-form"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="photo"><input type="hidden" name="revision" value="{{profile.revision}}"><label>Profile photo<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required></label><p class="muted">JPEG, PNG or WebP; maximum 2 MB. Images are normalized and stored privately.</p><button class="btn" type="submit" {{'disabled' if not profile_ready}}>Upload or replace photo</button></form>
+    <form method="post"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="remove_photo"><input type="hidden" name="revision" value="{{profile.revision}}"><button class="btn danger" type="submit" {{'disabled' if not profile_ready}}>Remove photo</button></form>
   </section>
   <section class="card account-card" id="change-password">
     <h3>Change Password</h3>

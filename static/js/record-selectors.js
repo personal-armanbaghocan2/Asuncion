@@ -24,7 +24,7 @@
       select.before(wrapper);
       wrapper.append(search, select, status);
     }
-    const records = Array.from(select.options).filter(option => option.value);
+    let records = Array.from(select.options).filter(option => option.value);
     let matches = records;
     function filter() {
       const query = search.value.trim().toLocaleLowerCase();
@@ -52,6 +52,9 @@
       }
     });
     select.addEventListener('change', filter);
+    select.addEventListener('psms:options-updated',()=>{
+      records=Array.from(select.options).filter(option=>option.value);filter();
+    });
     filter();
   });
 })();

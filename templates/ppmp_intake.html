@@ -1,0 +1,26 @@
+{% extends 'base.html' %}{% block content %}
+<div class="page-head"><div><h2>PPMP Document Upload and Item Review</h2><p class="muted">One source document may contain DBM, NON-DBM and LIB items. Confirm each item’s category before routing it.</p></div></div>
+<form method="post" action="{{url_for('ppmp_intake')}}" enctype="multipart/form-data" class="card form-grid">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><label>Procurement document<input type="file" name="ocr_file" accept=".pdf,.docx,.xlsx,.xlsm,.csv,.txt,.png,.jpg,.jpeg,.tif,.tiff,.bmp" required></label><button class="btn primary" type="submit">Upload and extract items</button>
+</form>
+{% if source %}<div class="card"><h3>{{source.filename}}</h3><p>Uploaded {{source.created_at}} · {{items|length}} saved item drafts · Source {{source.id}}</p><a class="btn" href="{{url_for('ppmp_intake_source',sid=source.id)}}">Download original document</a></div>
+{% set extraction=source.extraction or {} %}
+{% if extraction.get('warnings') %}<div class="warning-box"><strong>Extraction needs review</strong><ul>{% for warning in extraction.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}
+<details class="card"><summary>Original extracted text</summary><p class="muted">Compare these source values with each item. Missing or uncertain values require human review.</p><pre class="raw-ocr-pre">{{extraction.get('text','')}}</pre></details>
+{% for item in items %}<details class="card intake-item" {% if loop.first %}open{% endif %}><summary><strong>{{item.temp_code}}</strong> · {{item.fields.get('Item Name') or item.fields.get('General Description and Objective of the Project to be Procured') or 'Item requiring correction'}} · {{item.ppmp_category}} · {{item.status}}</summary>
+<p class="muted">Category evidence: {{item.suggestion.evidence}}. Category assignment does not approve procurement.</p>
+{% if item.status not in ['CANCELLED','CONVERTED_TO_PPMP'] and not item.converted %}
+<form method="post" class="form-grid"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="draft_id" value="{{item.id}}"><input type="hidden" name="revision" value="{{item.revision}}">
+<label>Item category<select name="category" required><option value="">Choose category</option>{% for category in categories %}<option {{'selected' if category==item.ppmp_category}}>{{category}}</option>{% endfor %}</select></label>
+{% for label in labels %}<label>{{label}}<textarea name="field_{{loop.index0}}" rows="2" maxlength="5000">{{item.fields.get(label,'')}}</textarea></label>{% endfor %}
+<label class="full"><input type="checkbox" name="confirm_category" value="yes" required> I reviewed and confirm this item’s category and corrections.</label>
+<label class="full"><input type="checkbox" name="confirm_quantity_change" value="yes"> I intentionally changed the quantity from the extraction.</label>
+<button class="btn primary" type="submit">Save item and category</button></form>{% endif %}
+{% if item.ppmp_category in categories and item.status!='CATEGORY_REVIEW' %}<a class="btn" href="{{url_for('ppmp_type',ptype=item.ppmp_category,ocr_source=source.id)}}">Continue {{item.ppmp_category}} review</a>{% endif %}
+<details><summary>Original item evidence</summary><pre class="raw-ocr-pre">{{item.confidence.get('_source_evidence',{}).get('text','No aligned source text captured.')}}</pre></details>
+{% if item.confidence.get('_review_history') %}<details><summary>Category and correction history</summary><ul>{% for change in item.confidence['_review_history'] %}<li>{{change.at}} · User {{change.by}} · Revision {{change.revision}} · {{change.previous_category}} → {{change.category}}</li>{% endfor %}</ul></details>{% endif %}
+{% if item.official_ppmp_id %}<a class="btn" href="{{url_for('ppmp_review',id=item.official_ppmp_id)}}">Open related PPMP</a>{% endif %}
+</details>{% else %}<p class="notice" data-category="info">No reliable item rows were detected. The original document and extraction remain retained for review.</p>{% endfor %}
+<nav class="dataset-pagination" aria-label="Intake pages">{% if page>1 %}<a class="btn" href="{{url_for('ppmp_intake_review',sid=source.id,page=page-1)}}">Previous items</a>{% endif %}{% if has_next %}<a class="btn" href="{{url_for('ppmp_intake_review',sid=source.id,page=page+1)}}">Next items</a>{% endif %}</nav>
+{% endif %}
+{% endblock %}

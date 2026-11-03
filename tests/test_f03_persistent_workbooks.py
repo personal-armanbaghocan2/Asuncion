@@ -448,8 +448,14 @@ class PersistentWorkbookTests(unittest.TestCase):
                 source = repository.read_source(self.instance(),'inventory_source')
                 self.assertEqual(source['content'],original)
                 version_id = source['id']
+                preview=client.post('/ppmp/dataset',data={'action':'refresh_dataset','csrf_token':token})
+                self.assertEqual(preview.status_code,200)
+                html=preview.get_data(as_text=True)
+                import re
+                fingerprint=re.search(r'name="source_fingerprint" value="([^"]+)"',html)[1]
                 self.assertEqual(client.post('/ppmp/dataset',data={'action':'refresh_dataset',
-                    'csrf_token':token}).status_code,302)
+                    'csrf_token':token,'reconcile_confirm':'yes','source_version':str(version_id),
+                    'source_fingerprint':fingerprint}).status_code,302)
                 self.assertEqual(repository.read_source(self.instance(),'inventory_source')['id'],version_id)
 
     def test_actual_persistent_official_creation_replay_and_audit_rollback(self):
@@ -515,9 +521,12 @@ class GateTests(unittest.TestCase):
                 api['read_excel']('DBM', connection=object())
 
     def test_new_runtime_module_is_delivered_by_both_packaging_paths(self):
-        for filename in ('.dockerignore', '.vercelignore'):
-            self.assertIn('!durable_workbooks.py', (ROOT / filename).read_text().splitlines())
+        self.assertIn('!durable_workbooks.py', (ROOT / '.dockerignore').read_text().splitlines())
         self.assertIn('COPY durable_workbooks.py ./', (ROOT / 'Dockerfile').read_text())
+        from deploy.online_delivery import source_files
+        self.assertIn('durable_workbooks.py',source_files(ROOT))
+        self.assertIn('!runtime/**',(ROOT / '.vercelignore').read_text(encoding='utf-8-sig').splitlines())
+        self.assertIn('COPY runtime/ /app/',(ROOT / 'Dockerfile.vercel').read_text())
 
     def test_default_is_local_and_hosted_defaults_are_disabled(self):
         for mode, flag, vercel, result in [('local', '0', '', False), ('test', '0', '', False),
