@@ -13,7 +13,7 @@
 {% endmacro %}
 <div class="dash-layout">
 <section class="dash-welcome{% if municipal_banner_available %} has-municipal-photo{% endif %}" aria-labelledby="welcome-title">
-<div><h2 id="welcome-title"><svg width="32" height="34" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="6" r="4"/><path d="M3 24v-5a9 9 0 0 1 18 0v5Z"/></svg>Good day, {{(current_account or {}).get('display_name') or (current_account or {}).get('full_name') or session.get('username','')}}!</h2><p>Monitor procurement documents, inventory, and property records for a more<br class="welcome-break"> transparent and accountable Municipality of Asuncion.</p></div>
+<div><h2 id="welcome-title"><img class="welcome-avatar profile-avatar" src="{{url_for('account_photo')}}" alt="Your profile picture" width="36" height="36">Good day, {{(current_account or {}).get('display_name') or (current_account or {}).get('full_name') or session.get('username','')}}!</h2><p>Monitor procurement documents, inventory, and property records for a more<br class="welcome-break"> transparent and accountable Municipality of Asuncion.</p></div>
 <div class="dash-banner-note">{{icon('document')}}<span>Efficient Procurement<br>Accountable Management<br>Better Public Service</span></div>
 </section>
 <div class="dash-kpis">

@@ -24,6 +24,7 @@ ASSETS = (
     'css/ocr-table.css',
     'css/dashboard.css',
     'css/confirmation-dialog.css',
+    'css/integrated.css',
     'js/dashboard.js',
     'js/csrf.js',
     'js/confirm-actions.js',
@@ -34,8 +35,10 @@ ASSETS = (
     'js/source-preview.js',
     'js/record-selectors.js',
     'js/ui.js',
+    'js/live-updates.js',
     'images/asuncion_municipal.jpg',
     'images/asuncion-seal.png',
+    'images/asuncion_hall.jpg',
 )
 
 

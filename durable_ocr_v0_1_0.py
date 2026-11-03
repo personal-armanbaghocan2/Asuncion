@@ -131,6 +131,10 @@ def ppmp_upload(api,ptype,reprocess=False):
         existing = _existing_upload(con,uid,ptype,digest)
         if reprocess and not existing:abort(409,description='Reprocessing requires an existing extraction in your category.')
         if existing and not reprocess:return _existing_response(ptype,existing)
+        if not reprocess:
+            prior=con.execute("select id from psms_documents.sources where owner_id=? and kind='ppmp' and sha256=? order by created_at limit 1",(uid,digest)).fetchone()
+            if prior:
+                return redirect(url_for('ppmp_intake_review',sid=str(prior['id'])))
     with extraction_path(content,ext) as path:
         g.document_stage='extraction'
         extracted=api['extract_aoq_document'](path)
@@ -161,15 +165,20 @@ def ppmp_upload(api,ptype,reprocess=False):
                        f'Open PPMP > {correct} ({url_for("ppmp_type",ptype=correct)}) and upload the original document there. ')
         else:
             message = 'This source contains conflicting PPMP categories. Separate DBM and NON-DBM worksheets and upload each in its matching PPMP category. '
-        return Response(message+'No drafts were created or moved.',status=422,mimetype='text/plain')
+        from ppmp_intake import save_extraction
+        flash('The selected category differs from the extracted source. Review and assign each item below.','info')
+        return save_extraction(api,name,ext,content,extracted,structured)
     if len(rows)>200:abort(400,description='Review at most 200 extracted rows per upload.')
     state=dict(text=str(extracted.get('raw_text') or ''),method=extracted.get('extraction_method') or 'document extraction',
         warnings=structured.get('warnings') or [],filename=name,structured=structured,item_count=len(rows),extraction_timestamp=api['now']())
     g.document_stage='draft_persistence'
     with transaction(api) as (con,uid):
         # Serialize identical uploads by owner/category even across processes.
-        con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',(f'ppmp-upload:{uid}:{ptype}:{digest}',))
+        con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',(f'ppmp-intake:{uid}:{digest}',))
         existing=_existing_upload(con,uid,ptype,digest)
+        if not reprocess and not existing:
+            prior=con.execute("select id from psms_documents.sources where owner_id=? and kind='ppmp' and sha256=? order by created_at limit 1",(uid,digest)).fetchone()
+            if prior:return redirect(url_for('ppmp_intake_review',sid=str(prior['id'])))
         if reprocess:
             _reprocess_nonce(api,con,uid,ptype)
             con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',('ppmp-reprocess:'+nonce,))
@@ -199,7 +208,9 @@ def ppmp_upload(api,ptype,reprocess=False):
 
 def ppmp_state(api,ptype=None):
     params=[_uid()];where='owner_id=? and kind=\'ppmp\''
-    if ptype:where+=' and category=?';params.append(ptype)
+    if ptype:
+        where+=" and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and d.ppmp_category=? and d.status in ('NEEDS_REVIEW','REVIEWED','CONVERTED_TO_PPMP')))"
+        params.extend((ptype,_uid(),ptype))
     requested=request.args.get('ocr_source','latest')
     if requested not in ('latest','all'):
         try:requested=str(uuid.UUID(requested))
@@ -216,7 +227,7 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
     page=revision(request.args.get('ocr_page','1'))
     if page>100000:abort(400)
     if state is _STATE_UNSET:state=ppmp_state(api,ptype)
-    where="owner_id=? and ppmp_category=? and status not in ('CONVERTED_TO_PPMP','CANCELLED')"
+    where="owner_id=? and ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')"
     params=[_uid(),ptype]
     selected=request.args.get('ocr_source','latest')!='all' and state
     if selected:where+=' and source_id=?';params.append(state['source_id'])
@@ -227,6 +238,8 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
 def _ppmp_locked(con,uid,ptype,temp_id):
     row=con.execute('select * from ppmp_ocr_drafts where temp_code=? and ppmp_category=? and owner_id=? for update',(temp_id,ptype,uid)).fetchone()
     if not row:abort(404)
+    if row['status']=='CATEGORY_REVIEW':
+        abort(409,description='Confirm the item category in Document Upload and Review before reviewing or saving this draft.')
     return row
 
 
@@ -292,8 +305,8 @@ def ppmp_source(api,ptype,sid,diagnostics=False):
     """Original private bytes or administrator diagnostics, checked per request."""
     if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
     if diagnostics and not api['is_admin']():abort(403)
-    row=api['q']("select filename,extension,content,extraction from psms_documents.sources where id=? and owner_id=? and kind='ppmp' and category=?",
-                 (str(sid),_uid(),ptype),one=True)
+    row=api['q']("select filename,extension,content,extraction from psms_documents.sources where id=? and owner_id=? and kind='ppmp' and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and d.ppmp_category=?))",
+                 (str(sid),_uid(),ptype,_uid(),ptype),one=True)
     if not row:abort(404)
     if diagnostics:
         from flask import make_response
@@ -412,6 +425,15 @@ def aoq_upload(api):
     pr=api['q']("select * from pr where id=? and status='Approved'",(pr_id,),one=True)
     if not pr:abort(400,description='Choose an approved PR.')
     name,ext,content=validate(request.files.get('ocr_file'))
+    digest=hashlib.sha256(content).hexdigest()
+    lookup="""select d.id,d.status,d.official_aoq_id from psms_documents.aoq_drafts d
+        join psms_documents.sources s on s.id=d.source_id
+        where d.owner_id=? and d.pr_id=? and s.sha256=? and d.status<>'CANCELLED'
+        order by d.created_at limit 1"""
+    existing=api['q'](lookup,(_uid(),pr_id,digest),one=True)
+    if existing:
+        return redirect(url_for('aoq_review',id=existing['official_aoq_id']) if existing['status']=='CONFIRMED'
+                        else url_for('aoq',draft_id=str(existing['id'])))
     with extraction_path(content,ext) as path:
         document=api['extract_aoq_document'](path)
         preview=api['build_flexible_aoq_preview'](document,api['parse_items'](pr['items']))
@@ -419,9 +441,20 @@ def aoq_upload(api):
     idx=preview.get('winner_index',-1)
     preview.update(pr_id=pr_id,pr_no=pr['no'],ocr_filename=name,stored_filename='',offer_review_token=secrets.token_urlsafe(24),
         offer_supplier_index=preview.get('offer_supplier_index',str(idx) if isinstance(idx,int) and idx>=0 else 'custom'))
+    # Source award evidence remains a hint. The reviewer selects the supplier
+    # before its quotation becomes the proposed winning offer.
+    preview.update(source_award_hint=idx,selected_winner_index=-1,offer_items=[],offer_supplier_index='')
+    if pr.get('ppmp_id'):
+        parent=api['q']('select type from ppmp where id=?',(pr['ppmp_id'],),one=True)
+        preview['pr_category']=parent['type'] if parent else ''
     did=str(uuid.uuid4())
     with transaction(api) as (con,uid):
-        con.execute('select id from pr where id=? for share',(pr_id,))
+        current=con.execute("select id from pr where id=? and status='Approved' for update",(pr_id,)).fetchone()
+        if not current:abort(409,description='The linked PR changed during extraction. Reopen its approved review.')
+        existing=con.execute(lookup,(uid,pr_id,digest)).fetchone()
+        if existing:
+            return redirect(url_for('aoq_review',id=existing['official_aoq_id']) if existing['status']=='CONFIRMED'
+                            else url_for('aoq',draft_id=str(existing['id'])))
         if con.execute('select 1 from aoq where pr_id=?',(pr_id,)).fetchone():abort(409,description='This PR already has an AOQ.')
         sid=source(con,uid,'aoq',None,name,ext,content,document)
         con.execute('insert into psms_documents.aoq_drafts(id,owner_id,source_id,pr_id,payload) values(?,?,?,?,?::jsonb)',(did,uid,sid,pr_id,payload(preview)))

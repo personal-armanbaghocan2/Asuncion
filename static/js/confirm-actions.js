@@ -24,8 +24,10 @@
   };
   let resolveAction = null, launcher = null, feedbackTimer;
   let submitting = new WeakSet(), approved = new WeakMap();
-  function notify(text) {
+  function notify(text,category='info') {
     feedback.textContent = text;
+    feedback.classList.add('notice');
+    feedback.dataset.category=['error','success'].includes(category)?category:'info';
     feedback.hidden = false;
     clearTimeout(feedbackTimer);
     feedbackTimer = setTimeout(() => { feedback.hidden = true; }, 7000);
