@@ -2,7 +2,13 @@
 
 ## Owner deployment progress — 3 November 2026
 
-The local integrated upgrade implementation is complete.
+The local integrated upgrade implementation is complete. The interrupted-session
+finalization is recorded in `docs/reports/FINAL_DEPLOYMENT_READINESS_2026-11-03.md`.
+That report and `deploy/production/integrated-upgrade-files.txt` supersede the
+earlier file counts, package paths, evidence counts and two-migration deployment
+instructions below. The accepted gate is 241 passed, zero failures/errors/skips;
+it was not repeated during finalization. Migration 05 is newly required and
+remains uninstalled and unapproved in this session. Do not rerun 03 or 04.
 
 Supabase Cloud installation:
 - 03_account_profiles.sql: Successfully executed.
@@ -81,8 +87,10 @@ Implemented Batch 3:
 - Native PDF positioned words are reused within extraction; OCR engines and the
   FastText feature/classifier pipeline remain unchanged.
 
-The FastText runtime, Random Forest runtime/selection, semantic mapper, release
-registry and original artifact contract are unchanged from HEAD. The generated
+The FastText runtime, Random Forest runtime/selection, release registry and
+original artifact contract are unchanged from HEAD. Semantic mapper source
+changes preserve bounded source evidence and uncertainty; model assets and
+classifier behavior were not replaced. The generated
 deployment context selects the already-approved `nlp-online-original-v2` release.
 There was no retraining, algorithm substitution or repeated Linux model verification.
 
@@ -326,8 +334,9 @@ workflow for the reviewed commit with exactly these inputs:
 gh workflow run online-production.yml --ref feature/online-integration -f inference_mode=approved_release -f nlp_runtime=retrained_rf -f release_id=nlp-online-original-v2 -f deploy_approved=true -f database_upgrades_ready=true
 ```
 
-`database_upgrades_ready=true` means both installers committed and owner checks
-passed; it never runs SQL. `deploy_approved=true` is the owner's final deployment
+`database_upgrades_ready=true` now means installed 03 and 04 plus newly reviewed
+05 and the corresponding owner checks passed; it never runs SQL. Do not rerun
+03 or 04. `deploy_approved=true` is the owner's final deployment
 authorization. The workflow must already be available on the repository's default
 branch for manual dispatch. Monitor the selected run and existing Vercel project.
 

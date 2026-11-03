@@ -14,7 +14,7 @@
 
 <div class="card" style="margin-top:16px">
   <div class="step-title"><span>1</span><div><h3>Select the Approved PR and Upload the AOQ File</h3><p class="muted">Supported formats: {{ supported_aoq_formats }}. The layout may be different; the system normalizes detected data into the review form below.</p></div></div>
-  <form method="post" enctype="multipart/form-data" class="compact-upload" data-confirm="Upload and detect this AOQ file for the selected PR?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <form method="post" enctype="multipart/form-data" class="compact-upload" data-document-processing data-confirm="Upload and detect this AOQ file for the selected PR?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="extract_ocr">
     <div class="form-field full"><label>Approved Purchase Request</label><select name="pr_id" required data-record-selector="approved PR" aria-label="Approved Purchase Request"><option value="">Select the exact approved PR</option>{% for r in prs %}<option value="{{r.id}}" data-search="{{r.search_terms}} {{r.office}}">{{r.no}} · {{(r.item_preview or 'Item not named')|truncate(55)}} · {{r.office|truncate(30)}} · {{r.total|money}}</option>{% endfor %}</select></div>
     <div class="form-field full"><label>AOQ / Bidding Result File</label><input name="ocr_file" type="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt" required></div>
@@ -112,9 +112,11 @@
     {% for r in rows %}<tr><td><span class="id-chip">{{r.no}}</span></td><td class="document-ref">{{r.pr_no}}<br><span class="muted">{{r.pr_office}}</span></td><td>{{r.ocr_filename or 'Legacy record'}}</td><td><b>{{r.winner}}</b><br><span class="muted">{{r.item_preview}}</span></td><td class="numeric">{{r.winning_amount|money}}</td><td><span class="badge {{'ok' if r.status=='Approved' else 'warn'}}">{{r.status}}</span></td><td><a class="btn small blue" href="{{url_for('aoq_review',id=r.id)}}">Review</a>{% if r.status=='Approved' %}<a class="btn small blue" href="{{url_for('po')}}">Continue to PO</a>{% endif %}</td></tr>{% else %}<tr><td colspan="7" class="center muted">No AOQ records yet.</td></tr>{% endfor %}
   </table></div>
 </div>
+{% include 'document_history.html' %}
 {% endblock %}
 
-{% block scripts %}
+{% block scripts %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>
+{% include 'aoq_quotations.html' %}
 {% if ocr_data %}
 <script>
 (function(){

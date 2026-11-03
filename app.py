@@ -95,6 +95,8 @@ import ui_feedback
 ui_feedback.register(app)
 import live_updates
 import request_queries
+import document_history
+import session_navigation
 app.teardown_request(request_queries.close)
 
 def conn():
@@ -108,13 +110,24 @@ def paged_q(sql,params=()):
     page=request.args.get('page','1')
     if not re.fullmatch(r'[1-9][0-9]{0,3}',page):abort(400,description='Choose a valid record page.')
     page=int(page);size=100
+    search=request.args.get('q','').strip();status=request.args.get('status','').strip();sort=request.args.get('sort','newest')
+    if len(search)>160 or len(status)>60 or sort not in ('newest','oldest','number','number_desc','status'):abort(400)
+    if request.endpoint!='inventory' and (search or status or sort!='newest'):
+        base=sql.rstrip().rstrip(';');conditions=[];values=list(params)
+        if search:
+            conditions.append("strpos(lower(concat_ws(' ',to_jsonb(records)->>'no',to_jsonb(records)->>'items',to_jsonb(records)->>'office',to_jsonb(records)->>'supplier',to_jsonb(records)->>'winner',to_jsonb(records)->>'ref',to_jsonb(records)->>'action')),lower(?))>0");values.append(search)
+        if status:conditions.append("to_jsonb(records)->>'status'=?");values.append(status)
+        order={'newest':'id desc','oldest':'id','number':"to_jsonb(records)->>'no',id",'number_desc':"to_jsonb(records)->>'no' desc,id",'status':"to_jsonb(records)->>'status',id desc"}[sort]
+        sql='select * from ('+base+') records'+(' where '+' and '.join(conditions) if conditions else '')+' order by '+order
+        params=values
     rows=q(sql.rstrip().rstrip(';')+f' limit {size+1} offset {(page-1)*size}',params)
     g.psms_pagination=dict(page=page,has_next=len(rows)>size,size=size)
     return rows[:size]
 
 
 def pagination_url(page):
-    filters={key:request.args[key] for key in ('q','sheet','category','stock','comparison_po_id','ocr_source') if key in request.args}
+    filters={key:request.args[key] for key in ('q','status','sort','sheet','category','stock','comparison_po_id','ocr_source') if key in request.args}
+    filters.update({key:request.args[key] for key in request.args if key.startswith('h_')})
     return url_for(request.endpoint,**dict(request.view_args or {}),page=page,**filters)
 
 def exec_db(sql, params=()):
@@ -1964,7 +1977,8 @@ def ppmp_intake():
     if request.method=='POST':
         return durable_ocr.protected(item_intake.upload,globals())
     return render_template('ppmp_intake.html',active='ppmp',title='PPMP Document Upload',
-                           source=None,items=[],labels=ppmp_review_labels(),categories=item_intake.CATEGORIES)
+                           source=None,items=[],labels=ppmp_review_labels(),categories=item_intake.CATEGORIES,
+                           history=document_history.listing(globals(),'ppmp'))
 
 
 @app.route('/ppmp/intake/<uuid:sid>',methods=['GET','POST'])
@@ -1977,6 +1991,31 @@ def ppmp_intake_source(sid):
     return durable_ocr.protected(item_intake.source_file,globals(),sid)
 
 
+@app.route('/ppmp/intake/<uuid:sid>/reprocess',methods=['POST'])
+def ppmp_intake_reprocess(sid):
+    return durable_ocr.protected(item_intake.reprocess,globals(),sid)
+
+
+@app.route('/documents/<uuid:sid>')
+def document_history_detail(sid):
+    data=document_history.detail(globals(),str(sid))
+    return render_template('document_detail.html',active='ppmp' if data['source']['kind']=='ppmp' else 'aoq',
+                           title='Document History',**data)
+
+
+@app.route('/documents/<uuid:sid>/source')
+def document_history_source(sid):
+    from flask import send_file
+    from io import BytesIO
+    with account_profiles.connection(globals()) as (con,uid):
+        row=con.execute('select content,extension from psms_documents.sources where id=? and owner_id=?',(str(sid),uid)).fetchone()
+    if not row:abort(404)
+    response=send_file(BytesIO(bytes(row['content'])),as_attachment=True,download_name='source-document'+row['extension'])
+    response.headers.update({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',
+                             'Content-Security-Policy':"sandbox; default-src 'none'"})
+    return response
+
+
 @app.route('/ppmp/<ptype>/check_ocr_upload', methods=['POST'])
 def ppmp_ocr_duplicate_check(ptype):
     return durable_ocr.protected(durable_ocr.ppmp_duplicate_check, globals(), ptype)
@@ -1985,9 +2024,6 @@ def ppmp_ocr_duplicate_check(ptype):
 @app.route('/ppmp/<ptype>/reprocess_ocr', methods=['POST'])
 def ppmp_ocr_reprocess(ptype):
     return durable_ocr.protected(durable_ocr.ppmp_upload, globals(), ptype, True)
-
-managed_signatories.register(app, conn, log)
-
 
 @app.before_request
 def ensure():
@@ -1999,11 +2035,11 @@ def ensure():
             session.clear()
         if request.endpoint == 'login':
             return None
-        return redirect(url_for('login'))
+        return session_navigation._denied(401)
     user_id = session.get('user_id')
     if type(user_id) is not int or user_id <= 0:
         session.clear()
-        return redirect(url_for('login'))
+        return session_navigation._denied(401)
     try:
         account = server_sessions.account_for_session(conn, session.get(server_sessions.COOKIE_KEY), user_id)
     except Exception as error:
@@ -2017,13 +2053,16 @@ def ensure():
     if (not account or account.get('status') != 'Active'
             or account.get('role') not in ('Admin', 'Staff', 'Inspector')):
         session.clear()
-        return redirect(url_for('login'))
+        return session_navigation._denied(401)
     # Existing role guards and templates use these claims. Refresh them from the
     # database so demoted roles and renamed accounts take effect on this request.
     session['role'] = account['role']
     session['username'] = account['username']
     g.psms_account = account
     return None
+
+managed_signatories.register(app, conn, log)
+session_navigation.register(app)
 
 # Authentication/session readiness runs before CSRF validation. No route exemptions.
 csrf_protection = init_csrf(app)
@@ -2059,7 +2098,7 @@ def login():
                 authenticated, sid = server_sessions.issue(
                     conn, user['id'], stored, int(app.permanent_session_lifetime.total_seconds()))
             except server_sessions.Rejected:
-                flash('Account changed during sign-in. Please try again.')
+                flash('Account changed during sign-in. Please try again.','error')
                 return render_template('login.html', title='Login')
             except server_sessions.Unavailable as error:
                 # Fixed diagnostic codes only. Never log the driver exception,
@@ -2079,9 +2118,9 @@ def login():
                 exec_db('update users set last_login=? where id=?', (now(), user['id']))
             except Exception:
                 pass
-            flash('Login successful.')
+            flash('Login successful.','success')
             return redirect(url_for('dashboard'))
-        flash('Invalid username or password.')
+        flash('Invalid username or password.','error')
     return render_template('login.html', title='Login')
 
 @app.route('/logout', methods=['POST'])
@@ -2096,7 +2135,7 @@ def logout():
             return Response('Sign-out could not be confirmed. Please try again.',
                             status=503, mimetype='text/plain')
     session.clear()
-    flash('Logged out successfully.')
+    flash('Logged out successfully.','success')
     return redirect(url_for('login'))
 
 @app.after_request
@@ -3057,6 +3096,32 @@ def pr_print(id):
     items=parse_items(row['items'])
     return render_template('print_pr.html', row=row, items=items, display_items=review_item_rows(items), **managed_signatories.print_context(conn, 'pr', dict(row)), title='Print PR')
 
+def aoq_quotation_page(preview):
+    """Page source supplier quotations without copying PR values or awarding."""
+    page_text=request.args.get('quote_page','1');query=request.args.get('quote_q','').strip()
+    supplier=request.args.get('quote_supplier','ALL');sort=request.args.get('quote_sort','source')
+    if not re.fullmatch(r'[1-9][0-9]{0,3}',page_text) or len(query)>160:abort(400)
+    if sort not in ('source','supplier','item'):abort(400)
+    suppliers=preview.get('suppliers') or []
+    if supplier!='ALL' and (not supplier.isdigit() or int(supplier)>=len(suppliers)):abort(400)
+    rows=[]
+    for index,offer in enumerate(suppliers):
+        if supplier!='ALL' and int(supplier)!=index:continue
+        for item in offer.get('items') or []:
+            if not isinstance(item,dict):continue
+            if query and query.casefold() not in ' '.join(str(item.get(key) or '') for key in ('item','description','source_item_no','source_category')).casefold():continue
+            rows.append(dict(item,supplier=offer.get('supplier') or 'Supplier requiring review',supplier_index=index))
+    if sort=='supplier':rows.sort(key=lambda row:(row['supplier'].casefold(),str(row.get('source_item_no') or '')))
+    elif sort=='item':rows.sort(key=lambda row:(str(row.get('item') or '').casefold(),row['supplier']))
+    page=int(page_text);offset=(page-1)*25
+    filters={key:request.args[key] for key in request.args if key!='_nav' and key!='quote_page'}
+    if preview.get('draft_id'):filters['draft_id']=preview['draft_id']
+    def page_url(number):return url_for('aoq',**dict(filters,quote_page=number))
+    return dict(rows=rows[offset:offset+25],total=len(rows),page=page,has_next=len(rows)>offset+25,
+                query=query,supplier=supplier,sort=sort,suppliers=suppliers,
+                previous_url=page_url(page-1) if page>1 else None,next_url=page_url(page+1) if len(rows)>offset+25 else None)
+
+
 @app.route('/aoq', methods=['GET','POST'])
 def aoq():
     if request.method == 'POST':
@@ -3086,6 +3151,7 @@ def aoq():
     return render_template(
         'aoq.html', active='aoq', rows=rows, prs=pr_previews,
         ocr_data=ocr_data or None, selected_pr=selected_pr, title='AOQ',
+        history=document_history.listing(globals(),'aoq'),quotation_view=aoq_quotation_page(ocr_data or {}),
         supported_aoq_formats=', '.join(sorted(x.upper().lstrip('.') for x in ALLOWED_OCR_EXTENSIONS)),
     )
 

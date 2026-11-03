@@ -9,7 +9,7 @@
 </div>
 <div class="card">
   
-  <form method="get" class="filters" aria-label="Inventory filters">
+  <form method="get" class="filters" aria-label="Inventory filters"><input type="hidden" name="_nav" value="{{navigation_token()}}">
     <input name="q" value="{{search_text}}" placeholder="Search item, description, ID, or source PO">
     <select name="category"><option value="">All categories</option>{% for category in categories %}<option value="{{category}}" {{'selected' if category_filter==category}}>{{category}}</option>{% endfor %}</select>
     <select name="stock"><option value="">All stock levels</option><option value="in stock" {{'selected' if stock_filter=='in stock'}}>In stock</option><option value="low stock" {{'selected' if stock_filter=='low stock'}}>Low stock (5 or fewer)</option><option value="out of stock" {{'selected' if stock_filter=='out of stock'}}>Out of stock</option></select>

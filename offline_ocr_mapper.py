@@ -502,6 +502,7 @@ def _apply_candidate(
     forced_key: Optional[str] = None,
     source_priority: int = 1,
     label_score: Optional[float] = None,
+    source_owned: bool = False,
 ) -> None:
     """Apply a candidate without allowing weak heuristics to overwrite explicit fields."""
     if not _clean(value):
@@ -513,9 +514,13 @@ def _apply_candidate(
     if forced_key == 'budget' and decimal_number(_clean(value), money=True) is None:
         record.setdefault('warnings', []).append('Budget source is not a single numeric value; manual review required.')
         return
-    if forced_key == 'pre_procurement' and _clean(value).lower() not in {'yes', 'no', 'applicable', 'not applicable', 'n/a', 'na'}:
+    unresolved_applicability = forced_key == 'pre_procurement' and _clean(value).lower() not in {'yes', 'no', 'applicable', 'not applicable', 'n/a', 'na'}
+    if unresolved_applicability:
         record.setdefault('warnings', []).append('Conference applicability is ambiguous; manual review required.')
-        return
+        # Independently bounded label/value geometry establishes ownership,
+        # not a Yes/No decision. Preserve its wording with unresolved confidence.
+        if not source_owned:
+            return
     if forced_key == 'procurement_mode' and re.search(r'\b(?:yes|no)\s*$', value, re.I):
         record.setdefault('warnings', []).append('Procurement mode includes an adjacent applicability value; confirm the separate fields.')
         return
@@ -557,6 +562,8 @@ def _apply_candidate(
         or (source_priority == existing_priority and score > existing + 0.015)
     )
     if should_replace:
+        if unresolved_applicability:
+            score = min(score, 0.5)
         display = _clean(value)
         if key in {'start_date', 'end_date', 'delivery_period'}:
             display = re.sub(r'\b(January|February|March|April|May|June|July|August|September|October|November|December)(20\d{2})\b',
@@ -564,12 +571,13 @@ def _apply_candidate(
         record["fields"][target] = display
         record["field_confidence"][target] = {
             "score": round(score, 4),
-            "level": confidence_label(score),
+            "level": 'Unresolved' if unresolved_applicability else confidence_label(score),
             "source_label": _clean(label),
             "source_value": str(value),
             "normalized_display": display != _clean(value),
             "source_priority": source_priority,
             "signals": parts,
+            **({'requires_human_review': True} if unresolved_applicability else {}),
         }
 
 def _key_value_table_rows(table: Dict[str, Any], start_index: int) -> List[Dict[str, Any]]:
@@ -948,7 +956,9 @@ def _map_document(document: Dict[str, Any]) -> Dict[str, Any]:
     # Every required shared field already has independent label/value geometry.
     # Do not spend embeddings trying to reinterpret unrelated headings/notes.
     # Raw context and non-item evidence remain unchanged and available for review.
-    pairs = [] if mapped_rows and SHARED_ROLES <= owned_roles else _label_value_candidates(lines)
+    # Independent label/value geometry owns its role even when an item header
+    # is unreadable. Flattened two-column text must not invent competing values.
+    pairs = [pair for pair in _label_value_candidates(lines) if pair[3] not in owned_roles] if not SHARED_ROLES <= owned_roles else []
     pairs.extend((entry['label'],entry['value'],'',entry['role'],1.0)
                  for entry in document.get('shared_field_evidence',[]) if entry.get('role') in SHARED_ROLES)
     # A vertical metadata table is context, not a collection of item rows.
@@ -967,7 +977,10 @@ def _map_document(document: Dict[str, Any]) -> Dict[str, Any]:
             continue
         _apply_candidate(
             form_record, label, value, neighbors,
-            forced_key=key, source_priority=3, label_score=label_score
+            forced_key=key, source_priority=3, label_score=label_score,
+            source_owned=any(entry.get('role') == key and _clean(entry.get('value')) == _clean(value)
+                and (entry.get('minimum_word_confidence') is None or entry['minimum_word_confidence'] >= 55)
+                for entry in positioned)
         )
     # Typed item amounts stay separate from unit prices. A source amount is a
     # planning estimate only when explicitly attached to this text item.
@@ -1030,6 +1043,7 @@ def _map_document(document: Dict[str, Any]) -> Dict[str, Any]:
                     copied_meta = dict(meta)
                     copied_meta["inherited_shared_context"] = True
                     target_row["field_confidence"][field_label] = copied_meta
+            target_row.setdefault('warnings', []).extend(scoped_form.get('warnings', []))
             _finalize(target_row)
 
     form_populated = sum(1 for v in form_record["fields"].values() if _clean(v))
@@ -1077,6 +1091,23 @@ def _map_document(document: Dict[str, Any]) -> Dict[str, Any]:
         cells = row.pop('_source_cells', None)
         enrich_ocr_record(row, cells if cells is not None else source_pairs)
         interpretation = row['field_confidence']['_item_interpretation']
+        source_evidence = row['field_confidence'].get('_source_evidence', {})
+        source_headers = source_evidence.get('headers', [])
+        native_names = [cell['leading_item_name'] for cell in source_evidence.get('cells', [])
+            if cell.get('leading_item_name') and not cell.get('uncertain')
+            and 0 < cell.get('column', 0) <= len(source_headers)
+            and header_role(source_headers[cell['column']-1]) == 'name']
+        # A native title refines only Item Name; the full source description and
+        # specifications remain unchanged. Multiple title owners stay unresolved.
+        if len(native_names) == 1 and _clean(native_names[0].get('value')):
+            name_evidence = native_names[0]
+            title = _clean(name_evidence['value'])
+            row['fields']['Item Name'] = title
+            row['field_confidence']['Item Name'] = dict(score=.95, level='Needs Review',
+                source_label='Native PDF title typography and cell geometry', source_evidence=name_evidence)
+            interpretation['name'] = title
+            interpretation['evidence']['Item Name'] = title
+            interpretation['evidence']['native_leading_title'] = name_evidence
         table_source = row['field_confidence'].get('_table_source', {})
         uncertain_targets = dict(name=[KEY_TO_LABEL['description'], 'Item Name'], quantity=[KEY_TO_LABEL['quantity_size'], 'Quantity'],
             specification=[KEY_TO_LABEL['quantity_size']], unit=['Unit'], unit_cost=['Estimated Unit Cost'], amount=[KEY_TO_LABEL['budget']])
@@ -1154,7 +1185,13 @@ def _document_metadata(document, pairs, warnings):
     if metadata['category']:
         metadata['category'] = re.sub(r'NON[- ]?DBM', 'NON-DBM', metadata['category'].upper())
     for role in SHARED_ROLES | {'project_type'}:
-        values = list(dict.fromkeys(value for _, value, _, key, score in pairs if key == role and score >= .85))
+        values=[]
+        seen=set()
+        for _,value,_,key,score in pairs:
+            if key!=role or score<.85:continue
+            canonical=re.sub(r'\s+',' ',str(value)).strip().casefold()
+            if canonical and canonical not in seen:
+                seen.add(canonical);values.append(value)
         label = KEY_TO_LABEL[role]
         metadata['shared_fields'][label] = values[0] if len(values) == 1 else ''
         metadata['field_evidence'][label] = values

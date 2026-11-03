@@ -26,6 +26,10 @@ _UNITS = {
     'kg': 'kg', 'kilogram': 'kg', 'kilograms': 'kg', 'gram': 'grams', 'grams': 'grams',
     'sheet': 'sheets', 'sheets': 'sheets', 'carton': 'cartons', 'cartons': 'cartons',
     'gallon': 'gallons', 'gallons': 'gallons', 'can': 'cans', 'cans': 'cans',
+    'participant': 'participants', 'participants': 'participants',
+    'meal': 'meals', 'meals': 'meals', 'trip': 'trips', 'trips': 'trips',
+    'day': 'days', 'days': 'days', 'month': 'months', 'months': 'months',
+    'hour': 'hours', 'hours': 'hours', 'session': 'sessions', 'sessions': 'sessions',
 }
 _QUANTITY_UNIT = re.compile(rf'(?<![\w.])(?P<quantity>{_NUMBER})\s+(?P<unit>{"|".join(sorted(_UNITS, key=len, reverse=True))})\b', re.I)
 

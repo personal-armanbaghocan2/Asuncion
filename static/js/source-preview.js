@@ -16,15 +16,6 @@
     return el;
   }
 
-  function sourceUrl(endpoint, value) {
-    const encoded = encodeURIComponent(value);
-    if (endpoint.includes('{id}')) return endpoint.replace('{id}', encoded);
-    const clean = endpoint.replace(/\/+$/, '');
-    // Backward compatibility with older templates that used /api/ppmp/ as a prefix.
-    if (/\/api\/ppmp$/i.test(clean)) return `${clean}/${encoded}/source`;
-    return `${clean}/${encoded}`;
-  }
-
   function renderPpmp(target, data) {
     target.replaceChildren();
     target.classList.remove('loading', 'error');
@@ -75,17 +66,18 @@
     const initial = target.textContent;
     const parentForm = select.closest('form');
     const submitButton = parentForm?.querySelector('button[type="submit"]');
+    const remoteSource = select.hasAttribute('data-source-remote');
     let requestVersion = 0;
 
     function setReady(ready) {
-      if (submitButton && select.dataset.sourceEndpoint) submitButton.disabled = !ready;
+      if (submitButton && remoteSource) submitButton.disabled = !ready;
     }
 
     async function update() {
       const option = select.selectedOptions[0];
       const purpose = parentForm?.querySelector('[data-source-purpose]');
       if (purpose) purpose.value = option?.dataset.purpose || '';
-      const endpoint = select.dataset.sourceEndpoint;
+      const endpoint = option?.dataset.sourceUrl;
       const version = ++requestVersion;
       if (!option?.value) {
         target.classList.remove('loading', 'error');
@@ -94,13 +86,16 @@
         return;
       }
 
-      if (endpoint) {
+      if (remoteSource) {
         target.classList.remove('error');
         target.classList.add('loading');
         target.textContent = 'Loading selected PPMP data…';
         setReady(false);
         try {
-          const response = await fetch(sourceUrl(endpoint, option.value), {
+          if (!endpoint) throw new Error('Missing source URL');
+          const url = new URL(endpoint, document.baseURI);
+          if (url.origin !== window.location.origin) throw new Error('A local source URL is required');
+          const response = await fetch(url.href, {
             headers: { 'Accept': 'application/json' },
             credentials: 'same-origin',
             cache: 'no-store'

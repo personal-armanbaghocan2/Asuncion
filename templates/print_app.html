@@ -12,7 +12,7 @@
     .agency-line{margin:8px 0 18px;font-size:13px}
   </style>
 <style>@page{size:A4 landscape;margin:10mm}.print-page{max-width:1400px}@media print{.print-page{max-width:none}}</style><link rel="stylesheet" href="{{url_for('static',filename='css/procurement-print.css')}}"></head>
-<body class="landscape-document"><div class="print-controls no-print"><a class="btn" href="/app">Back to records</a><div class="actions"><p>Print preview · A4 landscape</p><button class="btn blue" onclick="window.print()">Print document</button></div></div>
+<body class="landscape-document"><div class="print-controls no-print"><a class="btn" href="{{url_for('app_plan')}}">Back to records</a><div class="actions"><p>Print preview · A4 landscape</p><button class="btn blue" onclick="window.print()">Print document</button></div></div>
 <div class="content">
   
   <div class="print-page">{% with hide_signatory_timestamp=true %}{% include "signatory_notice.html" %}{% endwith %}

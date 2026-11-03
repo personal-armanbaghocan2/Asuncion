@@ -218,7 +218,10 @@ def ppmp_state(api,ptype=None):
         where+=' and id=?';params.append(requested)
     row=api['q']('select extraction,id from psms_documents.sources where '+where+' order by created_at desc limit 1',params,one=True)
     if not row and requested not in ('latest','all'):abort(404)
-    return dict(row['extraction'],source_id=str(row['id'])) if row else None
+    if not row:return None
+    import document_processing
+    state,_=document_processing.latest(api,str(row['id']),row['extraction'])
+    return dict(state,source_id=str(row['id']))
 
 _STATE_UNSET = object()
 
@@ -229,7 +232,7 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
     if state is _STATE_UNSET:state=ppmp_state(api,ptype)
     where="owner_id=? and ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')"
     params=[_uid(),ptype]
-    selected=request.args.get('ocr_source','latest')!='all' and state
+    selected=request.args.get('ocr_source','all')!='all' and state
     if selected:where+=' and source_id=?';params.append(state['source_id'])
     params.append((page-1)*200)
     rows=api['q']('select * from ppmp_ocr_drafts where '+where+' order by id '+('asc' if selected else 'desc')+' limit 200 offset ?',params)

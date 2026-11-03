@@ -11,7 +11,7 @@
     .print-table td:nth-child(1),.print-table td:nth-child(3){text-align:left}
   </style>
 <style>@page{size:A4 landscape;margin:10mm}.print-page{max-width:1400px}@media print{.print-page{max-width:none}}</style><link rel="stylesheet" href="{{url_for('static',filename='css/procurement-print.css')}}"></head>
-<body class="landscape-document"><div class="print-controls no-print"><a class="btn" href="/ppmp">Back to records</a><div class="actions"><p>Print preview · A4 landscape</p><button class="btn blue" onclick="window.print()">Print document</button></div></div>
+<body class="landscape-document"><div class="print-controls no-print"><a class="btn" href="{{url_for('ppmp_home')}}">Back to records</a><div class="actions"><p>Print preview · A4 landscape</p><button class="btn blue" onclick="window.print()">Print document</button></div></div>
 <div class="content">
   
 

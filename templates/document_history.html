@@ -1,0 +1,42 @@
+{% if history %}
+<section id="document-history" class="card document-history" aria-labelledby="document-history-title">
+  <div class="toolbar"><div><h3 id="document-history-title">My uploaded documents</h3><p class="muted">Saved originals, extraction progress and review status. Official approval remains a separate workflow.</p></div></div>
+  {% if history.unavailable %}
+  <p class="notice" role="status" data-category="info">Document history is temporarily unavailable. Existing documents remain preserved. The reviewed document-processing installation may be required.</p>
+  {% else %}
+  <form method="get" class="history-filters" aria-label="Document history filters" action="#document-history">
+    <input type="hidden" name="_nav" value="{{navigation_token()}}">
+    {% for name,value in history.preserved_args %}<input type="hidden" name="{{name}}" value="{{value}}">{% endfor %}
+    <label>Search filename or source ID<input name="h_q" value="{{history.filters.h_q}}" maxlength="200" type="search"></label>
+    <label>Sort<select name="h_sort">{% for value,label in [('newest','Newest uploads'),('oldest','Oldest uploads'),('name_asc','Filename A–Z'),('name_desc','Filename Z–A'),('modified_newest','Recently modified'),('modified_oldest','Least recently modified'),('type','File type'),('category','Category'),('status','Status')] %}<option value="{{value}}" {{'selected' if history.filters.h_sort==value}}>{{label}}</option>{% endfor %}</select></label>
+    <label>Category<select name="h_category"><option value="">All categories</option>{% for value in history.categories %}<option value="{{value}}" {{'selected' if history.filters.h_category==value}}>{{value}}</option>{% endfor %}</select></label>
+    <label>File type<select name="h_type"><option value="">All types</option>{% for value in history.types %}<option value="{{value}}" {{'selected' if history.filters.h_type==value}}>{{value[1:]|upper}}</option>{% endfor %}</select></label>
+    <label>Status<select name="h_status"><option value="">All statuses</option>{% for value in history.statuses %}<option value="{{value}}" {{'selected' if history.filters.h_status==value}}>{{value|replace('_',' ')|title}}</option>{% endfor %}</select></label>
+    <label>Uploaded from<input type="date" name="h_from" value="{{history.filters.h_from}}"></label>
+    <label>Uploaded through<input type="date" name="h_to" value="{{history.filters.h_to}}"></label>
+    <label>Uploader<select name="h_uploader"><option value="{{history.filters.h_uploader}}">{{history.uploader}} (my uploads)</option></select></label>
+    <label>Group this page<select name="h_group"><option value="">No grouping</option>{% for value,label in [('category','Category'),('month','Upload month'),('type','File type'),('status','Status')] %}<option value="{{value}}" {{'selected' if history.filters.h_group==value}}>{{label}}</option>{% endfor %}</select></label>
+    <div class="actions"><button class="btn" type="submit">Apply filters</button><a class="btn" href="{{history.reset_url}}">Reset</a></div>
+  </form>
+  <div data-live-region="document-history-results">
+  <p class="muted" aria-live="polite">{{history.total}} saved document{{'' if history.total==1 else 's'}} · Page {{history.page}} · Up to 20 documents per page{% if history.group %}. Groups cover this page.{% endif %}</p>
+  {% for group in history.groups %}
+    {% if history.group %}<h4 class="history-group-title">{{group.label}}</h4>{% endif %}
+    <div class="table-scroll"><table class="table history-table"><caption class="sr-only">{{group.label}} document history</caption>
+      <thead><tr><th scope="col">Document</th><th scope="col">Uploaded / modified</th><th scope="col">Uploader</th><th scope="col">Extracted items</th><th scope="col">Categories</th><th scope="col">Processing / review</th><th scope="col">Workflow stage</th><th scope="col">Actions</th></tr></thead>
+      <tbody>{% for row in group.rows %}<tr data-history-source="{{row.id}}">
+        <td><a href="{{row.detail_url}}"><strong>{{row.filename}}</strong></a><br><small>{{row.extension|upper}} · {{row.id}}</small></td>
+        <td><span>{{row.created_at}}</span><br><small>Modified {{row.modified_at}}</small></td><td>{{row.uploader}}</td>
+        <td><strong>{{row.total}}</strong>{% if history.kind=='aoq' %}<br><small>{{row.quotation_count or 0}} quotations · {{row.supplier_count or 0}} supplier rows</small>{% endif %}</td>
+        <td>DBM {{row.DBM}}<br>NON-DBM {{row['NON-DBM']}}<br>LIB {{row.LIB}}<br>Needs classification {{row.needs_classification}}</td>
+        <td><span class="badge {{'ok' if row.processing_status=='COMPLETE' else 'warn'}}">{{row.processing_status|replace('_',' ')|title}}</span><br><span>{{row.review_status|replace('_',' ')|title}}</span></td>
+        <td>{{row.workflow_stage}}{% for link in row.official_links %}<br><a href="{{link.url}}">{{link.label}}</a> <small>{{link.status}}</small>{% endfor %}</td>
+        <td class="actions"><a class="btn small" href="{{row.reopen_url}}">Reopen</a><a class="btn small" href="{{row.detail_url}}">History</a><a class="btn small" href="{{row.download_url}}">Download original</a></td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  {% else %}<p class="empty-state">No saved documents match these filters.</p>{% endfor %}
+  <nav class="dataset-pagination history-pagination" aria-label="Document history pages">{% if history.previous_url %}<a class="btn" href="{{history.previous_url}}">Previous documents</a>{% endif %}{% if history.next_url %}<a class="btn" href="{{history.next_url}}">Next documents</a>{% endif %}</nav>
+  </div>
+  {% endif %}
+</section>
+{% endif %}

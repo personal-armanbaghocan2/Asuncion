@@ -1,5 +1,76 @@
-<!doctype html><html lang="en"><head><meta name="csrf-token" content="{{ csrf_token() }}"><script defer src="{{url_for('static',filename='js/csrf.js')}}"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Municipality of Asuncion</title><link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}"><link rel="stylesheet" href="{{url_for('static',filename='css/reference-layout.css')}}"><link rel="stylesheet" href="{{url_for('static',filename='css/integrated.css')}}"><link rel="icon" href="{{url_for('static',filename='images/asuncion-seal.png')}}"><script defer src="{{url_for('static',filename='js/ui.js')}}"></script></head>
-<body class="login-page login-redesign"><main class="login-split">
-<section class="login-hero"><img class="login-hall-photo" src="{{url_for('static',filename='images/asuncion_hall.jpg')}}" alt="Municipality of Asuncion municipal hall"><div class="login-hero-brand"><img src="{{url_for('static',filename='images/asuncion-seal.png')}}" alt="Municipality of Asuncion official seal"><div><strong>Municipality of<br>Asuncion</strong><span>Supply &amp; Property Management System</span></div></div><div class="login-copy"><span class="login-eyebrow">Procurement management system</span><h1>From planning to<br>inventory, in one place.</h1><p>Prepare, review and approve procurement documents with a clear audit trail.</p><div class="login-benefits"><div><span><b>Complete document workflow</b><small>PPMP, APP, PR, AOQ, PO, IAR, RIS and ICS</small></span></div><div><span><b>AI-assisted PR–PO verification</b><small>FastText and Random Forest assist human review</small></span></div></div></div><div class="login-hero-foot">Authorized accounts only</div></section>
-<section class="login-form-side"><div class="login-form-card"><h2>Welcome back</h2><p class="muted">Sign in to continue to your workspace.</p>{% with messages=get_flashed_messages(with_categories=true) %}{% for category,m in messages %}<div class="notice" data-category="{{category}}" role="{{'alert' if category=='error' else 'status'}}">{{m}}</div>{% endfor %}{% endwith %}<form method="post" class="login-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label for="loginUsername">Username</label><input id="loginUsername" name="username" autocomplete="username" placeholder="Enter your username" required autofocus><label for="loginPassword">Password</label><div class="password-wrap"><input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required><button class="password-toggle" type="button" data-password="loginPassword" aria-label="Show password" aria-pressed="false">Show</button></div><button class="btn primary login-btn" type="submit">Sign in</button></form><div class="secure-local">Secure sign-in</div></div></section>
-</main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Sign in | Municipality of Asuncion</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/reference-layout.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/integrated.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='images/asuncion-seal.png') }}">
+  <script defer src="{{ url_for('static', filename='js/csrf.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/ui.js') }}"></script>
+</head>
+<body class="login-page login-redesign">
+  <main class="login-split">
+    <section class="login-hero" aria-labelledby="login-service-heading">
+      <img class="login-hall-photo" src="{{ url_for('static', filename='images/asuncion_hall.jpg') }}" alt="Municipality of Asuncion municipal hall">
+      <div class="login-curve" aria-hidden="true"></div>
+      <div class="login-hero-brand">
+        <img src="{{ url_for('static', filename='images/asuncion-seal.png') }}" alt="Municipality of Asuncion official seal" width="76" height="76">
+        <div>
+          <strong>Municipality of Asuncion</strong>
+          <span>Supply &amp; Property Management System</span>
+        </div>
+      </div>
+      <div class="login-copy">
+        <div class="login-gold-rule" aria-hidden="true"></div>
+        <h1 id="login-service-heading">Enhance Supply Management System</h1>
+        <p>Prepare, review, and approve procurement documents, manage inventory, and ensure accountability with a clear, secure audit trail.</p>
+      </div>
+    </section>
+
+    <section class="login-form-side" aria-labelledby="login-heading">
+      <div class="login-form-card">
+        <h2 id="login-heading">Welcome back</h2>
+        <p class="login-form-intro">Sign in to your workspace to access the Supply &amp; Property Management System.</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for category, message in messages %}
+            <div class="notice" data-category="{{ category }}" role="{{ 'alert' if category in ('error', 'danger') else 'status' }}">{{ message }}</div>
+          {% endfor %}
+        {% endwith %}
+
+        <form method="post" class="login-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="login-field">
+            <label for="loginUsername">Username</label>
+            <div class="login-input-wrap">
+              <svg class="icon login-field-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>
+              <input id="loginUsername" name="username" type="text" autocomplete="username" placeholder="Enter your username" required autofocus>
+            </div>
+          </div>
+          <div class="login-field">
+            <label for="loginPassword">Password</label>
+            <div class="login-input-wrap password-wrap">
+              <svg class="icon login-field-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg>
+              <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required>
+              <button class="password-toggle" type="button" data-password="loginPassword" aria-label="Show password" aria-controls="loginPassword" aria-pressed="false">Show</button>
+            </div>
+          </div>
+          <button class="btn primary login-btn" type="submit">
+            <span>Sign in</span>
+            <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5M3 12h12m-4-4 4 4-4 4"/></svg>
+          </button>
+        </form>
+      </div>
+
+      <footer class="login-official-footer">
+        <p>Official digital service of the Municipality of Asuncion.</p>
+        <p>A secure and authorized platform for the management of supply and property resources.</p>
+      </footer>
+    </section>
+  </main>
+</body>
+</html>

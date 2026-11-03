@@ -36,6 +36,7 @@ ASSETS = (
     'js/record-selectors.js',
     'js/ui.js',
     'js/live-updates.js',
+    'js/document-workspace.js',
     'images/asuncion_municipal.jpg',
     'images/asuncion-seal.png',
     'images/asuncion_hall.jpg',
