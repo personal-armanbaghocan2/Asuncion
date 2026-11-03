@@ -132,7 +132,8 @@
       if(typeof window.psmsConfirm==='function'&&!await window.psmsConfirm({message:'Create official PPMP drafts from the selected reviewed values? Procurement approval remains separate.'}))return;
       const body=new FormData(form);body.set('action','create_ppmp');body.delete('ocr_file');
       button.disabled=true;form.setAttribute('aria-busy','true');
-      const response=await fetch(form.action||window.location.href,{method:'POST',body,
+      // Buttons named "action" shadow form.action with a RadioNodeList.
+      const response=await fetch(form.getAttribute('action')||window.location.href,{method:'POST',body,
         credentials:'same-origin',headers:{Accept:'application/json'}});
       if(response.redirected&&new URL(response.url).pathname==='/login'){
         window.location.assign(response.url);return;
