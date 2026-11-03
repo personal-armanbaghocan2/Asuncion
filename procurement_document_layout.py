@@ -19,7 +19,8 @@ ALIASES = {
     'specification': ('specification', 'specifications', 'technical specifications', 'technical specs', 'technical requirement', 'size'),
     'quantity': ('quantity', 'qty', 'requested quantity', 'quantity required', 'number of units',
                  'required volume', 'required units', 'required units technical specs', 'units needed'),
-    'quantity_size': ('quantity and size', 'quantity and size of the project to be procured'),
+    'quantity_size': ('quantity and size', 'quantity and size of the project', 'quantity and size of the project to be procured'),
+    'category': ('ppmp category', 'source category'),
     'unit': ('unit', 'uom', 'unit of measure', 'measurement unit', 'unit of measurement'),
     'unit_cost': ('unit cost', 'unit price', 'estimated unit cost', 'price per unit', 'rate'),
     'amount': ('amount', 'estimated amount', 'estimated total cost', 'total amount'),
@@ -83,6 +84,97 @@ def table_header(rows, *, start_only=False):
             _, _, end, labels = max(choices, key=lambda choice: choice[:2])
             return end, labels
     return -1, []
+
+
+def recover_native_table_header(rows, cells, words):
+    """Recover collapsed PDF header cells from independently ruled body columns.
+
+    Native table detection can merge an entire header band while retaining each
+    body's physical cell. Only those source bounds and original header words
+    establish ownership. Ambiguous geometry or labels leave the table unchanged.
+    """
+    if table_header(rows)[0] >= 0 or len(rows) < 2:
+        return None
+    width = max(map(len, rows), default=0)
+    if width < 2:
+        return None
+    by_row = {}
+    for cell in cells:
+        if cell.get('bbox'):
+            by_row.setdefault(cell['row'], []).append(cell)
+    geometries = {}
+    for row_number, source_cells in by_row.items():
+        ordered = sorted(source_cells, key=lambda cell: cell['column'])
+        if len(ordered) != width or [cell['column'] for cell in ordered] != list(range(1, width+1)):
+            continue
+        boxes = [cell['bbox'] for cell in ordered]
+        if any(box[2] <= box[0] or box[3] <= box[1] for box in boxes):
+            continue
+        tolerance = max(.01, median(box[2]-box[0] for box in boxes)*.03)
+        if any(abs(left[2]-right[0]) > tolerance for left, right in zip(boxes, boxes[1:])):
+            continue
+        signature = tuple((round(box[0], 3), round(box[2], 3)) for box in boxes)
+        geometries.setdefault(signature, []).append((row_number, boxes))
+    if not geometries:
+        return None
+    support = max(map(len, geometries.values()))
+    best = [entries for entries in geometries.values() if len(entries) == support]
+    if len(best) != 1:
+        return None
+    body_rows = sorted(best[0])
+    first_body, column_boxes = body_rows[0]
+    if first_body <= 1:
+        return None
+    for first_header in range(first_body-1, max(0, first_body-4), -1):
+        original_cells = [cell for row_number, source_cells in by_row.items()
+                          if first_header <= row_number < first_body for cell in source_cells]
+        if not original_cells:
+            continue
+        top = min(cell['bbox'][1] for cell in original_cells)
+        bottom = max(cell['bbox'][3] for cell in original_cells)
+        column_words = [[] for _ in range(width)]
+        ambiguous = False
+        for raw in words:
+            # PyMuPDF native word tuples: x0, y0, x1, y1, text, ...
+            left, word_top, right, word_bottom, value = raw[:5]
+            x, y = (left+right)/2, (word_top+word_bottom)/2
+            if not (top <= y <= bottom and column_boxes[0][0] <= x <= column_boxes[-1][2]):
+                continue
+            owners = [index for index, box in enumerate(column_boxes) if box[0] <= x < box[2]]
+            if len(owners) != 1:
+                ambiguous = True
+                break
+            column = owners[0]
+            box = column_boxes[column]
+            tolerance = max(.01, (box[2]-box[0])*.03)
+            if left < box[0]-tolerance or right > box[2]+tolerance:
+                ambiguous = True
+                break
+            column_words[column].append(dict(left=left, top=word_top, width=right-left,
+                                             height=word_bottom-word_top, text=value))
+        if ambiguous:
+            continue
+        labels = [ordered_word_text(values).replace('\n', ' ') for values in column_words]
+        if table_header([labels])[0] < 0:
+            continue
+        if not any(classify_table_row(labels, rows[row_number-1])['role'] == 'item_row'
+                   for row_number, _ in body_rows):
+            continue
+        repaired = [list(row) for row in rows]
+        header_row = first_body-1
+        repaired[header_row-1] = labels
+        reconstructed_cells = [dict(page=original_cells[0].get('page'), row=header_row, column=index+1,
+            bbox=[box[0], top, box[2], bottom], raw_text=label,
+            coordinate_space=original_cells[0].get('coordinate_space'), reconstructed_header=True,
+            reconstruction_method='Native words within ruled body-column bounds')
+            for index, (box, label) in enumerate(zip(column_boxes, labels))]
+        retained_cells = [cell for cell in cells if not first_header <= cell['row'] < first_body]
+        return dict(rows=repaired, cells=reconstructed_cells+retained_cells,
+            header_reconstruction=dict(method='Native words within ruled body-column bounds',
+                original_rows=[list(row) for row in rows[first_header-1:first_body-1]],
+                original_cells=original_cells, header_row=header_row,
+                supporting_body_rows=[row_number for row_number, _ in body_rows]))
+    return None
 
 
 def is_summary_label(value):

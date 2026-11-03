@@ -17,7 +17,7 @@
     if(form&&(form.getAttribute('method')||'get').toLowerCase()==='post')form.dataset.syncDirty='true';
   }
   document.addEventListener('input',mark);document.addEventListener('change',mark);
-  document.addEventListener('psms:form-saved',event=>{if(event.detail?.form)delete event.detail.form.dataset.syncDirty;});
+  document.addEventListener('psms:form-saved',event=>{if(event.detail?.form)delete event.detail.form.dataset.syncDirty;current=null;etag='';});
   function readonlyTables(doc){
     return [...doc.querySelectorAll('#mainContent table')].filter(table=>!table.closest('form,dialog')&&!table.querySelector('input,textarea,select,form,[contenteditable]'));
   }
@@ -26,6 +26,38 @@
     if(!response.ok||response.redirected)throw new Error('VIEW_UNAVAILABLE');
     const fresh=new DOMParser().parseFromString(await response.text(),'text/html');
     let applied=true;
+    // Explicit read-only workspaces and timelines can change shape. Editors,
+    // search/filter forms and focused content remain in the current document.
+    document.querySelectorAll('[data-live-region]').forEach(region=>{
+      const key=region.getAttribute('data-live-region');
+      const replacement=[...fresh.querySelectorAll('[data-live-region]')].find(node=>node.getAttribute('data-live-region')===key);
+      if(!replacement||region.querySelector('form,input,textarea,select,[contenteditable]'))return;
+      if(region.contains(document.activeElement)){applied=false;return;}
+      const copy=replacement.cloneNode(true);copy.querySelectorAll('script,iframe,object').forEach(node=>node.remove());
+      region.replaceChildren(...copy.childNodes);
+    });
+    document.querySelectorAll('[data-live-status]').forEach(node=>{
+      const key=node.getAttribute('data-live-status');
+      const replacement=[...fresh.querySelectorAll('[data-live-status]')].find(value=>value.getAttribute('data-live-status')===key);
+      if(replacement&&!node.closest('form'))node.textContent=replacement.textContent;
+    });
+    const editors=document.querySelector('[data-live-editors]');
+    if(editors){
+      // New drafts need working review anchors. Existing editors keep their
+      // values and revisions; a stale save is rejected by the server.
+      fresh.querySelectorAll('[data-live-editors] > details[id]').forEach(editor=>{
+        if(document.getElementById(editor.id))return;
+        const copy=editor.cloneNode(true);
+        copy.querySelectorAll('script,iframe,object').forEach(node=>node.remove());
+        editors.append(copy);
+      });
+    }
+    document.querySelectorAll('[data-live-pagination]').forEach((node,index)=>{
+      const replacement=fresh.querySelectorAll('[data-live-pagination]')[index];
+      if(!replacement)return;
+      if(node.contains(document.activeElement)){applied=false;return;}
+      node.replaceChildren(...[...replacement.childNodes].map(child=>child.cloneNode(true)));
+    });
     // Editable tables and forms are retained, even when no field is dirty.
     const oldTables=readonlyTables(document),newTables=readonlyTables(fresh);
     if(oldTables.length===newTables.length){

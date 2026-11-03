@@ -5,8 +5,9 @@
 <form method="post" class="source-bar app-source-bar" data-confirm="Generate an APP from the selected PPMP?"><input
         type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Approved Source PPMP<select name="ppmp_id" required data-record-selector="approved PPMP"
-            data-source-preview="appSource" data-source-endpoint="/api/ppmp/{id}/source">
+            data-source-preview="appSource" data-source-remote>
             <option value="">Select PPMP</option>{% for p in ppmps %}<option value="{{p.id}}"
+                data-source-url="{{ url_for('ppmp_source_api', id=p.id) }}"
                 data-search="{{p.search_terms}} {{p.office}}">{{p.no}} · {{(p.item_preview or '')|truncate(55)}} ·
                 {{(p.office or '')|truncate(30)}} · {{p.total|money}}</option>{% endfor %}
         </select></label>
@@ -32,8 +33,8 @@
             <td>{{r.office}}</td>
             <td class="numeric">{{r.total|money}}</td>
             <td><span class="badge {{'ok' if r.status=='Approved' else 'warn'}}">{{r.status}}</span></td>
-            <td class="actions"><a class="btn small blue" href="/app/{{r.id}}/view"
-                    aria-label="Review {{r.no}}">Review</a><a class="btn small blue" href="/app/{{r.id}}/print"
+            <td class="actions"><a class="btn small blue" href="{{ url_for('app_review', id=r.id) }}"
+                    aria-label="Review {{r.no}}">Review</a><a class="btn small blue" href="{{ url_for('app_print', id=r.id) }}"
                     aria-label="Print {{r.no}}">Print</a></td>
         </tr>{% else %}<tr>
             <td colspan="6" class="empty-state">No APP records yet.</td>

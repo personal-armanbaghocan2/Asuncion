@@ -27,6 +27,7 @@ SUPPORTED_EXTENSIONS = {
 }
 
 ITEM_NUMBER_HEADERS = {"item no", "item number", "line no", "line number", "no"}
+SOURCE_CATEGORY_HEADERS = {"ppmp category", "item category", "source category", "category"}
 
 FIELD_ALIASES = {
     "supplier": [
@@ -133,6 +134,8 @@ def _map_header(value: Any) -> str:
         return ""
     if normalized in ITEM_NUMBER_HEADERS:
         return "item_no"
+    if normalized in SOURCE_CATEGORY_HEADERS:
+        return "category"
     aliases = [
         (field, normalize(alias))
         for field, names in FIELD_ALIASES.items()
@@ -370,6 +373,50 @@ def _read_scanned_page(image, source, page_number):
     return document
 
 
+def _native_leading_item_name(cell: Dict[str, Any], spans: List[Dict[str, Any]], bold_flag: int) -> Dict[str, Any] | None:
+    """Retain an explicit bold-leading title inside one native description cell.
+
+    Unmarked text, uniformly styled cells, later bold emphasis and crossing
+    spans do not establish a separate item title. Original cell text stays whole.
+    """
+    box = cell.get('bbox')
+    if not box:
+        return None
+    owned = []
+    for span in spans:
+        bounds = span.get('bbox')
+        if not bounds or not str(span.get('text') or '').strip():
+            continue
+        x, y = (bounds[0]+bounds[2])/2, (bounds[1]+bounds[3])/2
+        if not (box[0] <= x <= box[2] and box[1] <= y <= box[3]):
+            continue
+        if bounds[0] < box[0]-.25 or bounds[2] > box[2]+.25 or bounds[1] < box[1]-.25 or bounds[3] > box[3]+.25:
+            return None
+        owned.append(span)
+    owned.sort(key=lambda span: (span['bbox'][1], span['bbox'][0]))
+    normalized = lambda value: re.sub(r'\s+', ' ', str(value or '')).strip()
+    if normalized(' '.join(span['text'] for span in owned)) != normalized(cell.get('raw_text')):
+        return None
+    leading = []
+    for span in owned:
+        if not int(span.get('flags', 0)) & bold_flag:
+            break
+        leading.append(span)
+    remainder = owned[len(leading):]
+    if not leading or not remainder or any(int(span.get('flags', 0)) & bold_flag for span in remainder):
+        return None
+    if max(span['bbox'][3] for span in leading) > min(span['bbox'][1] for span in remainder)+.25:
+        return None
+    title = normalized(' '.join(span['text'] for span in leading))
+    return dict(value=title, method='Native bold-leading title before plain specification',
+        bbox=[min(span['bbox'][0] for span in leading), min(span['bbox'][1] for span in leading),
+              max(span['bbox'][2] for span in leading), max(span['bbox'][3] for span in leading)],
+        cell_bbox=list(box), coordinate_space=cell.get('coordinate_space'),
+        page=cell.get('page'), row=cell.get('row'), column=cell.get('column'),
+        spans=[dict(text=span['text'], font=span.get('font'), flags=span.get('flags'), bbox=list(span['bbox']))
+               for span in leading])
+
+
 def _read_pdf(filepath: str) -> Dict[str, Any]:
     try:
         import fitz
@@ -426,17 +473,41 @@ def _read_pdf(filepath: str) -> Dict[str, Any]:
                             bbox=list(box) if box else None, raw_text=extracted[r][c] or '',
                             coordinate_space='PDF page points') for r, row in enumerate(table.rows)
                             for c, box in enumerate(row.cells) if r<len(extracted) and c<len(extracted[r])]
+                        from procurement_document_layout import recover_native_table_header
+                        repaired_header = recover_native_table_header(extracted, native_cells, native_words)
                         page_tables.append({
                             "source": f"PDF page {page_index + 1}, table {table_index}",
                             "page": page_index + 1,
                             "bbox": list(table.bbox),
                             "rows": extracted,
                             "cells": native_cells,
+                            **(repaired_header or {}),
                         })
                         methods.add("PDF table detection")
             except Exception:
                 # Table detection is opportunistic; text/OCR remains available.
                 pass
+            # Read font evidence once, only for multiline native description
+            # cells with physical ruled bounds. Scanned/positioned/office cells
+            # retain their complete source name when typography is unavailable.
+            title_cells = []
+            from procurement_document_layout import table_header, header_role
+            for native_table in page_tables:
+                header_index, headers = table_header(native_table['rows'])
+                name_columns = {index+1 for index, label in enumerate(headers) if header_role(label) == 'name'}
+                title_cells.extend((native_table, cell) for cell in native_table['cells']
+                    if header_index >= 0 and cell.get('row', 0) > header_index+1
+                    and cell.get('column') in name_columns and cell.get('bbox')
+                    and len(str(cell.get('raw_text') or '').splitlines()) > 1)
+            if title_cells:
+                native_dict = page.get_text('dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)
+                native_spans = [span for block in native_dict.get('blocks', [])
+                                for line in block.get('lines', []) for span in line.get('spans', [])]
+                for native_table, cell in title_cells:
+                    leading_name = _native_leading_item_name(cell, native_spans, fitz.TEXT_FONT_BOLD)
+                    if leading_name:
+                        leading_name['source'] = native_table['source']
+                        cell['leading_item_name'] = leading_name
             if native and not page_tables:
                 from procurement_document_layout import positioned_table
                 words = [dict(left=w[0], top=w[1], width=w[2]-w[0], height=w[3]-w[1], text=w[4])
@@ -932,7 +1003,7 @@ def _parse_row_table(rows: List[List[Any]], source: str) -> List[Dict[str, Any]]
         from procurement_document_layout import classify_table_row
         headers = [''] * max(len(row), max(mapping, default=-1)+1)
         role_labels = dict(item='Item', description='Description', item_no='Item No',
-                           qty='Quantity', unit='Unit', unit_cost='Unit Cost', amount='Amount', supplier='Supplier')
+                           category='PPMP Category', qty='Quantity', unit='Unit', unit_cost='Unit Cost', amount='Amount', supplier='Supplier')
         for column, field in mapping.items():
             headers[column] = role_labels.get(field, field)
         if classify_table_row(headers, row)['role'] != 'item_row':
@@ -1013,7 +1084,7 @@ def _parse_column_table(rows: List[List[Any]], source: str) -> List[Dict[str, An
                 field = _map_header(header)
                 supplier, metric = header_metrics[col]
                 owned_remarks = field == "remarks" and metric == "remarks" and supplier.title() in priced_suppliers
-                if (field in {"item_no", "item", "description", "qty", "unit", "remarks"} and field not in base.values()
+                if (field in {"item_no", "category", "item", "description", "qty", "unit", "remarks"} and field not in base.values()
                         and not owned_remarks):
                     base[col] = field
                     continue
@@ -1332,6 +1403,8 @@ def _aggregate(records: List[Dict[str, Any]], *, allow_amount_calculation: bool 
         }
         if _clean(rec.get("item_no")):
             item["source_item_no"] = _clean(rec["item_no"])
+        if _clean(rec.get("category")):
+            item["source_category"] = _clean(rec["category"])
         for key in ('source_row', 'source_page', 'source_worksheet'):
             if rec.get(key) is not None:
                 item[key] = rec[key]
@@ -1443,8 +1516,9 @@ def build_preview(document: Dict[str, Any], pr_items: List[Dict[str, Any]]) -> D
     for supplier_index, supplier in enumerate(suppliers):
         for item_index, item in enumerate(supplier['items']):
             number = _clean(item.get('source_item_no'))
-            identity = ('number', _norm(number)) if number else ('name', _norm(item.get('item')))
-            group = item_groups.setdefault(identity, dict(source_item_no=number, item=item.get('item'),
+            category = _clean(item.get('source_category'))
+            identity = ('number', _norm(category), _norm(number)) if number else ('name', _norm(category), _norm(item.get('item')))
+            group = item_groups.setdefault(identity, dict(source_item_no=number, source_category=category, item=item.get('item'),
                 identity_status='source_number' if number else 'description_group_requires_review', quotations=[]))
             group['quotations'].append(dict(supplier_index=supplier_index, item_index=item_index))
     warnings = list(document.get("warnings") or [])

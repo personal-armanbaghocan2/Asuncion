@@ -28,7 +28,7 @@ on:
         default: false
         type: boolean
       database_upgrades_ready:
-        description: Owner confirms reviewed account and live-revision SQL/grants are installed on the existing project
+        description: Owner confirms reviewed account, live-revision and document-processing SQL/grants are installed on the existing project
         required: true
         default: false
         type: boolean

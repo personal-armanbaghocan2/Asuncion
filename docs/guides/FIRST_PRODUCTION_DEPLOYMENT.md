@@ -1,5 +1,12 @@
 # First actual Asuncion deployment: website ON, inference OFF
 
+Historical first-release procedure. For the current approved FastText + Random
+Forest release, follow `docs/reports/FINAL_DEPLOYMENT_READINESS_2026-11-03.md`.
+The current workflow requires `approved_release`, `retrained_rf`, and
+`nlp-online-original-v2`; its disabled-inference instructions below no longer
+apply. Migrations 03 and 04 are already installed; do not run them again.
+Migration 05 requires separate owner review and installation approval.
+
 Existing website: https://asuncion-one.vercel.app
 Repository: personal-armanbaghocan2/Asuncion (default branch main).
 Existing Supabase project: fenrqjzupidswgrjzdgn.
