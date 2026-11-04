@@ -118,20 +118,7 @@ def validate_database_configuration(dsn, *, environ=None):
     if (not re.fullmatch(r'[a-z0-9]{20}', project)
             or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,62}', database)
             or host.lower() != expected_host or parameters['dbname'] != database):
-        # Temporary diagnosis: fixed labels only. Remove after the Production
-        # target configuration is corrected; preserve the guard above.
-        failed_checks = [
-            name for name, passed in (
-                ('PROJECT_REF_FORMAT', re.fullmatch(r'[a-z0-9]{20}', project) is not None),
-                ('EXPECTED_DATABASE_FORMAT', re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,62}', database) is not None),
-                ('HOST_MATCH', host.lower() == expected_host),
-                ('DATABASE_MATCH', parameters['dbname'] == database),
-            ) if not passed
-        ]
-        raise RuntimeError(
-            'Cloud database target does not match the explicit expectations. '
-            'Failed checks: ' + ','.join(failed_checks)
-        ) from None
+        raise RuntimeError('Cloud database target does not match the explicit expectations.')
     project_host = 'db.' + project + '.supabase.co'
     shared_pooler = bool(re.fullmatch(r'(?:[a-z0-9]+(?:-[a-z0-9]+)*\.)+pooler\.supabase\.com', expected_host))
     if expected_host == project_host:
