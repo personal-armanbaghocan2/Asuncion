@@ -20,7 +20,7 @@
     <p class="agency-line"><b>Name of Agency:</b> Not configured</p>
     <p style="text-align:center"><b>Annual Procurement Plan for FY {{row.year}}</b></p>
 
-    <p class="print-status"><b>Document:</b> {{row.no}} · <b>Workflow status:</b> {{row.status}}</p>
+    <p class="print-status"><b>Document:</b> {{row.no}} · <b>Workflow status:</b> {{row.status}} · <b>Source PPMP:</b> {{source_ppmp_no or 'Not recorded'}}</p>
 <table class="print-table"><colgroup><col style="width:5%"><col style="width:17%"><col style="width:9%"><col style="width:8%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:7%"><col style="width:8%"><col style="width:7%"><col style="width:7%"><col style="width:8%"></colgroup><thead>
       <tr>
         <th rowspan="2">Code<br>(PAP)</th>
@@ -60,7 +60,7 @@
           <td>{{sched[3]|document_date}}</td>
           {% if loop.first %}
           <td>{{g.funds}}</td>
-          <td class="numeric">{{g.total|money}}</td>
+          <td class="numeric">{{g.total|money if g.total is not none else '—'}}</td>
           <td class="numeric">{{g.mooe|money if g.mooe is not none else '—'}}</td>
           <td class="numeric">{{g.co|money if g.co is not none else '—'}}</td>
           <td>{{g.remarks}}</td>
@@ -72,7 +72,7 @@
       {% endfor %}
       <tr>
         <td colspan="9" style="text-align:right"><b>TOTAL</b></td>
-        <td class="numeric"><b>{{row.total|money}}</b></td>
+        <td class="numeric"><b>{{row.total|money if row.total is not none else '—'}}</b></td>
         <td colspan="3"></td>
       </tr>
     </tbody></table>
@@ -82,8 +82,8 @@
     <p class="app-budget-note">Unrecorded milestone dates are blank. “—” means MOOE/CO classification is not established; the total remains unchanged.</p>
     <details class="no-print"><summary>Source PPMP timeline (not APP milestone dates)</summary>{% for item in items %}<p>Start: {{item.get('Start of Procurement Activity','')|month_year}} · End: {{item.get('End of Procurement Activity','')|month_year}} · Expected delivery: {{item.get('Expected Delivery/Implementation Period','')|month_year}}</p>{% endfor %}</details>
     <div class="sign-grid">
-      <div class="sign"><p>Prepared by:</p><div class="signatory-name">{{sig.app_prepared[0]}}</div><b>{{sig.app_prepared[0]}}</b><br>{{sig.app_prepared[1]}}</div>
-      <div class="sign"><p>Approved:</p><div class="signatory-name">{{sig.app_approved[0]}}</div><b>{{sig.app_approved[0]}}</b><br>{{sig.app_approved[1]}}</div>
+      <div class="sign"><p>Prepared by:</p><div class="signatory-name">{{sig.app_prepared[0]}}</div>{{sig.app_prepared[1]}}</div>
+      <div class="sign"><p>Approved:</p><div class="signatory-name">{{sig.app_approved[0]}}</div>{{sig.app_approved[1]}}</div>
     </div>
   </div>
 </div>

@@ -76,7 +76,7 @@
     async function update() {
       const option = select.selectedOptions[0];
       const purpose = parentForm?.querySelector('[data-source-purpose]');
-      if (purpose) purpose.value = option?.dataset.purpose || '';
+      if (purpose?.readOnly) purpose.value = option?.dataset.purpose || '';
       const endpoint = option?.dataset.sourceUrl;
       const version = ++requestVersion;
       if (!option?.value) {

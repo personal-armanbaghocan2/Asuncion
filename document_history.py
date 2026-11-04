@@ -88,7 +88,7 @@ def _legacy_sort(column):
     months = "ARRAY['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']"
     return f"""CASE WHEN {column} ~ '^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-3][0-9], [0-9]{{4}} (0[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$'
       THEN substring({column},9,4)||'-'||lpad(array_position({months},substring({column},1,3))::text,2,'0')||'-'||substring({column},5,2)||' '||
-        lpad(((substring({column},14,2)::int%12)+CASE WHEN right({column},2)='PM' THEN 12 ELSE 0 END)::text,2,'0')||':'||substring({column},17,2)||':00'
+        lpad((mod(substring({column},14,2)::int,12)+CASE WHEN right({column},2)='PM' THEN 12 ELSE 0 END)::text,2,'0')||':'||substring({column},17,2)||':00'
       WHEN {column} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}[ T][0-9]{{2}}:[0-9]{{2}}' THEN replace(left({column},19),'T',' ')
       ELSE '' END"""
 
