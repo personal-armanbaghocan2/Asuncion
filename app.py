@@ -1161,8 +1161,8 @@ def build_app_rows(items, office=''):
             'Item Name',
             default=f'Procurement Program/Project {idx}'
         )
-        mode = value_any(it, 'Recommended Mode of Procurement', 'Procurement Method', default='Alternative Method/Agency to Agency')
-        funds = value_any(it, 'Source of Funds', default='Gen. fund')
+        mode = value_any(it, 'Recommended Mode of Procurement', 'Procurement Method', default='Not recorded')
+        funds = value_any(it, 'Source of Funds', default='Not recorded')
         remarks = value_any(
             it,
             'Remarks',
@@ -1170,15 +1170,18 @@ def build_app_rows(items, office=''):
             'Description / Specification',
             default='Brief description of Program/Project'
         )
-        amount = to_float(value_any(it, 'Estimated Budget Allocation (Php)', 'Estimated Total Cost', 'Total Cost', default=0))
+        specification = str(value_any(it, 'Description / Specification', 'Description', 'description', 'specification', default='')).strip()
+        if specification and specification.casefold() not in (str(program) + '\n' + str(remarks)).casefold():
+            remarks = (str(remarks).strip() + '\n' + specification).strip()
+        amount = parse_currency_decimal(value_any(it, 'Estimated Budget Allocation (Php)', 'Estimated Total Cost', 'Total Cost', default=''))
         project_type = value_any(it, 'Type of the Project to be Procured', 'Type of Project', default='')
         classification = str(value_any(it, 'Budget Classification', 'Expenditure Classification', default='')).strip().upper()
         app_rows.append({
-            'code': f'PAP-{idx:03d}',
+            'code': value_any(it, 'Code (PAP)', 'PAP Code', 'Code/PAP', default='Not recorded'),
             'program': str(program).strip(),
             'office': office or 'Not recorded',
             'mode': str(mode).strip(),
-            'funds': str(funds).strip() or 'Gen. fund',
+            'funds': str(funds).strip() or 'Not recorded',
             'total': amount,
             'mooe': amount if classification == 'MOOE' else None,
             'co': amount if classification == 'CO' else None,
@@ -2566,7 +2569,13 @@ def ppmp_home():
         d['saved_quantity'] = first_fields.get('Quantity and Size of the Project to be Procured') or '—'
         d['saved_budget'] = first_fields.get('Estimated Budget Allocation (Php)')
         rows.append(d)
-    dataset_status = get_inventory_dataset_status(DATABASE_URL)
+    try:
+        dataset_status = get_inventory_dataset_status(DATABASE_URL)
+    except Exception:
+        # Workbook metadata is optional here. Its failure must not hide official
+        # PPMPs already read successfully, or expose connection diagnostics.
+        app.logger.warning('PPMP source status unavailable [DATASET_STATUS_UNAVAILABLE].')
+        dataset_status = dict(config=None, sheets=[], unavailable=True)
     return render_template('ppmp_home.html', active='ppmp', rows=rows, dataset_status=dataset_status, title='PPMP')
 
 
@@ -2891,6 +2900,8 @@ def app_plan():
             con.commit()
         except Exception as exc:
             con.rollback()
+            if isinstance(exc, ui_feedback.DatabaseError):
+                return ui_feedback.database_failure(exc)
             flash(f'APP generation failed: {exc}')
             return redirect(url_for('app_plan'))
         finally:
@@ -2993,12 +3004,12 @@ def app_print(id):
     # Use the APP row's own item first. Older records without app_plan.items fall back to PPMP items.
     items = parse_items(row['items']) if row and 'items' in row.keys() and row['items'] else (parse_items(p['items']) if p else [])
     app_rows = build_app_rows(items, row['office'] if row else '')
-    return render_template('print_app.html', row=row, items=items, app_rows=app_rows, **managed_signatories.print_context(conn, 'app', dict(row)), title='Print APP')
+    return render_template('print_app.html', row=row, items=items, app_rows=app_rows, source_ppmp_no=p['no'] if p else None, **managed_signatories.print_context(conn, 'app', dict(row)), title='Print APP')
 
 @app.route('/pr', methods=['GET','POST'])
 def pr():
     if request.method == 'POST':
-        return procurement_creation.create_pr(globals(), request.form.get('app_id'))
+        return procurement_creation.create_pr(globals(), request.form.get('app_id'), purpose=request.form.get('purpose'))
 
     raw_prs = paged_q('''select r.*, p.no ppmp_no, p.type ppmp_type, a.no app_no
                    from pr r
@@ -3090,7 +3101,9 @@ def pr_approve(id):
 
 @app.route('/pr/<int:id>/print')
 def pr_print(id):
-    row=q('select * from pr where id=?',(id,),one=True)
+    row=q('''select r.*, p.no ppmp_no, a.no app_no from pr r
+             left join ppmp p on p.id=r.ppmp_id
+             left join app_plan a on a.id=r.app_id where r.id=?''',(id,),one=True)
     if not row:
         abort(404)
     items=parse_items(row['items'])
@@ -3964,6 +3977,8 @@ def ris_ics_approve(id):
         con.commit()
     except Exception as exc:
         con.rollback()
+        if isinstance(exc, ui_feedback.DatabaseError):
+            return ui_feedback.database_failure(exc)
         flash(f'Approval stopped: {exc}')
         return redirect(url_for('ris_ics_review', id=id))
     finally:
@@ -3973,11 +3988,23 @@ def ris_ics_approve(id):
 
 @app.route('/ris-ics/<int:id>/print')
 def ris_ics_print(id):
+    from decimal import DecimalException, ROUND_HALF_UP
     row=q('select * from ris_ics where id=?',(id,),one=True)
     if not row:
         abort(404)
     items=parse_items(row['items'])
-    return render_template('print_ris_ics.html', row=row, items=items, **managed_signatories.print_context(conn, 'ris_ics', dict(row)), title='Print RIS/ICS')
+    issue_costs = []
+    for item in items:
+        unit_cost = parse_currency_decimal(item.get('unit_cost'))
+        quantity = parse_currency_decimal(item.get('qty'))
+        amount = None
+        if unit_cost is not None and quantity is not None:
+            try:
+                amount = (unit_cost * quantity).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            except DecimalException:
+                pass
+        issue_costs.append(dict(unit_cost=unit_cost, amount=amount))
+    return render_template('print_ris_ics.html', row=row, items=items, issue_costs=issue_costs, **managed_signatories.print_context(conn, 'ris_ics', dict(row)), title='Print RIS/ICS')
 
 @app.route('/reports')
 def reports():

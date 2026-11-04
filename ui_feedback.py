@@ -1,6 +1,26 @@
 """Shared, conservative notification semantics and non-sensitive error pages."""
 import re
-from flask import get_flashed_messages, jsonify, render_template, request
+import secrets
+from flask import current_app, get_flashed_messages, jsonify, render_template, request
+from psycopg import Error as DatabaseError
+
+
+def database_failure(error):
+    """Report an unconfirmed database operation without driver text or retries."""
+    reference = secrets.token_hex(8)
+    sqlstate = getattr(error, 'sqlstate', None)
+    sqlstate = sqlstate if isinstance(sqlstate, str) and re.fullmatch(r'[0-9A-Z]{5}', sqlstate) else 'UNKNOWN'
+    current_app.logger.warning('Database operation unavailable [DATABASE_OPERATION_FAILED] sqlstate=%s reference=%s',
+                               sqlstate, reference)
+    message = 'The database operation could not be confirmed. Reopen the latest record before retrying. Reference: ' + reference
+    if request.is_json or request.accept_mimetypes.best == 'application/json':
+        response = jsonify(saved=None, message=message, reference=reference, status=503)
+        response.status_code = 503
+    else:
+        response = current_app.make_response((render_template('operation_error.html', active='',
+            title='Operation needs attention', message=message, status=503), 503))
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
 
 
 def notification_category(category,message):
@@ -16,6 +36,7 @@ def notification_category(category,message):
 
 
 def register(app):
+    app.register_error_handler(DatabaseError, database_failure)
     def messages(with_categories=False,category_filter=()):
         pairs=get_flashed_messages(with_categories=True,category_filter=category_filter)
         values=[(notification_category(category,message),message) for category,message in pairs]

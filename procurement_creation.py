@@ -8,6 +8,7 @@ runs outside the transaction, followed by locked source revalidation.
 from contextlib import contextmanager
 import json
 import re
+import unicodedata
 from flask import abort, flash, redirect, url_for
 
 RELATIONSHIPS = {('app_plan','pr','app_id'), ('aoq','po','aoq_id'),
@@ -27,7 +28,13 @@ def locked_parent(api, table, identifier, child, foreign_key):
         yield con, parent, existing
 
 
-def create_pr(api, identifier):
+def create_pr(api, identifier, purpose=None):
+    purpose = '' if purpose is None else purpose
+    if (not isinstance(purpose, str) or len(purpose) > 2000
+            or any(unicodedata.category(char) == 'Cc' and char not in '\n\r\t' for char in purpose)):
+        flash('Enter a purpose of at most 2,000 characters without unsupported control characters.')
+        return redirect(url_for('pr'))
+    purpose = purpose.strip()
     with locked_parent(api, 'app_plan', identifier, 'pr', 'app_id') as (con, row, existing):
         if existing or not row or row['status'] != 'Approved':
             flash('Select an approved APP without an existing Purchase Request. No duplicate was created.')
@@ -46,7 +53,7 @@ def create_pr(api, identifier):
         if total is None or total <= 0:abort(422, description='The approved APP total is invalid.')
         con.execute('''insert into pr(no,app_id,ppmp_id,office,purpose,status,created_at,items,total)
             values(?,?,?,?,?,'For Review',?,?,?)''',
-            (no,row['id'],row['ppmp_id'],row['office'],api['source_pr_purpose'](items),api['now'](),
+            (no,row['id'],row['ppmp_id'],row['office'],purpose or api['source_pr_purpose'](items),api['now'](),
              json.dumps(pr_items,default=str),total))
         api['log']('Created PR','PR',no,f'Created from approved APP {row["no"]}; source PPMP {source["no"]}; {len(items)} item(s)',connection=con)
     flash(f'Purchase Request {no} created from approved APP {row["no"]}.')

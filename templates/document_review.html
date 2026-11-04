@@ -115,7 +115,7 @@
 {% if section.optional %}</details>{% endif %}
 {% endfor %}
 
-{% if procurement_display %}
+{% if procurement_display and active != 'pr' %}
 <details class="card advanced-box"><summary>Advanced diagnostics and retained source evidence</summary>
 {% for section in item_sections %}{% for item in section['items'] %}
 <details><summary>{{ section.title }} · {{ item.line_id }}</summary>
@@ -131,7 +131,7 @@
   </details>
 </div>
 {% endfor %}
-{% if procurement_display %}</details>{% endif %}
+{% if procurement_display and active != 'pr' %}</details>{% endif %}
 
 {% if active == 'nlp' and pricing_diagnostics %}
 {% include 'pricing_diagnostics.html' %}

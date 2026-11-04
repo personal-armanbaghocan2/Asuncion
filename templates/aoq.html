@@ -22,6 +22,7 @@
   </form>
   {% if not prs %}<p class="muted">No approved PR is available. Approve a PR first.</p>{% endif %}
 </div>
+{% include 'aoq_quotations.html' %}
 
 {% if ocr_data and not ocr_data.get('offer_review_token') %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="prepare_preview"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><p class="notice">Resume the saved quotation review before continuing.</p><button class="btn" type="submit">Resume review</button></form>{% endif %}
 {% if ocr_data and selected_pr %}
@@ -116,7 +117,6 @@
 {% endblock %}
 
 {% block scripts %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>
-{% include 'aoq_quotations.html' %}
 {% if ocr_data %}
 <script>
 (function(){
