@@ -485,6 +485,59 @@ def aoq_upload(api):
     flash('Extraction saved privately. Edit and explicitly confirm the reviewed quotation before official saving.')
     return redirect(url_for('aoq',draft_id=did))
 
+def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
+    """Proposed save adapter. Current authentication/CSRF/navigation remain outside this helper."""
+    corrections=[{key:supplier[key] for key in ('supplier','amount','remarks')} for supplier in suppliers]
+    # Numeric strings preserve Python's shortest binary64 representation, including
+    # signed zero, across PostgreSQL JSONB's numeric normalization.
+    wire_items=[dict(item,**{key:str(item[key]) for key in ('qty','unit_cost','amount')}) for item in items]
+    expected_revision=None if preview.get('_status')=='CONFIRMED' else revision(request.form.get('draft_revision'))
+    try:
+        with transaction(api,read_committed=True) as (con,uid):
+            con.execute("SET LOCAL lock_timeout = '5s'")
+            con.execute("SET LOCAL statement_timeout = '10s'")
+            result=con.execute('''select aoq_id,aoq_no,created,draft_revision
+                from psms_aoq_api.save_reviewed_aoq_v1(
+                    ?::uuid,?::bigint,?::text,?::integer,?::jsonb,?::jsonb,?::text,?::text,?::boolean)''',
+                (preview['draft_id'],expected_revision,
+                 request.form.get('offer_review_token'),index,payload(corrections),payload(wire_items),custom,remarks,
+                 request.form.get('confirm_reviewed')=='yes')).fetchone()
+            if (not result or type(result['aoq_id']) is not int or result['aoq_id']<=0
+                    or not isinstance(result['aoq_no'],str) or type(result['created']) is not bool
+                    or type(result['draft_revision']) is not int or result['draft_revision']<=0):
+                raise RuntimeError('AOQ receipt unavailable')
+    except HTTPException:
+        raise
+    except Exception as error:
+        code=getattr(error,'sqlstate',None)
+        known={
+            'PA001':(400,'Correct the reviewed quotation and explicitly confirm it before saving.'),
+            'PA002':(409,'This draft or its PR changed. Reopen the saved review before continuing.'),
+            'PA003':(403,'Your active account session is required.'),
+            'PA004':(404,'The requested record is unavailable.'),
+        }
+        if code in known:
+            status,message=known[code];abort(status,description=message)
+        # Commit/cleanup failures can have unknown outcomes. Never say saved=False,
+        # retry automatically, expose driver text, or clear the private receipt pointer.
+        reference=uuid.uuid4().hex[:16]
+        safe_code=code if isinstance(code,str) and re.fullmatch(r'[0-9A-Z]{5}',code) else 'UNKNOWN'
+        current_app.logger.warning('AOQ save outcome unconfirmed sqlstate=%s reference=%s',safe_code,reference)
+        message='AOQ saving could not be confirmed. Reopen the existing saved draft before retrying. Reference: '+reference
+        if request.accept_mimetypes.best=='application/json':
+            response=jsonify(saved=None,message=message,reference=reference);response.status_code=503
+        else:
+            from flask import render_template,make_response
+            response=make_response(render_template('operation_error.html',active='',title='Operation needs attention',message=message,status=503),503)
+        response.headers['Cache-Control']='private, no-store'
+        return response
+    session.pop('aoq_draft_id',None)
+    flash('Confirmed AOQ saved in PostgreSQL; procurement approval remains separate.' if result['created'] else
+          'This confirmed AOQ is already saved. No duplicate was created.')
+    return redirect(url_for('aoq_review',id=result['aoq_id']))
+
+
+
 def aoq_post(api):
     action=request.form.get('action') or 'extract_ocr'
     if action=='extract_ocr':return aoq_upload(api)
@@ -493,8 +546,7 @@ def aoq_post(api):
     if not preview:abort(404)
     did=preview['draft_id']
     if action=='save_ocr' and preview['_status']=='CONFIRMED':
-        flash('This confirmed AOQ is already saved. No duplicate was created.')
-        return redirect(url_for('aoq_review',id=preview['_official_id']))
+        return aoq_save_function(api,preview,[],[],-1,'','')
     if preview['_status']!='REVIEW':abort(409)
     if preview['draft_revision']!=revision(request.form.get('draft_revision')):
         abort(409,description='Draft changed. Reopen Review before saving.')
@@ -523,42 +575,20 @@ def aoq_post(api):
         if error:abort(400,description=error)
         amount=round(reviewed_total(items),2)
         if amount<=0:abort(400,description='Reviewed total must be positive.')
+        return aoq_save_function(api,preview,suppliers,items,index,custom,remarks)
     elif action not in ('clear_ocr','prepare_preview'):abort(400)
     with transaction(api) as (con,uid):
         # Parent lock before draft lock: independent drafts for one PR cannot
         # race the one-official-AOQ check. No OCR/file processing occurs here.
         pr=con.execute('select * from pr where id=? for update',(preview['pr_id'],)).fetchone()
         row=con.execute('select * from psms_documents.aoq_drafts where id=? and owner_id=? for update',(did,uid)).fetchone()
-        if row['status']=='CONFIRMED' and action=='save_ocr':
-            official=row['official_aoq_id']
+        if row['status']!='REVIEW' or row['revision']!=revision(request.form.get('draft_revision')):abort(409,description='Draft changed. Reopen Review before saving.')
+        if action=='clear_ocr':
+            con.execute("update psms_documents.aoq_drafts set status='CANCELLED',revision=revision+1,updated_at=clock_timestamp() where id=?",(did,))
+            audit(api,con,'Cancelled Own OCR Draft','AOQ',did)
         else:
-            if row['status']!='REVIEW' or row['revision']!=revision(request.form.get('draft_revision')):abort(409,description='Draft changed. Reopen Review before saving.')
-            if action=='save_ocr':
-                if not pr or pr['status']!='Approved' or con.execute('select 1 from aoq where pr_id=?',(pr['id'],)).fetchone():abort(409,description='The PR is no longer available for this AOQ.')
-                no=api['next_document_no']('AOQ','AOQ','aoq',connection=con)
-                items=api['assign_item_identifiers'](items,'_AOQ Item ID',no)
-                matched=False
-                for i,supplier in enumerate(suppliers):
-                    supplier['is_winner']=i==index or api['_norm_text'](supplier.get('supplier'))==api['_norm_text'](winner)
-                    if supplier['is_winner']:supplier.update(items=items,amount=amount);matched=True
-                if not matched:suppliers.append(dict(supplier=winner,amount=amount,remarks=remarks,is_winner=True,items=items))
-                profile={key:preview.get(key) for key in ('document_type','extraction_method','confidence','table_count','parsed_table_sources','detected_tables')}
-                official=con.execute('''insert into aoq(no,pr_id,status,created_at,suppliers,winner,winning_amount,winning_offer,ocr_filename,ocr_text,
-                    stored_filename,source_type,extraction_method,extraction_profile,extraction_warnings)
-                    values(?,?,'For Review',?,?,?,?,?,?,?,?,?,?,?,?) returning id''',
-                    (no,pr['id'],api['now'](),payload(suppliers),winner,amount,payload(items),preview.get('ocr_filename',''),preview.get('raw_text',''),'',
-                     preview.get('document_type',''),preview.get('extraction_method',''),payload(profile),payload(preview.get('warnings') or []))).fetchone()['id']
-                con.execute("update psms_documents.aoq_drafts set status='CONFIRMED',official_aoq_id=?,revision=revision+1,updated_at=clock_timestamp() where id=?",(official,did))
-                audit(api,con,'Created AOQ from Confirmed OCR','AOQ',no)
-            elif action=='clear_ocr':
-                con.execute("update psms_documents.aoq_drafts set status='CANCELLED',revision=revision+1,updated_at=clock_timestamp() where id=?",(did,))
-                audit(api,con,'Cancelled Own OCR Draft','AOQ',did)
-            else:
-                con.execute('update psms_documents.aoq_drafts set payload=?::jsonb,revision=revision+1,updated_at=clock_timestamp() where id=?',(payload(preview),did))
-                audit(api,con,'Reviewed Private OCR Draft','AOQ',did)
-    if action=='save_ocr':
-        session.pop('aoq_draft_id',None);flash('Confirmed AOQ saved in PostgreSQL; procurement approval remains separate.')
-        return redirect(url_for('aoq_review',id=official))
+            con.execute('update psms_documents.aoq_drafts set payload=?::jsonb,revision=revision+1,updated_at=clock_timestamp() where id=?',(payload(preview),did))
+            audit(api,con,'Reviewed Private OCR Draft','AOQ',did)
     if action=='clear_ocr':session.pop('aoq_draft_id',None)
     flash('Private review updated. No inventory quantity was changed.')
     return redirect(url_for('aoq',**({} if action=='clear_ocr' else dict(draft_id=did))))
