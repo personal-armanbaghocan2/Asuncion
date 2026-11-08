@@ -1,0 +1,6 @@
+<section class="card"><h3>Source item and technical checks</h3><p><b>{{comparison.technical_status}}</b> — semantic similarity never overrides a technical discrepancy. Candidate matches require explicit human correspondence.</p>
+<div class="table-wrap"><table class="table"><thead><tr><th>PR item</th><th>PO item</th><th>Correspondence</th><th>Attribute</th><th>Requested evidence</th><th>Offered evidence</th><th>Finding</th></tr></thead><tbody>
+{% for line in comparison.rows %}{% for check in line.checks %}<tr><td>{{line.pr_position}}</td><td>{{line.po_position or 'Unresolved'}}</td><td>{{line.identity}}</td><td>{{check.attribute}}</td><td class="source-value">{{check.requested}}</td><td class="source-value">{{check.offered}}</td><td>{{check.state}}{{' (conditional on item identity)' if check.conditional_on_identity}}</td></tr>{% else %}<tr><td>{{line.pr_position}}</td><td colspan="6">No established corresponding PO item. Review missing or ambiguous items.</td></tr>{% endfor %}{% endfor %}
+</tbody></table></div>
+{% if comparison.extra_or_unallocated_items %}<p class="warning-box">Extra or unallocated PO positions: {{comparison.extra_or_unallocated_items|join(', ')}}. They cannot silently disappear from verification.</p>{% endif %}
+</section>

@@ -398,19 +398,22 @@ _WORKFLOW = """WITH owned_ppmp AS (
  SELECT official_ppmp_id AS id FROM public.ppmp_ocr_drafts WHERE source_id=? AND owner_id=? AND official_ppmp_id IS NOT NULL
 ), owned_aoq AS (
  SELECT official_aoq_id AS id,pr_id FROM psms_documents.aoq_drafts WHERE source_id=? AND owner_id=?
+), related_pr AS (
+ SELECT pr_id AS id FROM owned_aoq WHERE pr_id IS NOT NULL
+ UNION SELECT p.pr_id FROM public.po p WHERE p.aoq_id IN (SELECT id FROM owned_aoq) AND p.pr_id IS NOT NULL
 ), lp AS (
  SELECT p.id,p.no,p.status,p.created_at FROM public.ppmp p WHERE p.id IN (SELECT id FROM owned_ppmp)
- OR p.id IN (SELECT r.ppmp_id FROM public.pr r WHERE r.id IN (SELECT pr_id FROM owned_aoq))
- OR p.id IN (SELECT a.ppmp_id FROM public.app_plan a JOIN public.pr r ON r.app_id=a.id WHERE r.id IN (SELECT pr_id FROM owned_aoq))
+ OR p.id IN (SELECT r.ppmp_id FROM public.pr r WHERE r.id IN (SELECT id FROM related_pr))
+ OR p.id IN (SELECT a.ppmp_id FROM public.app_plan a JOIN public.pr r ON r.app_id=a.id WHERE r.id IN (SELECT id FROM related_pr))
 ), la AS (
  SELECT a.id,a.no,a.status,a.created_at FROM public.app_plan a WHERE a.ppmp_id IN (SELECT id FROM owned_ppmp)
- OR a.id IN (SELECT app_id FROM public.pr WHERE id IN (SELECT pr_id FROM owned_aoq))
+ OR a.id IN (SELECT app_id FROM public.pr WHERE id IN (SELECT id FROM related_pr))
 ), lr AS (
  SELECT r.id,r.no,r.status,r.created_at FROM public.pr r WHERE r.ppmp_id IN (SELECT id FROM owned_ppmp)
- OR r.app_id IN (SELECT id FROM la WHERE EXISTS(SELECT 1 FROM owned_ppmp)) OR r.id IN (SELECT pr_id FROM owned_aoq)
+ OR r.app_id IN (SELECT id FROM la WHERE EXISTS(SELECT 1 FROM owned_ppmp)) OR r.id IN (SELECT id FROM related_pr)
 ), lq AS (
  SELECT a.id,a.no,a.status,a.created_at FROM public.aoq a WHERE a.id IN (SELECT id FROM owned_aoq)
- OR (EXISTS(SELECT 1 FROM owned_ppmp) AND a.pr_id IN (SELECT id FROM lr))
+ OR (EXISTS(SELECT 1 FROM owned_ppmp) AND (a.pr_id IN (SELECT id FROM lr) OR EXISTS(SELECT 1 FROM public.po p WHERE p.aoq_id=a.id AND p.pr_id IN (SELECT id FROM lr))))
 ), lo AS (
  SELECT p.id,p.no,p.status,p.created_at FROM public.po p WHERE p.aoq_id IN (SELECT id FROM lq)
 ), li AS (

@@ -1,3 +1,4 @@
+import revised_procurement_v1 as revised_procurement
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, Response, abort, jsonify
 import os, json, datetime, random, re, shutil, csv, io, secrets
 from decimal import Decimal, InvalidOperation
@@ -1635,7 +1636,7 @@ def next_available_records(kind=None):
                        join nlp n on n.po_id=p.id
                        left join iar i on i.po_id=p.id
                        where i.id is null
-                         and n.status='Approved'
+                         and p.status='Approved' and n.status='Approved'
                          and n.result in ('Acceptable','Needs Review')
                        order by p.id desc''') if kind in (None, 'iar') else []
     return ppmps, apps, prs, aoqs, pos_for_nlp, pos_for_iar
@@ -1643,7 +1644,8 @@ def next_available_records(kind=None):
 def trace_for_po(po_row):
     if not po_row: return {}
     aoq_row = q('select * from aoq where id=?',(po_row['aoq_id'],),one=True)
-    pr_row = q('select * from pr where id=?',(aoq_row['pr_id'],),one=True) if aoq_row else None
+    pr_id = po_row.get('pr_id') or (aoq_row.get('pr_id') if aoq_row else None)
+    pr_row = q('select * from pr where id=?',(pr_id,),one=True) if pr_id else None
     app_row = q('select * from app_plan where id=?',(pr_row['app_id'],),one=True) if pr_row and pr_row['app_id'] else None
     ppmp_row = None
     if pr_row and 'ppmp_id' in pr_row.keys() and pr_row['ppmp_id']:
@@ -3081,6 +3083,8 @@ def pr_review(id):
 
 @app.route('/pr/<int:id>/approve', methods=['POST'])
 def pr_approve(id):
+    if revised_procurement.enabled(globals()):
+        return revised_procurement.approve_pr(globals(),id)
     row = q('select * from pr where id=?', (id,), one=True)
     if not row:
         flash('PR record not found.')
@@ -3162,7 +3166,7 @@ def aoq():
             selected_pr = dict(selected_pr_row)
             selected_pr['items_list'] = parse_items(selected_pr.get('items'))
     return render_template(
-        'aoq.html', active='aoq', rows=rows, prs=pr_previews,
+        'aoq.html', independent_aoq=revised_procurement.enabled(globals()), active='aoq', rows=rows, prs=pr_previews,
         ocr_data=ocr_data or None, selected_pr=selected_pr, title='AOQ',
         history=document_history.listing(globals(),'aoq'),quotation_view=aoq_quotation_page(ocr_data or {}),
         supported_aoq_formats=', '.join(sorted(x.upper().lstrip('.') for x in ALLOWED_OCR_EXTENSIONS)),
@@ -3242,6 +3246,8 @@ def aoq_source_file(id):
 
 @app.route('/aoq/<int:id>/approve', methods=['POST'])
 def aoq_approve(id):
+    if revised_procurement.enabled(globals()):
+        return revised_procurement.approve_aoq(globals(),id)
     from aoq_flexible import winning_offer_error, winning_total_error
     guard = require_review_confirmation('aoq_review', id)
     if guard:
@@ -3275,7 +3281,7 @@ def po():
     rows=paged_q("""select p.*, aq.no aoq_no, aq.winner, r.no pr_no
               from po p
               left join aoq aq on aq.id=p.aoq_id
-              left join pr r on r.id=aq.pr_id
+              left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
               order by p.id desc""")
     _,_,_,raw_aoqs,_,_ = next_available_records('aoq')
     aoqs=[]
@@ -3297,7 +3303,7 @@ def po_review(id):
                       r.office pr_office
                from po p
                left join aoq aq on aq.id=p.aoq_id
-               left join pr r on r.id=aq.pr_id
+               left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
                where p.id=?''', (id,), one=True)
     if not row:
         flash('PO record not found.')
@@ -3307,7 +3313,7 @@ def po_review(id):
     return render_review_page(
         active='po', title=f'Review PO {d["no"]}', document_type='Purchase Order',
         document_no=d['no'], status=d['status'], created_at=d.get('created_at'),
-        linked_records=[
+        linked_records=([{'label':'PR-PO verification','value':'Review sources before final PO approval','url':url_for('nlp')}] if revised_procurement.enabled(globals()) else [])+[
             {'label': 'Related PR', 'value': d.get('pr_no') or 'No linked PR'},
             {'label': 'Source AOQ', 'value': d.get('aoq_no') or 'No linked AOQ'},
         ],
@@ -3326,15 +3332,17 @@ def po_review(id):
                            'Original requirements. Item correspondence remains subject to separate review.', optional=True),
         ],
         approve_url=url_for('po_approve', id=id), approve_label=f'Approve PO {d["no"]}',
-        approval_effect='Approval locks this PO and makes the linked PR–PO pair available for NLP Verification.',
+        approval_effect='Final approval requires a recorded authorized PR-PO relationship and reviewed NLP evidence.',
         back_url=url_for('po'), print_url=url_for('po_print', id=id),
-        can_approve=d.get('status') != 'Approved',
+        can_approve=d.get('status') != 'Approved' and (not revised_procurement.enabled(globals()) or revised_procurement.po_has_review(globals(),id)),
         approval_details=[('PO', d['no']), ('Supplier', d.get('supplier') or 'Not recorded'),
                           ('Linked AOQ', d.get('aoq_no') or 'Not linked'), ('Amount', money_text(d.get('total')))],
     )
 
 @app.route('/po/<int:id>/approve', methods=['POST'])
 def po_approve(id):
+    if revised_procurement.enabled(globals()):
+        return revised_procurement.approve_po(globals(),id)
     guard = require_review_confirmation('po_review', id)
     if guard:
         return guard
@@ -3404,6 +3412,8 @@ def nlp_item_comparison(pr_items_json, po_items_json):
 
 @app.route('/nlp', methods=['GET','POST'])
 def nlp():
+    if revised_procurement.enabled(globals()):
+        return revised_procurement.nlp_page(globals())
     if request.method=='POST':
         if request.form.get('action') == 'compare':
             if not app.config['PR_PO_ITEM_COMPARISON_ENABLED']:
@@ -3484,11 +3494,13 @@ def nlp_review(id):
                from nlp n
                join po p on p.id=n.po_id
                left join aoq aq on aq.id=p.aoq_id
-               left join pr r on r.id=aq.pr_id
+               left join pr r on r.id=coalesce(n.pr_id,p.pr_id,aq.pr_id)
                where n.id=?''', (id,), one=True)
     if not row:
         flash('NLP result not found.')
         return redirect(url_for('nlp'))
+    if row.get('workflow_version') == 1:
+        return revised_procurement.modern_review(globals(),dict(row))
     d = dict(row)
     try:
         details = json.loads(d.get('details') or '{}')
@@ -3540,6 +3552,10 @@ def nlp_approve(id):
     if not row:
         flash('NLP result not found.')
         return redirect(url_for('nlp'))
+    if row.get('workflow_version') == 1:
+        if not revised_procurement.enabled(globals()):
+            abort(409,description='The revised workflow is currently disabled.')
+        return revised_procurement.approve_verification(globals(),dict(row))
     guard = require_review_confirmation('nlp_review', id)
     if guard:
         return guard
@@ -3577,7 +3593,7 @@ def iar():
               left join po p on p.id=i.po_id
               left join nlp n on n.po_id=p.id
               left join aoq aq on aq.id=p.aoq_id
-              left join pr r on r.id=aq.pr_id
+              left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
               order by i.id desc''')
     _,_,_,_,_,raw_pos = next_available_records('iar')
     pos=[]
@@ -3599,7 +3615,7 @@ def iar_review(id):
                from iar i
                join po p on p.id=i.po_id
                left join aoq aq on aq.id=p.aoq_id
-               left join pr r on r.id=aq.pr_id
+               left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
                left join nlp n on n.po_id=p.id and n.status='Approved'
                where i.id=? order by n.id desc limit 1''', (id,), one=True)
     if not row:
