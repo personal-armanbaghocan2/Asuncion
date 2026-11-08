@@ -1,0 +1,23 @@
+{% extends 'base.html' %}{% block content %}
+<div class="toolbar page-head"><h2>PR–PO NLP Verification</h2><span class="badge {{'ok' if model_state.active else 'bad'}}">Trained model {{'available' if model_state.active else 'unavailable'}}</span></div>
+<p>Choose the original Approved PR and the PO For Review independently. Existing official links must agree. NLP and technical findings assist human review; they do not approve procurement.</p>
+{% if not model_state.active %}<p class="warning-box">{{model_state.message}} No substitute or invented result will be saved.</p>{% endif %}
+<form method="post" class="source-bar"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label class="wide-field">Original Approved PR<select name="pr_id" required aria-label="Original Approved PR"><option value="">Select Approved PR</option>{% for r in prs %}<option value="{{r.id}}" {{'selected' if selected_pr and selected_pr.id==r.id}}>{{r.no}} · {{r.office}}</option>{% endfor %}</select></label>
+<label class="wide-field">Created PO For Review<select name="po_id" required aria-label="Created PO For Review"><option value="">Select PO</option>{% for p in pos %}<option value="{{p.id}}" {{'selected' if selected_po and selected_po.id==p.id}}>{{p.no}} · {{p.supplier}}{{' · verification already saved' if p.has_verification}}</option>{% endfor %}</select></label>
+<button class="btn blue" name="action" value="compare">Display original items</button>
+<button class="btn primary" name="action" value="run" data-confirm="Run the installed trained model and record this PR–PO verification for human review?" {{'disabled' if not model_state.active}}>Run and save NLP verification</button>
+</form>
+{% if selected_pr and selected_po %}
+<div class="revised-source-grid">
+{% for side,document,items in [('PR',selected_pr,pr_items),('PO',selected_po,po_items)] %}
+<section class="card"><h3>{{side}}: {{document.no}}</h3><p>{{document.status}}</p>
+{% for item in items %}<article class="card"><h4>{{side}} item {{loop.index}}</h4><dl>{% for key,value in item.items() if not key.startswith('_') %}<dt><b>{{key}}</b></dt><dd class="source-value">{{value}}</dd>{% endfor %}</dl></article>{% else %}<p>No source items. Verification is blocked.</p>{% endfor %}</section>
+{% endfor %}</div>
+{% if comparison %}{% include 'revised_technical_findings.html' %}{% endif %}
+{% endif %}
+<h3>Saved verifications</h3><div class="table-wrap"><table class="table"><thead><tr><th>Verification</th><th>Original PR</th><th>PO</th><th>Model result</th><th>Technical findings</th><th>Review</th><th>Action</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{row.no}}</td><td>{{row.pr_no or 'Historical link unavailable'}}</td><td>{{row.po_no}}</td><td>{{row.result}}</td><td>{{row.technical_status or 'Historical record'}}</td><td>{{row.status}}</td><td><a class="btn small blue" href="{{url_for('nlp_review',id=row.id)}}">Review</a></td></tr>{% else %}<tr><td colspan="7">No saved verification records.</td></tr>{% endfor %}
+</tbody></table></div>
+<style>.revised-source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.source-value{white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 .6rem}.revised-source-grid select{width:100%;min-width:0}@media(max-width:850px){.revised-source-grid{grid-template-columns:1fr}}</style>
+{% endblock %}

@@ -1,6 +1,27 @@
 """One short-lived read connection per GET; no cross-request record/auth cache."""
 from copy import deepcopy
-from flask import current_app, g, has_request_context, request
+from flask import abort, current_app, g, has_request_context, request, session
+import json
+import server_sessions_v0_1_0 as sessions
+
+
+def _bind_actor(con):
+    """Bind only the server-validated request identity, transaction locally.
+
+    Public/unauthenticated reads retain their old behavior. Private RLS still
+    validates the active account/session in PostgreSQL; this grants no privilege.
+    No row lock, write, commit, persistent connection state or client role claim.
+    """
+    if not has_request_context():return
+    account=getattr(g,'psms_account',None);uid=session.get('user_id')
+    if (session.get('logged_in') is not True or type(uid) is not int or uid<=0
+            or not account or account.get('id')!=uid or account.get('status')!='Active'
+            or account.get('role') not in ('Admin','Staff','Inspector')):return
+    digest=sessions.token_hash(session.get(sessions.COOKIE_KEY))
+    if not digest:abort(403)
+    con.execute('SET TRANSACTION READ ONLY')
+    con.execute("select set_config('psms.workbook_actor',?,true)",
+                (json.dumps(dict(uid=uid,sid=digest)),))
 
 
 def read(factory,sql,params=(),one=False):
@@ -19,7 +40,10 @@ def read(factory,sql,params=(),one=False):
                 con=factory();g._psms_read_connection=con
                 con.execute('SET TRANSACTION READ ONLY')
                 con.execute("SET LOCAL statement_timeout = '10s'")
-        else:con=factory()
+                _bind_actor(con)
+        else:
+            con=factory()
+            _bind_actor(con)
         rows=con.execute(sql,params).fetchall()
         result=rows[0] if one and rows else None if one else rows
         if shared and one and key is not None and len(cache)<128:
@@ -29,7 +53,9 @@ def read(factory,sql,params=(),one=False):
                 cache[key]=deepcopy(result)
         return result
     finally:
-        if con is not None and not shared:con.close()
+        if con is not None and not shared:
+            try:con.rollback()
+            finally:con.close()
 
 
 def close(error=None):

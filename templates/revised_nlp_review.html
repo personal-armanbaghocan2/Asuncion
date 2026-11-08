@@ -1,0 +1,25 @@
+{% extends 'base.html' %}{% block content %}
+<div class="toolbar page-head"><h2>Review {{row.no}}</h2><a class="btn" href="{{url_for('nlp')}}">Back to verifications</a></div>
+<p><b>Original PR:</b> {{pr.no}} · <b>Created PO:</b> {{po.no}} · <b>AOQ:</b> {{po.aoq_no}}</p>
+<p><b>Trained model result:</b> {{row.result}} · {{row.confidence}}% · <b>Model version:</b> {{row.model_version}} · <b>Review status:</b> {{row.status}}</p>
+{% if stale %}<p class="warning-box">A source changed after inference. This verification cannot authorize the relationship. Original records have not been overwritten.</p>{% endif %}
+<div class="revised-source-grid">
+{% for side,document,items in [('PR',pr,pr_items),('PO',po,po_items)] %}<section class="card"><h3>{{side}} original source items</h3>
+{% for item in items %}<article class="card"><h4>{{side}} item {{loop.index}}</h4><dl>{% for key,value in item.items() if not key.startswith('_') %}<dt><b>{{key}}</b></dt><dd class="source-value">{{value}}</dd>{% endfor %}</dl></article>{% endfor %}</section>{% endfor %}</div>
+{% include 'revised_technical_findings.html' %}
+{% if row.status=='For Review' and not stale %}
+<section class="card"><h3>Authorize the official PR–PO relationship</h3>
+<p>Confirm each corresponding item, original specifications, procurement scope and supporting authorization. The server checks role, active session, approved sources, historical links and technical findings. Independent associations remain blocked until the owner has approved their authorization policy.</p>
+<form method="post" action="{{url_for('nlp_approve',id=row.id)}}" data-confirm="Record this reviewed official PR–PO relationship? Final PO approval remains separate.">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+{% for item in pr_items %}{% set line=comparison.rows[loop.index0] %}<label>PR item {{loop.index}} corresponds to PO item<select name="match_po_position" required><option value="">Confirm correspondence</option>{% for offer in po_items %}<option value="{{loop.index}}" {{'selected' if line.identity=='EXACT_NAME' and line.po_position==loop.index}}>PO item {{loop.index}}: {{offer.get('item',offer.get('Item Name',offer.get('description','Source item')))}}</option>{% endfor %}</select></label>{% endfor %}
+<label>Relationship and procurement-scope justification<textarea name="relationship_reason" minlength="10" maxlength="2000" required></textarea></label>
+<label>Supporting authorization/document reference<input name="evidence_reference" minlength="3" maxlength="500" required></label>
+<label><input type="checkbox" name="review_confirm" value="yes" required> I reviewed all original PR and PO items, specifications, quantities, units and authorized procurement scope.</label>
+<label><input type="checkbox" name="final_confirm" value="yes" required> I explicitly authorize recording this PR–PO relationship using the supporting evidence above.</label>
+<button class="btn primary" type="submit">Record reviewed relationship</button>
+</form></section>
+{% else %}<p>Review remains {{row.status}}. No PO is approved automatically.</p>{% endif %}
+<a class="btn blue" href="{{url_for('po_review',id=po.id)}}">Open separate final PO approval</a>
+<style>.revised-source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.source-value{white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 .6rem}select,textarea{max-width:100%}@media(max-width:850px){.revised-source-grid{grid-template-columns:1fr}}</style>
+{% endblock %}

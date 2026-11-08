@@ -1,3 +1,4 @@
+import revised_procurement_v1 as revised_procurement
 """Owner-bound PostgreSQL OCR review; no user payload in globals/cookies/files."""
 from contextlib import contextmanager
 import hashlib,json,re,secrets,uuid
@@ -440,6 +441,8 @@ def aoq_load(api):
     return result
 
 def aoq_upload(api):
+    if revised_procurement.enabled(api):
+        return revised_procurement.upload_aoq(api)
     from nlp_runtime_selection import require_available
     require_available(getattr(api.get('app'),'config',{}))
     try:pr_id=int(request.form.get('pr_id',''))
@@ -496,8 +499,9 @@ def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
         with transaction(api,read_committed=True) as (con,uid):
             con.execute("SET LOCAL lock_timeout = '5s'")
             con.execute("SET LOCAL statement_timeout = '10s'")
-            result=con.execute('''select aoq_id,aoq_no,created,draft_revision
-                from psms_aoq_api.save_reviewed_aoq_v1(
+            saver='save_reviewed_aoq_independent_v1' if preview.get('pr_id') is None else 'save_reviewed_aoq_v1'
+            result=con.execute(f'''select aoq_id,aoq_no,created,draft_revision
+                from psms_aoq_api.{saver}(
                     ?::uuid,?::bigint,?::text,?::integer,?::jsonb,?::jsonb,?::text,?::text,?::boolean)''',
                 (preview['draft_id'],expected_revision,
                  request.form.get('offer_review_token'),index,payload(corrections),payload(wire_items),custom,remarks,
@@ -580,7 +584,9 @@ def aoq_post(api):
     with transaction(api) as (con,uid):
         # Parent lock before draft lock: independent drafts for one PR cannot
         # race the one-official-AOQ check. No OCR/file processing occurs here.
-        pr=con.execute('select * from pr where id=? for update',(preview['pr_id'],)).fetchone()
+        if preview.get('pr_id') is not None:
+            pr=con.execute("select id from pr where id=? and status='Approved'",(preview['pr_id'],)).fetchone()
+            if not pr:abort(409,description='The linked approved PR changed.')
         row=con.execute('select * from psms_documents.aoq_drafts where id=? and owner_id=? for update',(did,uid)).fetchone()
         if row['status']!='REVIEW' or row['revision']!=revision(request.form.get('draft_revision')):abort(409,description='Draft changed. Reopen Review before saving.')
         if action=='clear_ocr':

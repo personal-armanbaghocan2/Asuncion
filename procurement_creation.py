@@ -22,13 +22,21 @@ def locked_parent(api, table, identifier, child, foreign_key):
     if not re.fullmatch(r'[1-9][0-9]{0,18}', str(identifier or '')) or int(identifier) > 9223372036854775807:
         abort(400, description='Select a valid source document.')
     with api['durable_ocr'].transaction(api, read_committed=True) as (con, uid):
-        parent = con.execute(f'select * from {table} where id=? for update', (identifier,)).fetchone()
+        import revised_procurement_v1 as revised_procurement
+        if table == 'po' and revised_procurement.enabled(api):
+            parent = con.execute('select * from psms_aoq_api.lock_po_for_workflow_v2(?::bigint,?::text)',
+                                 (identifier, child)).fetchone()
+        else:
+            parent = con.execute(f'select * from {table} where id=? for update', (identifier,)).fetchone()
         existing = (con.execute(f'select id,no from {child} where {foreign_key}=? order by id limit 1',
                                (identifier,)).fetchone() if parent else None)
         yield con, parent, existing
 
 
 def create_pr(api, identifier, purpose=None):
+    import revised_procurement_v1 as revised_procurement
+    if revised_procurement.enabled(api):
+        return revised_procurement.create_pr(api,identifier,purpose)
     purpose = '' if purpose is None else purpose
     if (not isinstance(purpose, str) or len(purpose) > 2000
             or any(unicodedata.category(char) == 'Cc' and char not in '\n\r\t' for char in purpose)):
@@ -61,6 +69,9 @@ def create_pr(api, identifier, purpose=None):
 
 
 def create_po(api, identifier):
+    import revised_procurement_v1 as revised_procurement
+    if revised_procurement.enabled(api):
+        return revised_procurement.create_po(api,identifier)
     from aoq_flexible import winning_offer_error, winning_total_error, reviewed_total, review_number
     with locked_parent(api,'aoq',identifier,'po','aoq_id') as (con,row,existing):
         if existing or not row or row['status'] != 'Approved':
@@ -124,9 +135,19 @@ def create_nlp(api, identifier):
 
 
 def create_iar(api, identifier):
+    import revised_procurement_v1 as revised_procurement
+    secure_receiving=revised_procurement.enabled(api)
     with locked_parent(api,'po',identifier,'iar','po_id') as (con,row,existing):
-        eligible=con.execute("""select id from nlp where po_id=? and status='Approved'
-            and result in ('Acceptable','Needs Review') for share""",(identifier,)).fetchone() if row and not existing else None
+        eligible=None
+        if row and not existing:
+            if secure_receiving:
+                # The restricted parent helper validated and share-locked the
+                # approved NLP evidence in this same transaction. The backend
+                # deliberately has no NLP UPDATE privilege for a direct lock.
+                eligible=row
+            else:
+                eligible=con.execute("""select id from nlp where po_id=? and status='Approved'
+                    and result in ('Acceptable','Needs Review') for share""",(identifier,)).fetchone()
         if existing or not row or row['status']!='Approved' or not eligible:
             flash('The selected PO is not eligible for IAR creation or already has an IAR.')
             return redirect(url_for('iar'))
