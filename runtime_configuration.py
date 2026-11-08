@@ -170,6 +170,14 @@ def configure(app):
     if mode in CLOUD_MODES:
         validate_database_configuration(os.environ.get('SUPABASE_DB_URL', ''))
         hosts=[h.strip() for h in os.environ.get('PSMS_TRUSTED_HOSTS','').split(',') if h.strip()]
+                # Trust this exact Vercel deployment URL, not every Vercel domain.
+        if on_vercel():
+            deployment_host = os.environ.get('VERCEL_URL', '').strip().lower()
+            if re.fullmatch(
+                r'asuncion-[a-z0-9-]+-arman-a87f\.vercel\.app',
+                deployment_host
+            ):
+                hosts.append(deployment_host)
         if not hosts:raise RuntimeError('Reviewed staging/production trusted hosts are required.')
         app.config.update(SESSION_COOKIE_SECURE=True,TRUSTED_HOSTS=hosts,DEBUG=False)
     # Forwarded headers remain untrusted. ProxyFix requires separately reviewed
