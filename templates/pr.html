@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
-{% from 'procurement_ui.html' import stages,page_header with context %}
+{% from 'procurement_ui.html' import page_header with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 {{page_header('Purchase Request','Create and approve original requirements from an approved APP. Prepare the AOQ independently.','edit')}}
-{{stages(1)}}
 <section class="card"><h3>Create a purchase request</h3>
 <form action="{{url_for('pr')}}" method="post" class="source-bar pr-source-bar" data-confirm="Create a Purchase Request from the selected approved APP?">{% if workflow_preview %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label>Approved APP<select name="app_id" required data-record-selector="approved APP" data-source-preview="prSource"><option value="">Select approved APP</option>{% for a in apps %}<option value="{{a.id}}" data-search="{{a.search_terms}} {{a.office}}" data-purpose="{{a.purpose}}" data-heading="{{a.no}}" data-detail="{{a.office}} · {{a.ppmp_no}}" data-amount="{{a.total|money}}" data-items="{{a.item_preview}}">{{a.no}} · {{a.item_preview|truncate(55)}} · {{a.office|truncate(30)}} · {{a.total|money}}</option>{% endfor %}</select></label><div class="source-preview" id="prSource" aria-live="polite">Select an approved APP to view its details.</div>

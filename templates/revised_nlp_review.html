@@ -1,12 +1,11 @@
 {% extends 'base.html' %}
-{% from 'procurement_ui.html' import stages,source_items with context %}
+{% from 'procurement_ui.html' import source_items with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 {% set technical_ready = row.technical_status=='MATCH' and comparison.technical_status=='MATCH' %}
 {% set model_allows_review = row.result in ['Acceptable','Needs Review'] %}
 {% set can_authorize = row.status=='For Review' and not stale and technical_ready and model_allows_review and can_review_relationship %}
 <div class="toolbar page-head"><div><h2>PR–PO Relationship Review</h2><p class="muted">{{row.no}} · Document the authorized relationship using the saved verification evidence.</p></div><a class="btn" href="{{url_for('nlp')}}">Back to verifications</a></div>
-{{stages(5)}}
 <section class="card"><div class="linked-record-grid"><div class="linked-record"><span>Approved PR</span><b>{{pr.no}}</b></div><div class="linked-record"><span>Created PO</span><b>{{po.no}}</b></div><div class="linked-record"><span>Source AOQ</span><b>{{po.aoq_no}}</b></div></div></section>
 <div class="review-summary-grid">
   <div class="card review-summary-card"><div class="muted">Saved model result</div><div class="review-summary-value">{{row.result}}</div><small>Confidence: {{row.confidence|round(2) if row.confidence is not none else 'Not recorded'}}{{'%' if row.confidence is not none}}</small></div>

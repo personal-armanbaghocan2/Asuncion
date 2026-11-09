@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% from 'procurement_ui.html' import stages, aoq_icon with context %}
+{% from 'procurement_ui.html' import aoq_icon with context %}
 {% from 'ui.html' import icon %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
@@ -9,7 +9,6 @@
   <div class="procurement-independence-note">{{aoq_icon('info')}}<span><b>AOQ is independent from PR.</b><br>PR–PO matching is handled later in NLP Verification.</span></div>
 </div>
 
-{{stages(2)}}
 <div class="procurement-action-grid">
   <section class="procurement-action-card upload"><span class="procurement-action-icon">{{aoq_icon('upload')}}</span><div><h3>Upload AOQ (Independent)</h3><p>Upload an AOQ or bidding result file<br>(no PR selection required).</p>{% if independent_aoq and not workflow_preview %}<a class="btn primary" href="#aoq-upload-form" data-open-upload>{{aoq_icon('upload')}}Upload AOQ File</a>{% else %}<button class="btn primary" type="button" disabled>{{aoq_icon('upload')}}Upload AOQ File</button>{% endif %}</div></section>
   <section class="procurement-action-card review"><span class="procurement-action-icon">{{aoq_icon('shield')}}</span><div><h3>Review &amp; Approve AOQ</h3><p>Review uploaded quotations, determine the winning supplier, and approve for PO creation.</p><a class="btn blue" href="{{'#aoq-draft-review' if ocr_data and (selected_pr or independent_aoq) else '#aoq-records'}}">{{aoq_icon('check')}}{{'Review Uploaded Quotation' if ocr_data and (selected_pr or independent_aoq) else 'Review AOQ Records'}}</a></div></section>

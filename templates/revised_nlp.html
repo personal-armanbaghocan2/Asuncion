@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
-{% from 'procurement_ui.html' import stages,source_items with context %}
+{% from 'procurement_ui.html' import source_items with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 <div class="toolbar page-head"><div><h2>PR–PO NLP Verification</h2><p class="muted">Select the approved PR and created PO separately. Verification does not approve either document.</p></div><span class="badge {{'ok' if model_state.active else 'bad'}}">Model {{'available' if model_state.active else 'unavailable'}}</span></div>
-{{stages(4)}}
 <section class="card"><h3>Select the documents to verify</h3>
 <p class="muted">{{model_state.get('manifest',{}).get('deployed_model') or 'Configured FastText classifier'}} provides the model prediction. Separate technical checks examine the source specifications, quantities and units. Existing official relationships must agree.</p>
 {% if not model_state.active %}<p class="warning-box">{{model_state.message}} No substitute or invented result will be saved.</p>{% endif %}
