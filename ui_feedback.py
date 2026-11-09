@@ -7,9 +7,9 @@ from werkzeug.exceptions import SecurityError
 
 
 WORKFLOW_UNAVAILABLE = {
-    'PROCUREMENT_RELEASE_CONFIG_INVALID': 'The revised workflow requires its approved Vercel Preview release configuration.',
-    'PROCUREMENT_RELEASE_HOST_MISMATCH': 'Use the approved immutable Preview URL. Localhost and the Production URL cannot use this release capability.',
-    'PROCUREMENT_CAPABILITY_DENIED': 'This Preview deployment is not authorized by the database, or its authorization expired or was revoked.',
+    'PROCUREMENT_RELEASE_CONFIG_INVALID': 'The revised workflow requires its approved Vercel staging release configuration.',
+    'PROCUREMENT_RELEASE_HOST_MISMATCH': 'Use the approved immutable staging URL. Localhost and the official website cannot use this release capability.',
+    'PROCUREMENT_CAPABILITY_DENIED': 'This staging deployment is not authorized by the database, or its authorization expired or was revoked.',
     'PROCUREMENT_POLICY_PENDING': 'The procurement relationship authority or PO numbering policy has not been approved.',
     'PROCUREMENT_CONTRACT_UNAVAILABLE': 'The reviewed procurement SQL contract is missing or incompatible, or its required permissions are unavailable.',
     'PROCUREMENT_DATABASE_UNAVAILABLE': 'The procurement database connection or permissions could not be verified.',
