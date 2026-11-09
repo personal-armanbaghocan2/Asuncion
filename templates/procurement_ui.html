@@ -1,0 +1,21 @@
+{% macro stages(current) -%}
+<nav class="procurement-workflow" aria-label="Procurement workflow stages">
+  <ol>
+    {% for number,label,endpoint in [(1,'Purchase request','pr'),(2,'Independent AOQ','aoq'),(3,'PO for review','po'),(4,'NLP verification','nlp'),(5,'Human review','nlp'),(6,'Final PO approval','po')] %}
+    <li><a href="{{url_for(endpoint)}}" {% if current==number %}aria-current="step"{% endif %}><span class="procurement-stage-number">{{number}}</span><span>{{label}}</span></a></li>
+    {% endfor %}
+  </ol>
+  <p class="muted">PR and AOQ are prepared independently. Their relationship is documented after PR–PO verification.</p>
+</nav>
+{%- endmacro %}
+
+{% macro source_items(label,document,items) -%}
+<section class="card procurement-source-panel">
+  <div class="section-heading-row"><div><span class="review-kicker">{{label}} SOURCE</span><h3>{{document.no}}</h3></div><span class="badge {{'ok' if document.status=='Approved' else 'warn'}}">{{document.status}}</span></div>
+  {% for item in items %}
+  <article class="procurement-source-item"><h4>{{label}} item {{loop.index}}</h4><dl>
+    {% for key,value in item.items() if not key.startswith('_') %}<div><dt>{{key}}</dt><dd class="source-value">{{value if value is not none and value!='' else 'Not recorded'}}</dd></div>{% endfor %}
+  </dl></article>
+  {% else %}<p class="warning-box">No source items are stored. Verification cannot proceed.</p>{% endfor %}
+</section>
+{%- endmacro %}

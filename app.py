@@ -98,6 +98,7 @@ import live_updates
 import request_queries
 import document_history
 import session_navigation
+import revised_workflow_preview
 app.teardown_request(request_queries.close)
 
 def conn():
@@ -2065,6 +2066,7 @@ def ensure():
     g.psms_account = account
     return None
 
+revised_workflow_preview.register(app, globals())
 managed_signatories.register(app, conn, log)
 session_navigation.register(app)
 
@@ -3141,6 +3143,9 @@ def aoq_quotation_page(preview):
 
 @app.route('/aoq', methods=['GET','POST'])
 def aoq():
+    # Verify mode before any GET/POST draft read. GET binds its shared read
+    # connection once; POST also needs the actor before loading its draft.
+    independent_aoq = revised_workflow_preview.active() or revised_procurement.enabled(globals())
     if request.method == 'POST':
         return durable_ocr.protected(durable_ocr.aoq_post, globals())
     raw_aoq_rows = paged_q('''select aq.*, r.no pr_no, r.office pr_office from aoq aq
@@ -3166,7 +3171,7 @@ def aoq():
             selected_pr = dict(selected_pr_row)
             selected_pr['items_list'] = parse_items(selected_pr.get('items'))
     return render_template(
-        'aoq.html', independent_aoq=revised_procurement.enabled(globals()), active='aoq', rows=rows, prs=pr_previews,
+        'aoq.html', independent_aoq=independent_aoq, active='aoq', rows=rows, prs=pr_previews,
         ocr_data=ocr_data or None, selected_pr=selected_pr, title='AOQ',
         history=document_history.listing(globals(),'aoq'),quotation_view=aoq_quotation_page(ocr_data or {}),
         supported_aoq_formats=', '.join(sorted(x.upper().lstrip('.') for x in ALLOWED_OCR_EXTENSIONS)),
@@ -3248,29 +3253,7 @@ def aoq_source_file(id):
 def aoq_approve(id):
     if revised_procurement.enabled(globals()):
         return revised_procurement.approve_aoq(globals(),id)
-    from aoq_flexible import winning_offer_error, winning_total_error
-    guard = require_review_confirmation('aoq_review', id)
-    if guard:
-        return guard
-    if request.form.get('final_confirm') != 'yes':
-        abort(400, description='Explicit final approval confirmation is required.')
-    with durable_ocr.transaction(globals()) as (con, uid):
-        row = con.execute('select * from aoq where id=? for update', (id,)).fetchone()
-        if not row:
-            abort(404)
-        if row['status'] != 'For Review':
-            abort(409, description='AOQ is no longer awaiting approval. Reopen its review page.')
-        items = parse_items(row.get('winning_offer'))
-        error = winning_offer_error(items) or winning_total_error(items, row.get('winning_amount'))
-        if not error and (not isinstance(row.get('winner'), str) or not row['winner'].strip()):
-            error = 'Select the official winning supplier before approving this AOQ.'
-        if error:
-            flash(error)
-            return redirect(url_for('aoq_review', id=id))
-        con.execute("update aoq set status=? where id=? and status='For Review'", ('Approved', id))
-        log('Approved AOQ', 'AOQ', row['no'], 'OCR-created AOQ approved after explicit final confirmation', connection=con)
-    flash('AOQ approved. Continue to Purchase Order generation.')
-    return redirect(url_for('po'))
+    abort(409, description='The replacement procurement workflow is not active. Legacy approval is retired.')
 
 @app.route('/po', methods=['GET','POST'])
 def po():
@@ -3278,10 +3261,10 @@ def po():
 
     if request.method=='POST':
         return procurement_creation.create_po(globals(), request.form.get('aoq_id'))
-    rows=paged_q("""select p.*, aq.no aoq_no, aq.winner, r.no pr_no
+    rows=paged_q(f"""select p.*, aq.no aoq_no, aq.winner, r.no pr_no
               from po p
               left join aoq aq on aq.id=p.aoq_id
-              left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
+              left join pr r on r.id={revised_procurement.pr_reference(globals())}
               order by p.id desc""")
     _,_,_,raw_aoqs,_,_ = next_available_records('aoq')
     aoqs=[]
@@ -3298,12 +3281,12 @@ def po():
 
 @app.route('/po/<int:id>/view')
 def po_review(id):
-    row = q('''select p.*, aq.no aoq_no, aq.winner aoq_winner,
+    row = q(f'''select p.*, aq.no aoq_no, aq.winner aoq_winner,
                       aq.winning_offer aoq_items, r.no pr_no, r.items pr_items,
                       r.office pr_office
                from po p
                left join aoq aq on aq.id=p.aoq_id
-               left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
+               left join pr r on r.id={revised_procurement.pr_reference(globals())}
                where p.id=?''', (id,), one=True)
     if not row:
         flash('PO record not found.')
@@ -3332,7 +3315,7 @@ def po_review(id):
                            'Original requirements. Item correspondence remains subject to separate review.', optional=True),
         ],
         approve_url=url_for('po_approve', id=id), approve_label=f'Approve PO {d["no"]}',
-        approval_effect='Final approval requires a recorded authorized PR-PO relationship and reviewed NLP evidence.',
+        approval_effect=('Final approval requires a recorded authorized PR-PO relationship and reviewed NLP evidence.' if revised_procurement.enabled(globals()) else 'Approval locks this PO and makes the linked PR–PO pair available for NLP Verification.'),
         back_url=url_for('po'), print_url=url_for('po_print', id=id),
         can_approve=d.get('status') != 'Approved' and (not revised_procurement.enabled(globals()) or revised_procurement.po_has_review(globals(),id)),
         approval_details=[('PO', d['no']), ('Supplier', d.get('supplier') or 'Not recorded'),
@@ -3343,21 +3326,7 @@ def po_review(id):
 def po_approve(id):
     if revised_procurement.enabled(globals()):
         return revised_procurement.approve_po(globals(),id)
-    guard = require_review_confirmation('po_review', id)
-    if guard:
-        return guard
-    if request.form.get('final_confirm') != 'yes':
-        abort(400, description='Explicit final approval confirmation is required.')
-    with durable_ocr.transaction(globals()) as (con, uid):
-        row = con.execute('select * from po where id=? for update', (id,)).fetchone()
-        if not row:
-            abort(404)
-        if row['status'] != 'For Review':
-            abort(409, description='PO is no longer awaiting approval. Reopen its review page.')
-        con.execute("update po set status=? where id=? and status='For Review'", ('Approved', id))
-        log('Approved PO', 'PO', row['no'], 'Purchase Order approved after explicit final confirmation', connection=con)
-    flash('PO approved. The procurement process is complete through PO. Open PR–PO NLP Verification when you are ready to continue to receiving and inventory.')
-    return redirect(url_for('po'))
+    abort(409, description='The replacement procurement workflow is not active. Legacy approval is retired.')
 
 @app.route('/po/<int:id>/print')
 def po_print(id):
@@ -3489,12 +3458,12 @@ def nlp_pricing_advisory(record_id):
 
 @app.route('/nlp/<int:id>/view')
 def nlp_review(id):
-    row = q('''select n.*, p.no po_no, p.items po_items, p.supplier,
+    row = q(f'''select n.*, p.no po_no, p.items po_items, p.supplier,
                       aq.no aoq_no, r.no pr_no, r.items pr_items
                from nlp n
                join po p on p.id=n.po_id
                left join aoq aq on aq.id=p.aoq_id
-               left join pr r on r.id=coalesce(n.pr_id,p.pr_id,aq.pr_id)
+               left join pr r on r.id={revised_procurement.pr_reference(globals(),with_nlp=True)}
                where n.id=?''', (id,), one=True)
     if not row:
         flash('NLP result not found.')
@@ -3556,24 +3525,7 @@ def nlp_approve(id):
         if not revised_procurement.enabled(globals()):
             abort(409,description='The revised workflow is currently disabled.')
         return revised_procurement.approve_verification(globals(),dict(row))
-    guard = require_review_confirmation('nlp_review', id)
-    if guard:
-        return guard
-    if row['status'] == 'Approved':
-        flash('NLP result is already approved.')
-        return redirect(url_for('nlp_review', id=id))
-    changed = audited_update('''update nlp set status=?,staff_decision=? where id=?
-        and status is not distinct from ? and result is not distinct from ? and details is not distinct from ?''',
-        ('Approved',row['result'],id,row.get('status'),row.get('result'),row.get('details')),
-        'Approved NLP Result','NLP',row['po_no'],f'Approved prediction: {row["result"]}')
-    if changed != 1:
-        flash('NLP result changed during approval. Reopen its review page.')
-        return redirect(url_for('nlp_review', id=id))
-    if row['result'] in ('Acceptable', 'Needs Review'):
-        flash('NLP result approved. The PO is now available for IAR creation.')
-    else:
-        flash('NLP result approved, but this result blocks IAR and requires corrective procurement action.')
-    return redirect(url_for('nlp'))
+    abort(409, description='Legacy NLP approval is retired. Create and review a new PR-PO verification before final PO approval.')
 
 @app.route('/nlp/algorithms')
 def nlp_algorithms():
@@ -3588,12 +3540,12 @@ def nlp_algorithms():
 def iar():
     if request.method=='POST':
         return procurement_creation.create_iar(globals(), request.form.get('po_id'))
-    rows=paged_q('''select i.*, p.no po_no, p.supplier, n.no nlp_no, aq.no aoq_no, r.no pr_no
+    rows=paged_q(f'''select i.*, p.no po_no, p.supplier, n.no nlp_no, aq.no aoq_no, r.no pr_no
               from iar i
               left join po p on p.id=i.po_id
               left join nlp n on n.po_id=p.id
               left join aoq aq on aq.id=p.aoq_id
-              left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
+              left join pr r on r.id={revised_procurement.pr_reference(globals())}
               order by i.id desc''')
     _,_,_,_,_,raw_pos = next_available_records('iar')
     pos=[]
@@ -3610,12 +3562,12 @@ def iar():
 
 @app.route('/iar/<int:id>/view')
 def iar_review(id):
-    row = q('''select i.*, p.no po_no, p.items po_items, p.supplier,
+    row = q(f'''select i.*, p.no po_no, p.items po_items, p.supplier,
                       aq.no aoq_no, r.no pr_no, n.no nlp_no, n.result nlp_result
                from iar i
                join po p on p.id=i.po_id
                left join aoq aq on aq.id=p.aoq_id
-               left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
+               left join pr r on r.id={revised_procurement.pr_reference(globals())}
                left join nlp n on n.po_id=p.id and n.status='Approved'
                where i.id=? order by n.id desc limit 1''', (id,), one=True)
     if not row:

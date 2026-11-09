@@ -39,6 +39,7 @@ def transaction(api, *, read_committed=False):
             # committed child in its subsequent existence statement.
             con.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
         uid=_active(con)
+        revised_procurement.apply_release_context(con)
         con.execute("select set_config('psms.workbook_actor',?,true)",
                     (json.dumps(dict(uid=uid,sid=sessions.token_hash(session.get(sessions.COOKIE_KEY)))),))
         yield con,uid
@@ -245,7 +246,17 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
 
 def _ppmp_locked(con,uid,ptype,temp_id):
     row=con.execute('select * from ppmp_ocr_drafts where temp_code=? and ppmp_category=? and owner_id=? for update',(temp_id,ptype,uid)).fetchone()
-    if not row:abort(404)
+    if not row and isinstance(temp_id,str) and re.fullmatch(r'OCR-TEMP-[0-9]{1,20}',temp_id):
+        # Older rows can have no stored code. Resolve exactly the fallback
+        # identifier already displayed by _ocr_draft_to_ui, with the same
+        # owner/category checks and row lock. Never replace a populated code.
+        did=int(temp_id.removeprefix('OCR-TEMP-'))
+        if 0<did<=9223372036854775807 and temp_id==f'OCR-TEMP-{did:06d}':
+            row=con.execute("select * from ppmp_ocr_drafts where id=? and (temp_code is null or temp_code='') and ppmp_category=? and owner_id=? for update",(did,ptype,uid)).fetchone()
+    if not row:
+        if getattr(g,'document_stage',None)=='creation_draft_lock':
+            creation_item_error(temp_id,'This saved item is unavailable in this category for your account. Reopen its latest review before creating a PPMP.',404)
+        abort(404)
     if row['status']=='CATEGORY_REVIEW':
         abort(409,description='Confirm the item category in Document Upload and Review before reviewing or saving this draft.')
     return row
@@ -420,8 +431,8 @@ def create_reviewed_ocr(api,ptype,con,uid,ids,creation=None):
 
 
 def creation_item_error(temp_id,message,status=422):
-    from werkzeug.exceptions import UnprocessableEntity,Conflict
-    error=(Conflict if status==409 else UnprocessableEntity)(description=message)
+    from werkzeug.exceptions import UnprocessableEntity,Conflict,NotFound
+    error=({404:NotFound,409:Conflict}.get(status,UnprocessableEntity))(description=message)
     error.creation_item=temp_id if re.fullmatch(r'OCR-TEMP-[0-9]{1,20}',temp_id) else ''
     raise error
 
@@ -499,9 +510,11 @@ def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
         with transaction(api,read_committed=True) as (con,uid):
             con.execute("SET LOCAL lock_timeout = '5s'")
             con.execute("SET LOCAL statement_timeout = '10s'")
+            if preview.get('pr_id') is None and not revised_procurement.enabled(api):
+                abort(409,description='Independent AOQ saving is disabled until its database contract is authorized.')
             saver='save_reviewed_aoq_independent_v1' if preview.get('pr_id') is None else 'save_reviewed_aoq_v1'
             result=con.execute(f'''select aoq_id,aoq_no,created,draft_revision
-                from psms_aoq_api.{saver}(
+                from {revised_procurement.api_schema()}.{saver}(
                     ?::uuid,?::bigint,?::text,?::integer,?::jsonb,?::jsonb,?::text,?::text,?::boolean)''',
                 (preview['draft_id'],expected_revision,
                  request.form.get('offer_review_token'),index,payload(corrections),payload(wire_items),custom,remarks,
@@ -539,7 +552,6 @@ def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
     flash('Confirmed AOQ saved in PostgreSQL; procurement approval remains separate.' if result['created'] else
           'This confirmed AOQ is already saved. No duplicate was created.')
     return redirect(url_for('aoq_review',id=result['aoq_id']))
-
 
 
 def aoq_post(api):
@@ -585,7 +597,10 @@ def aoq_post(api):
         # Parent lock before draft lock: independent drafts for one PR cannot
         # race the one-official-AOQ check. No OCR/file processing occurs here.
         if preview.get('pr_id') is not None:
-            pr=con.execute("select id from pr where id=? and status='Approved'",(preview['pr_id'],)).fetchone()
+            if revised_procurement.enabled(api):
+                pr=con.execute("select id from pr where id=? and status='Approved'",(preview['pr_id'],)).fetchone()
+            else:
+                pr=con.execute('select * from pr where id=? for update',(preview['pr_id'],)).fetchone()
             if not pr:abort(409,description='The linked approved PR changed.')
         row=con.execute('select * from psms_documents.aoq_drafts where id=? and owner_id=? for update',(did,uid)).fetchone()
         if row['status']!='REVIEW' or row['revision']!=revision(request.form.get('draft_revision')):abort(409,description='Draft changed. Reopen Review before saving.')
@@ -610,9 +625,20 @@ def aoq_source(api,did):
 def protected(operation,*args):
     try:return operation(*args)
     except HTTPException as error:
+        reference=None
+        if hasattr(error,'creation_item') and error.code==404:
+            # A missing/hidden draft is an HTTP failure, not a driver exception.
+            # Keep this branch distinguishable in runtime logs without logging
+            # account IDs, item IDs, SQL, tokens or source contents.
+            reference=uuid.uuid4().hex[:16]
+            current_app.logger.warning('Private document failed [DOCUMENT_ITEM_UNAVAILABLE] operation=create stage=creation_draft_lock reference=%s',reference)
         if hasattr(error,'creation_item') and request.accept_mimetypes.best=='application/json':
-            response=jsonify(saved=False,field='item',item=error.creation_item,message=error.description)
-            response.status_code=error.code
+            body=dict(saved=False,field='item',item=error.creation_item,message=error.description)
+            if reference:body['reference']=reference
+            response=jsonify(body);response.status_code=error.code
+            if reference:
+                response.headers['X-PSMS-Diagnostic']='DOCUMENT_ITEM_UNAVAILABLE'
+                response.headers['X-PSMS-Reference']=reference
             response.headers['Cache-Control']='private, no-store'
             return response
         raise

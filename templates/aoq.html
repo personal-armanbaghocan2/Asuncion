@@ -1,40 +1,35 @@
 {% extends 'base.html' %}
+{% from 'procurement_ui.html' import stages with context %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 <div class="toolbar">
-  <div><h2>AOQ / Bidding Result</h2><p class="muted">Upload and review actual AOQ quotations, select one supplier, approve the AOQ, then generate a PO For Review. Select its Approved PR separately in NLP Verification.</p></div>
+  <div><h2>AOQ / Bidding Result</h2><p class="muted">Upload the bidding result independently. Review the quotations and winning supplier, save the AOQ, then approve it before PO creation.</p></div>
 </div>
 
-<div class="workflow-summary">
-  <div class="workflow-summary-item active"><b>1</b><span>{{'Independent Source' if independent_aoq else 'Select PR'}}</span></div>
-  <div class="workflow-summary-item active"><b>2</b><span>Upload AOQ</span></div>
-  <div class="workflow-summary-item {{ 'active' if ocr_data else '' }}"><b>3</b><span>{{'Review AOQ Quotations' if independent_aoq else 'Review PR + AOQ'}}</span></div>
-  <div class="workflow-summary-item"><b>4</b><span>Save Reviewed AOQ</span></div>
-  <div class="workflow-summary-item"><b>5</b><span>Generate PO</span></div>
-</div>
-
+{{stages(2)}}
+{% if not independent_aoq %}<p class="warning-box" role="status">Independent AOQ upload is unavailable until the revised workflow is active. The retired PR-linked upload is not offered here.</p>{% endif %}
 <div class="card" style="margin-top:16px">
-  <div class="step-title"><span>1</span><div><h3>Upload AOQ{% if independent_aoq %} Independently{% else %} for an Approved PR{% endif %}</h3><p class="muted">Supported formats: {{ supported_aoq_formats }}. The layout may be different; the system normalizes detected data into the review form below.</p></div></div>
-  <form method="post" enctype="multipart/form-data" class="compact-upload" data-document-processing data-confirm="Upload and detect this AOQ file?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="step-title"><span>1</span><div><h3>Upload an independent AOQ / bidding result</h3><p class="muted">Supported formats: {{ supported_aoq_formats }}. The layout may be different; the system normalizes detected data into the review form below.</p></div></div>
+  <form method="post" enctype="multipart/form-data" class="compact-upload" data-document-processing action="{{url_for('aoq')}}" data-confirm="Extract the supplier quotations from this independent AOQ file?">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="extract_ocr">
-    <div class="form-field full"><label>Approved Purchase Request{{' (optional existing association)' if independent_aoq}}</label><select name="pr_id" {{'required' if not independent_aoq}} data-record-selector="approved PR" aria-label="Approved Purchase Request"><option value="">{{'Independent AOQ — select PR later in NLP' if independent_aoq else 'Select the exact approved PR'}}</option>{% for r in prs %}<option value="{{r.id}}" data-search="{{r.search_terms}} {{r.office}}">{{r.no}} · {{(r.item_preview or 'Item not named')|truncate(55)}} · {{r.office|truncate(30)}} · {{r.total|money}}</option>{% endfor %}</select></div>
     <div class="form-field full"><label>AOQ / Bidding Result File</label><input name="ocr_file" type="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt" required></div>
     <div class="form-actions full"><button class="btn primary" type="submit">Upload and Detect AOQ</button></div>
-  </form>
-  {% if not prs and not independent_aoq %}<p class="muted">No approved PR is available. Approve a PR first.</p>{% endif %}
+  {% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
+  <p class="muted">No PR selection is required. Choose the approved PR later in NLP verification.</p>
 </div>
 {% include 'aoq_quotations.html' %}
 
-{% if ocr_data and not ocr_data.get('offer_review_token') %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="prepare_preview"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><p class="notice">Resume the saved quotation review before continuing.</p><button class="btn" type="submit">Resume review</button></form>{% endif %}
+{% if ocr_data and not ocr_data.get('offer_review_token') %}<form method="post">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="prepare_preview"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><p class="notice">Resume the saved quotation review before continuing.</p><button class="btn" type="submit">Resume review</button>{% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>{% endif %}
 {% if ocr_data and (selected_pr or independent_aoq) %}
 <div class="card" style="margin-top:16px">
   <div class="toolbar">
-    <div class="step-title"><span>3</span><div><h3>Review the Uploaded AOQ Quotations</h3><p class="muted">This is a private extraction draft. Review and confirm it before saving an official AOQ.</p></div></div>
-    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="clear_ocr"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><button class="btn danger" type="submit">Discard and Upload Another</button></form>
+    <div class="step-title"><span>2</span><div><h3>Review the uploaded supplier quotations</h3><p class="muted">This is a private extraction draft. Review and confirm it before saving an official AOQ.</p></div></div>
+    <form method="post">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="clear_ocr"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><button class="btn danger" type="submit">Discard and Upload Another</button>{% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
   </div>
 
   <div class="comparison-grid">
-    {% if selected_pr %}<section class="comparison-panel">
-      <div class="comparison-head"><span class="badge info">SELECTED PR</span><b>{{selected_pr.no}}</b></div>
+    {% if selected_pr %}<details class="comparison-panel"><summary>Historical PR reference: {{selected_pr.no}}</summary>
+      <div class="comparison-head"><span class="badge info">HISTORICAL PR</span><b>{{selected_pr.no}}</b></div>
       <div class="summary-grid">
         <div><span>Office</span><b>{{selected_pr.office}}</b></div>
         <div><span>PR Total</span><b>{{selected_pr.total|money}}</b></div>
@@ -44,7 +39,7 @@
       <div class="table-scroll"><table class="table compact-table"><tr><th>#</th><th>Requested Item / Specification</th><th>Quantity / Unit</th></tr>
         {% for item in selected_pr.items_list %}<tr><td>{{loop.index}}</td><td><b>{{ item.get('item') or item.get('Article') or item.get('General Description and Objective of the Project to be Procured') or 'Requested Item' }}</b><br><span class="muted">{{ item.get('description') or item.get('Description / Specification') or item.get('Quantity and Size of the Project to be Procured') or '' }}</span></td><td>{{ (item.get('qty') if item.get('qty') is not none else item.get('Quantity') if item.get('Quantity') is not none else item.get('Quantity and Size of the Project to be Procured'))|quantity }} {{ item.get('unit') or item.get('Unit') or '' }}</td></tr>{% endfor %}
       </table></div>
-    </section>{% endif %}
+    </details>{% endif %}
 
     <section class="comparison-panel" {{'style=grid-column:1/-1' if not selected_pr}}>
       <div class="comparison-head"><span class="badge purple">UPLOADED AOQ</span><b>{{ocr_data.ocr_filename}}</b></div>
@@ -56,18 +51,18 @@
         <div><span>Quotation rows</span><b>{{ocr_data.quotation_count|default('Review source')}}</b></div>
         <div><span>Completeness</span><b>{{ocr_data.confidence}}%</b></div>
       </div>
-      <p class="muted">Completeness measures populated AOQ source fields. It does not establish a winning supplier or procurement approval. Linked PR specifications are comparison only.</p>
+      <p class="muted">Completeness measures populated AOQ source fields. It does not establish a winning supplier or procurement approval. PR correspondence is reviewed later against the created PO.</p>
       {% if ocr_data.warnings %}<div class="warning-box"><b>Please review:</b><ul>{% for warning in ocr_data.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}
     </section>
   </div>
 
-  <form method="post" id="aoqReviewForm" data-confirm="Save this reviewed AOQ and the selected winning supplier?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <form method="post" id="aoqReviewForm" data-confirm="Save this reviewed AOQ and the selected winning supplier?">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" id="aoqAction" value="save_ocr">
     <input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}">
     <input type="hidden" name="offer_supplier_index" value="{{ocr_data.offer_supplier_index|default('')}}">
     <input type="hidden" name="offer_review_token" value="{{ocr_data.offer_review_token|default('')}}">
 
-    <div class="aoq-supplier-offer"><section><div class="step-title section-gap"><span>3A</span><div><h3>Supplier quotations ? select the winning supplier</h3><p class="muted">Choose exactly one winner. Supplier names and amounts may be corrected.</p></div></div>
+    <div class="aoq-supplier-offer"><section><div class="step-title section-gap"><span>2A</span><div><h3>Supplier quotations: select the winning supplier</h3><p class="muted">Choose exactly one winner. Supplier names and amounts may be corrected.</p></div></div>
     <div class="table-scroll"><table class="table"><tr><th>Winner</th><th>Supplier / Bidder</th><th>Quotation Total</th><th>Remarks</th><th>Detected Items</th></tr>
       {% for supplier in ocr_data.suppliers %}
       {% set edited = ocr_data.supplier_form[loop.index0] if ocr_data.supplier_form is defined and loop.index0 < ocr_data.supplier_form|length else supplier %}
@@ -84,12 +79,12 @@
     </table></div>
     <div class="form-field" style="margin-top:12px"><label>Manual Winner Name (only when the winner is not in the detected list)</label><input name="winner_custom" value="{{ocr_data.offer_custom_winner|default('')}}" placeholder="Leave blank when a supplier above is selected"></div>
 
-    </section><section><div class="step-title section-gap"><span>3B</span><div><h3>AOQ Quotation Items for Review</h3><p class="muted">These values come from the uploaded AOQ, not the linked PR. Viewing a quotation does not select its supplier as the winner. Saved, approved AOQ items later become the PO items.</p></div></div>
+    </section><section><div class="step-title section-gap"><span>2B</span><div><h3>AOQ Quotation Items for Review</h3><p class="muted">Review the actual item values extracted from the uploaded AOQ. Viewing a quotation does not select its supplier as the winner. Saved, approved AOQ items later become the PO items.</p></div></div>
     {% if not ocr_data.offer_items %}<p class="notice">No quotation is loaded. Choose a supplier above to review its source items, or add verified AOQ items manually. PR fields are not copied into this table.</p>{% endif %}
-    {% if ocr_data.pr_category %}<p class="muted">Linked PR category: {{ocr_data.pr_category}}. Confirm the appropriate category for each quotation item.</p>{% endif %}
+    {% if ocr_data.pr_category %}<p class="muted">Historical PR category: {{ocr_data.pr_category}}. Confirm the appropriate category for each quotation item.</p>{% endif %}
     <div class="table-scroll"><table class="table offer-table"><thead><tr><th>#</th><th>Item</th><th>Description / Specification</th><th>Qty</th><th>Unit</th><th>Unit Price</th><th>Total</th><th>Category</th><th>Remarks</th><th></th></tr></thead><tbody id="offerBody">
       {% for item in ocr_data.offer_items %}
-      <tr><td class="row-number">{{loop.index}}</td><td><input name="offer_item" value="{{item.item}}" required><small class="muted">{{item.source}}</small></td><td><textarea name="offer_description" rows="2" required>{{item.description}}</textarea></td><td><input class="qty-input" name="offer_qty" type="number" step="0.01" value="{{item.qty|quantity if item.qty is not none and item.qty != '' else ''}}" placeholder="Missing" required></td><td><input name="offer_unit" value="{{item.unit}}" placeholder="Missing" required></td><td><input class="cost-input" name="offer_unit_cost" type="number" step="0.01" value="{{item.unit_cost}}" placeholder="Missing — review source" required></td><td><input class="amount-input" name="offer_amount" type="number" step="0.01" value="{{item.amount}}" placeholder="Missing — review source" required></td><td><select name="offer_category"><option value="">Not established</option>{% for category in ['DBM','NON-DBM','LIB'] %}<option {{'selected' if item.get('category')==category}}>{{category}}</option>{% endfor %}</select></td><td><input name="offer_remarks" value="{{item.remarks}}"></td><td><button class="btn small remove-row danger" type="button">Remove</button></td></tr>
+      <tr><td class="row-number">{{loop.index}}</td><td><input name="offer_item" value="{{item.item}}" required><small class="muted">{{item.source}}</small></td><td><textarea name="offer_description" rows="2" required>{{item.description}}</textarea></td><td><input class="qty-input" name="offer_qty" type="number" step="0.01" value="{{item.qty|quantity if item.qty is not none and item.qty != '' else ''}}" placeholder="Missing" required></td><td><input name="offer_unit" value="{{item.unit}}" placeholder="Missing" required></td><td><input class="cost-input" name="offer_unit_cost" type="number" step="0.01" value="{{item.unit_cost}}" placeholder="Missing — review source" required></td><td><input class="amount-input" name="offer_amount" type="number" step="0.01" value="{{item.amount}}" placeholder="Missing — review source" required></td><td><select name="offer_category"><option value="">Not established</option>{% for category in ['DBM','NON-DBM','LIB'] %}<option {{'selected' if (item.get('category') or item.get('source_category'))==category}}>{{category}}</option>{% endfor %}</select></td><td><input name="offer_remarks" value="{{item.remarks}}"></td><td><button class="btn small remove-row danger" type="button">Remove</button></td></tr>
       {% endfor %}
     </tbody></table></div>
     <div class="actions" style="margin-top:10px"><button class="btn primary" type="button" id="addOfferRow">+ Add Item</button></div>
@@ -100,23 +95,23 @@
       <textarea rows="12" readonly>{{ocr_data.raw_text}}</textarea>
     </details>
 
-    <div class="step-title section-gap"><span>4</span><div><h3>Save the Reviewed AOQ</h3><p class="muted">After saving, open the AOQ record below and approve it. The approved AOQ becomes available on the PO page.</p></div></div>
+    <div class="step-title section-gap"><span>3</span><div><h3>Save the Reviewed AOQ</h3><p class="muted">After saving, open the AOQ record below and approve it. The approved AOQ becomes available on the PO page.</p></div></div>
     <label class="full"><input type="checkbox" name="confirm_reviewed" value="yes" required> I reviewed and corrected the extracted quotation and confirm these values for saving. This does not approve procurement or update inventory.</label>
     <div class="form-actions"><button class="btn primary" type="submit">Save reviewed AOQ</button><button type="submit" id="loadSupplierReview" formnovalidate hidden>Load supplier quotation</button></div>
-  </form>
+  {% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
 </div>
 {% endif %}
 
 <div class="card" style="margin-top:16px">
   <div class="step-title"><span>4</span><div><h3>Review and Approve Saved AOQ Records</h3><p class="muted">Only approved AOQ records can be used to generate a PO.</p></div></div>
-  <div class="table-scroll"><table class="table"><tr><th>AOQ</th><th>Linked PR</th><th>Uploaded File</th><th>Winning Supplier</th><th>Winning Amount</th><th>Status</th><th>Next Action</th></tr>
-    {% for r in rows %}<tr><td><span class="id-chip">{{r.no}}</span></td><td class="document-ref">{{r.pr_no}}<br><span class="muted">{{r.pr_office}}</span></td><td>{{r.ocr_filename or 'Legacy record'}}</td><td><b>{{r.winner}}</b><br><span class="muted">{{r.item_preview}}</span></td><td class="numeric">{{r.winning_amount|money}}</td><td><span class="badge {{'ok' if r.status=='Approved' else 'warn'}}">{{r.status}}</span></td><td><a class="btn small blue" href="{{url_for('aoq_review',id=r.id)}}">Review</a>{% if r.status=='Approved' %}<a class="btn small blue" href="{{url_for('po')}}">Continue to PO</a>{% endif %}</td></tr>{% else %}<tr><td colspan="7" class="center muted">No AOQ records yet.</td></tr>{% endfor %}
+  <div class="table-scroll"><table class="table"><tr><th>AOQ</th><th>Historical PR reference</th><th>Uploaded File</th><th>Winning Supplier</th><th>Winning Amount</th><th>Status</th><th>Next Action</th></tr>
+    {% for r in rows %}<tr><td><span class="id-chip">{{r.no}}</span></td><td class="document-ref">{{r.pr_no or 'Independent AOQ'}}<br><span class="muted">{{r.pr_office}}</span></td><td>{{r.ocr_filename or 'Legacy record'}}</td><td><b>{{r.winner}}</b><br><span class="muted">{{r.item_preview}}</span></td><td class="numeric">{{r.winning_amount|money}}</td><td><span class="badge {{'ok' if r.status=='Approved' else 'warn'}}">{{r.status}}</span></td><td><a class="btn small blue" href="{{url_for('aoq_review',id=r.id)}}">Review</a>{% if r.status=='Approved' %}<a class="btn small blue" href="{{url_for('po')}}">Continue to PO</a>{% endif %}</td></tr>{% else %}<tr><td colspan="7" class="center muted">No AOQ records yet.</td></tr>{% endfor %}
   </table></div>
 </div>
-{% include 'document_history.html' %}
+{% if not workflow_preview %}{% include 'document_history.html' %}{% endif %}
 {% endblock %}
 
-{% block scripts %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>
+{% block scripts %}{% if not workflow_preview %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>
 {% if ocr_data %}
 <script>
 (function(){
@@ -152,4 +147,4 @@
 })();
 </script>
 {% endif %}
-{% endblock %}
+{% endif %}{% endblock %}

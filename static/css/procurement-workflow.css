@@ -1,0 +1,31 @@
+/* Procurement pages only. Reuse the approved Asuncion shell and controls. */
+.procurement-workflow { margin: 0 0 20px; }
+.procurement-workflow ol { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; padding: 0; margin: 0; list-style: none; }
+.procurement-workflow a { display: flex; align-items: center; gap: 8px; height: 100%; padding: 10px; border: 1px solid var(--line, #dce5df); border-radius: 6px; background: #fff; color: inherit; font-size: 12px; text-decoration: none; }
+.procurement-workflow a[aria-current="step"] { border-color: #07543c; background: #edf4ef; color: #07543c; font-weight: 650; }
+.procurement-stage-number { display: inline-grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; border-radius: 50%; background: #edf1ee; font-weight: 650; }
+.procurement-workflow a[aria-current="step"] .procurement-stage-number { background: #07543c; color: #fff; }
+.procurement-workflow > p { margin: 9px 0 0; font-size: 12px; }
+.procurement-source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
+.procurement-source-grid > *, .procurement-source-panel { min-width: 0; }
+.procurement-source-item { padding: 14px 0; border-top: 1px solid var(--line, #dce5df); }
+.procurement-source-item h4 { margin: 0 0 10px; }
+.procurement-source-item dl { margin: 0; }
+.procurement-source-item dl > div { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 2fr); gap: 12px; margin: 0 0 8px; }
+.procurement-source-item dt { font-size: 12px; color: var(--muted, #627368); }
+.source-value { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.procurement-page .procurement-evidence-form { display: grid; gap: 14px; }
+.procurement-evidence-form label { display: grid; gap: 6px; }
+.procurement-evidence-form input:not([type="checkbox"]), .procurement-evidence-form select, .procurement-evidence-form textarea { width: 100%; min-width: 0; }
+.procurement-evidence-form .review-confirm-check { display: flex; align-items: flex-start; }
+.procurement-evidence-form .form-actions { margin-top: 0; }
+.procurement-section { margin-top: 18px; }
+.procurement-page .procurement-disabled { opacity: .75; }
+.procurement-page .procurement-disabled fieldset { width: 100%; border: 0; padding: 0; margin: 0; }
+.procurement-evidence-version { overflow-wrap: anywhere; }
+@media (max-width: 1100px) { .procurement-workflow ol { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .procurement-workflow ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .procurement-source-grid { grid-template-columns: minmax(0, 1fr); }
+  .procurement-source-item dl > div { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+}

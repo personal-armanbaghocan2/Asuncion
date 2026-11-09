@@ -22,10 +22,21 @@ def locked_parent(api, table, identifier, child, foreign_key):
     if not re.fullmatch(r'[1-9][0-9]{0,18}', str(identifier or '')) or int(identifier) > 9223372036854775807:
         abort(400, description='Select a valid source document.')
     with api['durable_ocr'].transaction(api, read_committed=True) as (con, uid):
-        import revised_procurement_v1 as revised_procurement
-        if table == 'po' and revised_procurement.enabled(api):
-            parent = con.execute('select * from psms_aoq_api.lock_po_for_workflow_v2(?::bigint,?::text)',
-                                 (identifier, child)).fetchone()
+        if table=='aoq':
+            parent = con.execute('select * from psms_aoq_api.lock_aoq_for_workflow_v1(?::bigint,?::text)',
+                                 (identifier,'po')).fetchone()
+        elif table=='po':
+            import revised_procurement_v1 as revised_procurement
+            if revised_procurement.enabled(api):
+                try:
+                    parent=con.execute('select * from '+revised_procurement.api_schema()+'.lock_po_for_workflow_v2(?::bigint,?::text)',(identifier,child)).fetchone()
+                except Exception as error:
+                    state=getattr(error,'sqlstate',None)
+                    if state in ('PA002','PA003','PA004'):
+                        abort({'PA002':409,'PA003':403,'PA004':404}[state],description='Receiving requires an authorized approved PO and its reviewed verification.')
+                    raise
+            else:
+                parent=con.execute('select * from po where id=? for update',(identifier,)).fetchone()
         else:
             parent = con.execute(f'select * from {table} where id=? for update', (identifier,)).fetchone()
         existing = (con.execute(f'select id,no from {child} where {foreign_key}=? order by id limit 1',
@@ -117,9 +128,11 @@ def create_nlp(api, identifier):
         if existing:
             flash('This PO already has an NLP verification. No duplicate was created.')
             return redirect(url_for('nlp'))
-        linked=con.execute('''select aq.pr_id,r.no pr_no,r.items pr_items from aoq aq
-            join pr r on r.id=aq.pr_id where aq.id=? and aq.status='Approved' and r.status='Approved' for share of aq,r''',
-            (current['aoq_id'],)).fetchone() if current else None
+        locked_aoq=con.execute('select * from psms_aoq_api.lock_aoq_for_workflow_v1(?::bigint,?::text)',
+            (current['aoq_id'],'nlp')).fetchone() if current else None
+        linked=con.execute('''select ?::bigint pr_id,r.no pr_no,r.items pr_items from pr r
+            where r.id=? and r.status='Approved' for share of r''',
+            (locked_aoq['pr_id'],locked_aoq['pr_id'])).fetchone() if locked_aoq else None
         if (not current or current['status']!='Approved' or not linked or
                 any(current.get(key)!=source.get(key) for key in ('items','aoq_id')) or
                 any(linked.get(key)!=source.get(key) for key in ('pr_id','pr_items'))):
