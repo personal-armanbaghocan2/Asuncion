@@ -3163,14 +3163,18 @@ def aoq():
     # connection once; POST also needs the actor before loading its draft.
     independent_aoq = revised_workflow_preview.active() or revised_procurement.enabled(globals())
     if request.method == 'POST':
+        if not independent_aoq:
+            abort(409, description='Independent AOQ operations require the authorized revised workflow.')
         return durable_ocr.protected(durable_ocr.aoq_post, globals())
-    raw_aoq_rows = paged_q('''select aq.*, aq.winning_offer as items,
-                r.no pr_no, r.office pr_office,
-                (select d.source_id from psms_documents.aoq_drafts d
+    # Disabled/pre-expansion installations can still read official AOQ records.
+    # Do not query a missing/private draft contract before revised authorization.
+    source_reference = '''(select d.source_id from psms_documents.aoq_drafts d
                  where d.official_aoq_id=aq.id and d.owner_id=? and d.status='CONFIRMED'
-                 order by d.updated_at desc limit 1) owned_source_id from aoq aq
+                 order by d.updated_at desc limit 1)''' if independent_aoq else 'null'
+    raw_aoq_rows = paged_q('''select aq.*, aq.winning_offer as items,
+                r.no pr_no, r.office pr_office, ''' + source_reference + ''' as owned_source_id from aoq aq
                 left join pr r on r.id=aq.pr_id
-                order by aq.id desc''', (session.get('user_id'),))
+                order by aq.id desc''', (session.get('user_id'),) if independent_aoq else ())
     aoq_counts = q("""select count(*) total,
         count(*) filter(where status='For Review') for_review,
         count(*) filter(where status='Approved') approved from aoq""", one=True)
@@ -3180,7 +3184,7 @@ def aoq():
         d['item_preview']=item_preview_from_json(d.get('winning_offer'),limit=2, include_offer_name=True)
         rows.append(d)
     pr_previews = []  # Independent upload never needs a PR selector.
-    ocr_data = load_aoq_preview()
+    ocr_data = load_aoq_preview() if independent_aoq else None
     selected_pr = None
     if ocr_data and ocr_data.get('pr_id'):
         selected_pr_row = q('select * from pr where id=?', (ocr_data.get('pr_id'),), one=True)
@@ -3198,10 +3202,11 @@ def aoq():
 
 @app.route('/aoq/<int:id>/view')
 def aoq_review(id):
+    workflow_active = revised_workflow_preview.active() or revised_procurement.enabled(globals())
+    durable_source = '''exists(select 1 from psms_documents.aoq_drafts ds
+                             where ds.official_aoq_id=aq.id and ds.status='CONFIRMED')''' if workflow_active else 'false'
     row = q('''select aq.*, r.no pr_no, r.office pr_office, r.items pr_items,
-                      r.total pr_total,
-                      exists(select 1 from psms_documents.aoq_drafts ds
-                             where ds.official_aoq_id=aq.id and ds.status='CONFIRMED') has_durable_source
+                      r.total pr_total, ''' + durable_source + ''' as has_durable_source
                from aoq aq left join pr r on r.id=aq.pr_id
                where aq.id=?''', (id,), one=True)
     if not row:
@@ -3241,7 +3246,7 @@ def aoq_review(id):
         ],
         approve_url=url_for('aoq_approve', id=id), approve_label=f'Approve AOQ {d["no"]}',
         approval_effect='Approval locks the reviewed winning offer and makes this AOQ available for Purchase Order generation.',
-        back_url=url_for('aoq'), print_url=None, can_approve=d.get('status') == 'For Review' and revised_procurement.enabled(globals()),
+        back_url=url_for('aoq'), print_url=None, can_approve=d.get('status') == 'For Review' and workflow_active and not revised_workflow_preview.active(),
         approval_details=[('AOQ', d['no']), ('Linked PR', d.get('pr_no') or 'Not linked'),
                           ('Winning supplier', d.get('winner') or 'Not selected'),
                           ('Winning amount', money_text(d.get('winning_amount'))), ('Item count', len(offer_items))],
