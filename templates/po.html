@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
-{% from 'procurement_ui.html' import stages,page_header with context %}
+{% from 'procurement_ui.html' import page_header with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 {{page_header('Purchase Order','Create a PO For Review from an approved AOQ. Verification and final approval follow separately.','cart')}}
-{{stages(3)}}
 {% if not revised_workflow_active %}<p class="warning-box">New PO creation requires the authorized revised release. Existing records remain available for inspection.</p>{% endif %}
 <section class="card"><h3>Create a PO from the winning quotation</h3>
 <form action="{{url_for('po')}}" method="post" class="source-bar" data-confirm="Create a PO For Review from this approved AOQ? Final approval remains separate.">{% if workflow_preview or not revised_workflow_active %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

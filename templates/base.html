@@ -39,7 +39,6 @@
     <a class="{{'active' if active=='audit'}}" href="{{url_for('audit')}}">{{icon('history')}}Audit Trail{% if active=='audit' %}<span class="active-dot"></span>{% endif %}</a>
     {% if session.get('role')=='Admin' %}<a class="{{'active' if active=='users'}}" href="{{url_for('users')}}">{{icon('users')}}User Management{% if active=='users' %}<span class="active-dot"></span>{% endif %}</a>{% endif %}
     {% endif %}
-    {% if workflow_preview_available and not workflow_preview %}<a href="{{url_for('workflow_preview_pr')}}">Read-only revised workflow</a>{% endif %}
   </nav>
 </aside>
 <div class="app"><main class="main">

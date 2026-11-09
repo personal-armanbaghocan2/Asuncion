@@ -1,5 +1,4 @@
 {% extends 'base.html' %}
-{% from 'procurement_ui.html' import stages with context %}
 {% block head_extra %}{% if active in ['pr','aoq','po','nlp'] %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endif %}{% endblock %}
 {% block content %}
 {% set procurement_display = active in ['ppmp','app','pr','aoq','po','nlp'] %}
@@ -20,7 +19,6 @@
     {% if print_url and not workflow_preview %}<a class="btn blue" href="{{ print_url }}" target="_blank">Print</a>{% endif %}
   </div>
 </div>
-{% if updated_review %}{{stages(1 if active=='pr' else 2 if active=='aoq' else 6 if active=='po' else 4)}}{% endif %}
 
 <div class="review-mode-notice">
   <div class="review-mode-icon">✓</div>

@@ -22,17 +22,6 @@
 <div class="procurement-workspace-hero"><div class="procurement-workspace-title"><span class="procurement-workspace-mark">{{icon(glyph)}}</span><div><h2>{{title}}</h2><p>{{description}}</p></div></div></div>
 {%- endmacro %}
 
-{% macro stages(current) -%}
-<nav class="procurement-workflow" aria-label="Procurement workflow stages">
-  <ol>
-    {% for number,label,detail,endpoint in [(1,'PR','Approved APP requirements','pr'),(2,'AOQ','Independent quotation review','aoq'),(3,'PO','Create PO For Review','po'),(4,'NLP Verification','Select PR and PO separately','nlp'),(5,'Admin Review','Document PR–PO relationship','nlp'),(6,'PO Approval','Separate final approval','po')] %}
-    <li><a href="{{url_for(endpoint)}}" {% if current==number %}aria-current="step"{% endif %}><span class="procurement-stage-number">{{number}}</span><span class="procurement-stage-copy"><b>{{label}}</b><small>{{detail}}</small></span></a></li>
-    {% endfor %}
-  </ol>
-  <p class="muted">PR and AOQ are prepared independently. Their relationship is documented after PR–PO verification.</p>
-</nav>
-{%- endmacro %}
-
 {% macro source_items(label,document,items) -%}
 <section class="card procurement-source-panel">
   <div class="section-heading-row"><div><span class="review-kicker">{{label}} SOURCE</span><h3>{{document.no}}</h3></div><span class="badge {{'ok' if document.status=='Approved' else 'warn'}}">{{document.status}}</span></div>
