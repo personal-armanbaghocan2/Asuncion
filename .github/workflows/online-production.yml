@@ -32,6 +32,11 @@ on:
         required: true
         default: false
         type: boolean
+      revised_workflow:
+        description: Stage Option B using a deployment-only capability; exact-host SQL approval is still required afterward
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -76,8 +81,24 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          # These override ONLY this immutable deployment, never project settings.
+          PSMS_PROCUREMENT_RELEASE: ${{ inputs.revised_workflow && 'revised-procurement-v1' || '' }}
+          PSMS_PROCUREMENT_RELEASE_TOKEN: ${{ inputs.revised_workflow && secrets.PSMS_PROCUREMENT_RELEASE_TOKEN || '' }}
         run: |
-          test -n "$VERCEL_ORG_ID"
-          test -n "$VERCEL_PROJECT_ID"
+          test "$VERCEL_ORG_ID" = team_bFH3r8Oox6gO7JGEDQ1YZtU1
+          test "$VERCEL_PROJECT_ID" = prj_WuHbP7ztALH56NUyLCy1e6exvgs4
           test -n "$VERCEL_TOKEN"
-          npx --yes vercel@latest deploy --prod --skip-domain --yes --token "$VERCEL_TOKEN"
+          python - <<'PY'
+          import os, re
+          release = os.environ.get('PSMS_PROCUREMENT_RELEASE', '')
+          token = os.environ.get('PSMS_PROCUREMENT_RELEASE_TOKEN', '')
+          if release:
+              if release != 'revised-procurement-v1' or not re.fullmatch('[0-9a-f]{64}', token):
+                  raise SystemExit('Valid deployment-only Option B secret required; no deployment attempted.')
+          elif token:
+              raise SystemExit('A capability without its release is not allowed.')
+          PY
+          # Bare --env names read server-side values from this step's environment.
+          # No token value enters argv, source files or project-wide configuration.
+          npx --yes vercel@latest deploy --prod --skip-domain --yes \
+            --env PSMS_PROCUREMENT_RELEASE --env PSMS_PROCUREMENT_RELEASE_TOKEN

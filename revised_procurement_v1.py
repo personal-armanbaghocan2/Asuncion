@@ -45,7 +45,7 @@ RELEASE_SCHEMA = 'psms_revised_release'
 RELEASE_PROJECT = 'prj_WuHbP7ztALH56NUyLCy1e6exvgs4'
 RELEASE_GUARDED_ROUTINES = (
     ('psms_revised_release.policy_v1()', '708461349509a23a532125c1cadf6b85'),
-    ('psms_revised_release.require_release_v1()', '6ca34abf0edf396ecbcff9dff7da762f'),
+    ('psms_revised_release.require_release_v1()', 'd172b08188f9e0ebd3ff47edd3105be2'),
     ('psms_revised_release.save_reviewed_aoq_v1(uuid,bigint,text,integer,jsonb,jsonb,text,text,boolean)', 'eeae5fc9952cf8451caa4b490c7b87d7'),
     ('psms_revised_release.save_reviewed_aoq_independent_v1(uuid,bigint,text,integer,jsonb,jsonb,text,text,boolean)', '4c777bd267f8cffcc1fe561c488b786a'),
     ('psms_revised_release.approve_reviewed_aoq_v1(bigint,boolean,boolean)', '8fc82bd7edf6c42b977afb335ccd84a6'),
@@ -68,7 +68,13 @@ def unavailable(diagnostic, message):
 
 
 def configured_release_context():
-    """Validate the existing server-side Option B contract, without activation."""
+    """Validate Option B for immutable staging URLs, without SQL activation.
+
+    The existing Action stages with --prod --skip-domain, so its VERCEL_ENV is
+    production. Environment alone never authorizes a deployment: the exact
+    server hostname, request host, project and private SQL capability must agree.
+    Keep release credentials deployment-scoped, never Production project-wide.
+    """
     release = os.environ.get('PSMS_PROCUREMENT_RELEASE', '')
     token = os.environ.get('PSMS_PROCUREMENT_RELEASE_TOKEN', '')
     if not release and not token:
@@ -76,7 +82,7 @@ def configured_release_context():
     host = os.environ.get('VERCEL_URL', '')
     if (release != RELEASE_ID or not re.fullmatch(r'[0-9a-f]{64}', token)
             or os.environ.get('VERCEL') != '1'
-            or os.environ.get('VERCEL_ENV') != 'preview'
+            or os.environ.get('VERCEL_ENV') not in ('preview', 'production')
             or os.environ.get('VERCEL_PROJECT_ID') != RELEASE_PROJECT
             or not re.fullmatch(r'asuncion-[a-z0-9]{9}-arman-a87f\.vercel\.app', host)):
         unavailable('PROCUREMENT_RELEASE_CONFIG_INVALID', 'The procurement release deployment is not authorized.')
@@ -87,7 +93,7 @@ def release_context():
     """Deployment capability, never a browser-supplied workflow override."""
     context = configured_release_context()
     if context and (not has_request_context() or request.host != context[1]):
-        unavailable('PROCUREMENT_RELEASE_HOST_MISMATCH', 'The procurement release requires its exact authorized Preview hostname.')
+        unavailable('PROCUREMENT_RELEASE_HOST_MISMATCH', 'The procurement release requires its exact authorized staging hostname.')
     return context
 
 
@@ -121,6 +127,10 @@ def contracts_ready(con):
                 or 'row_security=on'=any(routine.proconfig))""" if schema==RELEASE_SCHEMA else ''
     release_custody=""" and exists(select 1 from pg_catalog.pg_class
           where oid=to_regclass('psms_revised_release.deployments') and relrowsecurity)
+        and has_table_privilege('psms_aoq_approval_owner','psms_revised_release.deployments','SELECT')
+        and not has_table_privilege('psms_aoq_approval_owner','psms_revised_release.deployments','INSERT,UPDATE,DELETE,TRUNCATE')
+        and not has_any_column_privilege('psms_aoq_approval_owner','psms_revised_release.deployments','INSERT')
+        and not has_any_column_privilege('psms_aoq_approval_owner','psms_revised_release.deployments','UPDATE')
         and not has_table_privilege('psms_revised_release.deployments','SELECT,INSERT,UPDATE,DELETE,TRUNCATE')
         and not has_schema_privilege('psms_revised_release','CREATE')
         and not has_function_privilege('psms_revised_release.require_release_v1()','EXECUTE')
