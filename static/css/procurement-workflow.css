@@ -1,4 +1,5 @@
 /* Procurement pages only. Reuse the approved Asuncion shell and controls. */
+/* AOQ reference composition is scoped below; other procurement pages retain their layout. */
 .procurement-workspace-hero { display:flex; align-items:center; justify-content:space-between; gap:24px; margin:4px 0 24px; }
 .procurement-workspace-title { display:flex; align-items:center; gap:20px; min-width:0; }
 .procurement-workspace-title h2 { margin:0 0 7px; font-size:27px; }
@@ -105,4 +106,151 @@
   .aoq-record-controls{flex:1 1 100%;flex-wrap:wrap}.aoq-record-controls .aoq-search{flex-basis:100%}.procurement-action-card .btn{min-width:0;width:100%}
   .aoq-filter-panel > div{left:0;right:auto;width:min(240px,calc(100vw - 40px))}
   .aoq-history-workspace .history-filters,.procurement-evidence-grid,.procurement-queue-grid{grid-template-columns:minmax(0,1fr)}
+}
+
+/* Independent AOQ workspace: reference layout with live records and existing forms. */
+/* Main's shared filters/pagination are replaced by the AOQ records controls. */
+body:has(.aoq-reference-workspace) #mainContent > .record-filter-bar,
+body:has(.aoq-reference-workspace) #mainContent > .dataset-pagination { display:none; }
+.aoq-reference-workspace { color:#101828; }
+.aoq-reference-workspace .procurement-workspace-hero { margin:0 8px 25px; min-height:72px; }
+.aoq-reference-workspace .procurement-workspace-title { gap:20px; }
+.aoq-reference-workspace .procurement-workspace-title h2 { font-size:29px; line-height:1.2; letter-spacing:-.8px; margin:0 0 7px; }
+.aoq-reference-workspace .procurement-workspace-title p { font-size:15px; line-height:1.5; color:#475467; }
+.aoq-reference-workspace .procurement-workspace-mark { background:linear-gradient(135deg,#e2f5ea,#d8f0e3); }
+.aoq-reference-workspace .procurement-workspace-mark .icon { width:43px; height:43px; }
+.aoq-reference-workspace .procurement-independence-note { flex:0 0 390px; max-width:390px; padding:13px 15px; line-height:1.5; border-color:#99d9b8; background:linear-gradient(120deg,#f1fbf6,#eaf7f0); border-radius:13px; color:#123b2c; }
+.aoq-reference-workspace .procurement-independence-note .icon { width:21px; height:21px; flex:none; color:#078339; }
+.aoq-reference-workspace .procurement-independence-note b { font-weight:600; }
+.aoq-reference-workspace .procurement-workflow { margin:0 10px; }
+.aoq-reference-workspace .procurement-workflow > p { display:none; }
+.aoq-reference-workspace .procurement-workflow ol { gap:29px; }
+.aoq-reference-workspace .procurement-workflow a { min-height:72px; gap:12px; padding:10px 13px; border-color:#d0d5dd; border-radius:15px; font-size:13px; box-shadow:inset 0 1px 0 #fff; }
+.aoq-reference-workspace .procurement-workflow a[aria-current="step"] { background:linear-gradient(115deg,#005c2b,#008438); border-color:#087b3b; box-shadow:0 2px 3px #055c2720; }
+.aoq-reference-workspace .procurement-stage-number { width:35px; height:35px; flex-basis:35px; font-size:15px; border-color:#89929f; box-shadow:inset 0 2px 3px #00000010; background:linear-gradient(#fff,#ebebeb); }
+.aoq-reference-workspace .procurement-workflow a[aria-current="step"] .procurement-stage-number { border-color:#d6eada; background:#fff; box-shadow:none; }
+.aoq-reference-workspace .procurement-stage-copy small { color:inherit; font-size:11px; line-height:1.35; }
+.aoq-reference-workspace .procurement-workflow li:not(:last-child)::after { right:-30px; top:18px; font-size:30px; }
+.aoq-reference-workspace .procurement-workflow li:first-child::after { color:#178551; }
+.aoq-reference-workspace .procurement-action-grid { gap:19px; margin:30px 0 22px; }
+.aoq-reference-workspace .procurement-action-card { min-height:165px; padding:14px 16px 18px; gap:17px; border-radius:13px; background:linear-gradient(135deg,#fff,#f7f7f8); }
+.aoq-reference-workspace .procurement-action-card.upload { border-color:#94dcb6; background:linear-gradient(120deg,#f9fdfa,#edf8f1); }
+.aoq-reference-workspace .procurement-action-card.review { border-color:#b0cdff; background:linear-gradient(120deg,#fcfdff,#eff6ff); }
+.aoq-reference-workspace .procurement-action-icon { width:55px; height:55px; border-radius:13px; }
+.aoq-reference-workspace .procurement-action-icon .icon { width:34px; height:34px; }
+.aoq-reference-workspace .procurement-action-card > div { flex:1; min-width:0; }
+.aoq-reference-workspace .procurement-action-card h3 { font-size:18px; line-height:1.3; letter-spacing:-.3px; margin:2px 0 4px; }
+.aoq-reference-workspace .procurement-action-card p { min-height:40px; font-size:13px; line-height:1.5; color:#34415e; margin:0 0 16px; }
+.aoq-reference-workspace .procurement-action-card .btn { width:250px; min-width:0; min-height:45px; gap:10px; border-radius:7px; font-size:14px; font-weight:650; padding:10px 12px; }
+.aoq-reference-workspace .procurement-action-card .btn .icon { width:22px; height:22px; flex:none; }
+.aoq-reference-workspace .procurement-action-card.upload .btn { background:linear-gradient(110deg,#005a28,#007637); border-color:#00672e; }
+.aoq-reference-workspace .procurement-action-card.review .btn { color:#003be6; border-color:#164bff; background:#ffffff40; }
+.aoq-reference-workspace .procurement-action-card.history .btn { color:#101828; background:linear-gradient(#fff,#f6f6f6); border-color:#475467; }
+.aoq-reference-workspace .aoq-records { position:relative; padding:14px 17px 17px; border:1px solid #e1e5e9; border-radius:14px; box-shadow:0 4px 14px #1018280a; background:linear-gradient(120deg,#fff,#fdfdfd); }
+.aoq-reference-workspace .aoq-records-heading { min-height:35px; margin:0; }
+.aoq-reference-workspace .aoq-records-heading h3 { font-size:21px; letter-spacing:-.5px; gap:16px; }
+.aoq-reference-workspace .procurement-mini-mark { width:35px; height:35px; border-radius:9px; }
+.aoq-reference-workspace .aoq-record-controls { position:absolute; top:29px; right:17px; width:516px; gap:14px; }
+.aoq-reference-workspace .aoq-search { display:flex; align-items:center; position:relative; min-width:0; margin:0; }
+.aoq-reference-workspace .aoq-search input { height:44px; min-height:44px; border:1px solid #d0d5dd; border-radius:11px; padding:10px 10px 10px 42px; font-size:12px; background:linear-gradient(#fff,#fafbfc); box-shadow:inset 0 1px 2px #10182805; }
+.aoq-reference-workspace .aoq-search button { position:absolute; left:4px; top:4px; width:34px; height:36px; display:grid; place-items:center; border:0; border-radius:7px; background:transparent; color:#344054; cursor:pointer; padding:6px; }
+.aoq-reference-workspace .aoq-search button:hover { background:#eaf3ee; }
+.aoq-reference-workspace .aoq-search button:focus-visible { outline:2px solid #087a42; outline-offset:-2px; }
+.aoq-reference-workspace .aoq-search .icon { width:20px; height:20px; }
+.aoq-reference-workspace .aoq-filter-panel > summary { height:44px; min-width:112px; justify-content:center; gap:10px; border-radius:10px; background:linear-gradient(#fafafa,#f3f3f3); border-color:#d0d5dd; color:#101828; font-weight:650; }
+.aoq-reference-workspace summary::-webkit-details-marker { display:none; }
+.aoq-reference-workspace .aoq-filter-panel > div { z-index:6; }
+.aoq-reference-workspace .aoq-record-tabs { gap:8px; margin:16px 0 15px; }
+.aoq-reference-workspace .aoq-record-tabs .btn { min-height:42px; border-color:#d0d5dd; border-radius:9px; padding:9px 17px; gap:8px; font-size:13px; background:linear-gradient(#fff,#f6f6f6); color:#253344; box-shadow:0 1px 2px #10182808; }
+.aoq-reference-workspace .aoq-record-tabs .btn.primary { background:linear-gradient(115deg,#00632c,#00823b); color:#fff; border-color:#008439; }
+.aoq-reference-workspace .aoq-record-tabs .icon { width:20px; height:20px; }
+.aoq-reference-workspace .aoq-record-tabs .btn span { margin-left:-5px; }
+.aoq-reference-workspace .aoq-records > .table-scroll { border:1px solid #d4d8dd; border-radius:10px; }
+.aoq-reference-workspace .aoq-record-table { width:100%; min-width:1080px; margin:0; border:0; font-size:13px; }
+.aoq-reference-workspace .aoq-record-table th { height:38px; padding:9px 12px; border:0; background:linear-gradient(#f1f1f2,#e9e9eb); color:#101828; font-size:12px; font-weight:700; white-space:nowrap; }
+.aoq-reference-workspace .aoq-record-table td { height:63px; padding:10px 12px; border-right:0; border-bottom:1px solid #e9ebee; line-height:1.4; background:#fff; }
+.aoq-reference-workspace .aoq-record-table tbody tr:nth-child(even) > td { background:#fdfdfe; }
+.aoq-reference-workspace .aoq-record-table tbody tr:last-child > td { border-bottom:0; }
+.aoq-reference-workspace .aoq-record-table tbody tr:hover > td { background:#f5faf7; }
+.aoq-reference-workspace .aoq-record-table .document-ref { min-width:150px; }
+.aoq-reference-workspace .aoq-record-table td small.muted { margin-top:3px; color:#475467; font-size:12px; }
+.aoq-reference-workspace .aoq-record-table td.numeric { text-align:left; }
+.aoq-reference-workspace .aoq-file { gap:11px; min-width:220px; }
+.aoq-reference-workspace .aoq-file > div { min-width:0; }
+.aoq-reference-workspace .aoq-file a { text-decoration:underline; text-underline-offset:2px; }
+.aoq-reference-workspace .aoq-file-icon { display:inline-flex; flex:none; color:#169734; }
+.aoq-reference-workspace .aoq-file-icon.pdf { color:#ed192c; }
+.aoq-reference-workspace .aoq-file-icon .icon { width:21px; height:25px; }
+.aoq-reference-workspace .aoq-record-table .badge { display:inline-flex; align-items:center; gap:7px; border-radius:8px; padding:5px 10px; font-size:12px; white-space:nowrap; }
+.aoq-reference-workspace .aoq-record-table .badge .icon { width:17px; height:17px; flex:none; }
+.aoq-reference-workspace .aoq-record-table .badge.warn { color:#a45a00; background:#fff5d9; border:1px solid #ffebba; }
+.aoq-reference-workspace .aoq-record-date { min-width:115px; max-width:140px; font-size:12px; }
+.aoq-reference-workspace .aoq-record-actions { gap:10px; }
+.aoq-reference-workspace .aoq-record-actions > .btn { min-height:39px; padding:8px 15px; gap:8px; border-radius:7px; background:linear-gradient(110deg,#00632d,#00853c); border-color:#007632; font-size:13px; }
+.aoq-reference-workspace .aoq-record-actions .icon { width:20px; height:20px; }
+.aoq-reference-workspace .aoq-row-menu > summary { display:grid; place-items:center; width:39px; height:39px; padding:8px; background:#fff; border-color:#d0d5dd; border-radius:8px; }
+.aoq-reference-workspace .aoq-row-menu[open] > div { margin-top:7px; }
+.aoq-reference-workspace .aoq-record-footer { min-height:50px; padding-top:15px; color:#475467; font-size:13px; }
+.aoq-reference-workspace .aoq-pagination { display:flex; align-items:center; gap:10px; }
+.aoq-reference-workspace .aoq-pagination .btn { width:38px; min-height:35px; padding:7px; border-color:#d8dde3; border-radius:8px; }
+.aoq-reference-workspace .aoq-pagination .btn.primary { color:#fff; border-color:#007535; background:linear-gradient(115deg,#00632c,#00823b); }
+.aoq-reference-workspace .aoq-pagination .icon { width:18px; height:18px; }
+.aoq-reference-workspace .empty-state { padding:36px 20px!important; text-align:center; color:#667085; }
+.aoq-reference-workspace .aoq-upload-panel { margin-top:22px; border-color:#e1e5e9; border-radius:12px; }
+@media (min-width: 1101px) {
+  body.reference-shell:has(.aoq-reference-workspace) .sidebar { width:254px; background:linear-gradient(115deg,#00482f,#003b29); padding:18px 18px; }
+  body.reference-shell:has(.aoq-reference-workspace) .app { margin-left:254px; }
+  body.reference-shell:has(.aoq-reference-workspace) .topbar { min-height:64px; padding:8px 30px; }
+  body.reference-shell:has(.aoq-reference-workspace) .page-context { font-size:20px; }
+  body.reference-shell:has(.aoq-reference-workspace) .content { padding:25px 30px 22px; background:linear-gradient(115deg,#fff,#fbfbfb); }
+  body.reference-shell:has(.aoq-reference-workspace) .brand { margin:0 2px 20px; padding-bottom:18px; gap:12px; }
+  body.reference-shell:has(.aoq-reference-workspace) .brand .seal { width:60px; height:60px; flex:none; }
+  body.reference-shell:has(.aoq-reference-workspace) .nav-title { font-size:10px; margin:24px 14px 9px; }
+  body.reference-shell:has(.aoq-reference-workspace) .nav a,
+  body.reference-shell:has(.aoq-reference-workspace) .nav-parent { min-height:42px; font-size:13px; padding:9px 14px; }
+}
+@media (max-width: 1400px) {
+  .aoq-reference-workspace .procurement-workspace-title h2 { font-size:25px; }
+  .aoq-reference-workspace .procurement-workspace-title p { font-size:13px; }
+  .aoq-reference-workspace .procurement-independence-note { flex-basis:315px; font-size:11px; }
+  .aoq-reference-workspace .procurement-action-card { gap:12px; }
+  .aoq-reference-workspace .procurement-action-icon { width:42px; height:42px; }
+  .aoq-reference-workspace .procurement-action-card h3 { font-size:16px; }
+  .aoq-reference-workspace .procurement-action-card p { min-height:59px; }
+  .aoq-reference-workspace .procurement-action-card .btn { font-size:12px; }
+  .aoq-reference-workspace .procurement-workflow ol { gap:20px; }
+  .aoq-reference-workspace .procurement-workflow a { gap:7px; padding:10px 8px; }
+  .aoq-reference-workspace .procurement-workflow li:not(:last-child)::after { right:-21px; font-size:23px; top:22px; }
+  .aoq-reference-workspace .aoq-record-controls { position:static; width:auto; flex-basis:490px; }
+  .aoq-reference-workspace .aoq-records-heading { flex-wrap:nowrap; }
+}
+@media (max-width: 1100px) {
+  .aoq-reference-workspace .procurement-workspace-hero { margin-left:0; margin-right:0; gap:16px; }
+  .aoq-reference-workspace .procurement-independence-note { flex-basis:auto; max-width:none; }
+  .aoq-reference-workspace .procurement-workflow { margin:0; }
+  .aoq-reference-workspace .procurement-workflow ol { gap:10px; }
+  .aoq-reference-workspace .procurement-action-grid { gap:12px; margin-top:22px; }
+  .aoq-reference-workspace .procurement-action-card { min-height:0; padding:18px; gap:17px; }
+  .aoq-reference-workspace .procurement-action-card p { min-height:0; }
+  .aoq-reference-workspace .procurement-action-icon { width:55px; height:55px; }
+  .aoq-reference-workspace .aoq-records-heading { flex-wrap:wrap; gap:16px; }
+  .aoq-reference-workspace .aoq-record-controls { flex-basis:100%; }
+}
+@media (max-width: 760px) {
+  .aoq-reference-workspace .procurement-workspace-title h2 { font-size:23px; }
+  .aoq-reference-workspace .procurement-workspace-title { gap:12px; }
+  .aoq-reference-workspace .procurement-workspace-mark .icon { width:32px; height:32px; }
+  .aoq-reference-workspace .procurement-independence-note { font-size:12px; width:100%; }
+  .aoq-reference-workspace .procurement-workflow a { gap:8px; min-height:80px; }
+  .aoq-reference-workspace .procurement-stage-number { width:29px; height:29px; flex-basis:29px; }
+  .aoq-reference-workspace .procurement-action-card .btn { width:100%; }
+  .aoq-reference-workspace .aoq-records { padding:14px 12px; }
+  .aoq-reference-workspace .aoq-record-controls { flex-wrap:nowrap; gap:8px; }
+  .aoq-reference-workspace .aoq-record-controls .aoq-search { flex-basis:0; }
+  .aoq-reference-workspace .aoq-filter-panel > summary { min-width:44px; padding:10px; font-size:0; gap:0; }
+  .aoq-reference-workspace .aoq-filter-panel > summary .icon { width:21px; height:21px; }
+  .aoq-reference-workspace .aoq-filter-panel > div { left:auto; right:0; }
+  .aoq-reference-workspace .aoq-record-tabs { gap:6px; }
+  .aoq-reference-workspace .aoq-record-tabs .btn { padding:8px 10px; font-size:12px; }
+  .aoq-reference-workspace .aoq-record-tabs .icon { width:17px; height:17px; }
 }

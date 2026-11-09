@@ -1,4 +1,23 @@
 {% from 'ui.html' import icon %}
+{% macro aoq_icon(name) -%}
+<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+{% if name=='upload' %}<path d="M7 17H5a4 4 0 0 1-.6-7.95A7 7 0 0 1 18 7.5a4.75 4.75 0 0 1 1 9.4h-2M12 21V10m-4 4 4-4 4 4"/>
+{% elif name=='shield' %}<path d="M12 3c3 2 5 2.5 8 3v6c0 4-3.5 7.5-8 10-4.5-2.5-8-6-8-10V6c3-.5 5-1 8-3Z"/><path d="m8 12 3 3 5-6"/>
+{% elif name=='stack' %}<path d="m3 7 9-5 9 5-9 5-9-5Zm0 5 9 5 9-5M3 17l9 5 9-5"/>
+{% elif name=='search' %}<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>
+{% elif name=='filters' %}<path d="M3 6h10m4 0h4M3 12h3m4 0h11M3 18h11m4 0h3M13 3v6M6 9v6m8 0v6"/>
+{% elif name=='eye' %}<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>
+{% elif name=='more' %}<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>
+{% elif name=='clock' %}<circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>
+{% elif name=='check' %}<path d="m5 12 4 4L20 5"/>
+{% elif name=='info' %}<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>
+{% elif name=='previous' %}<path d="m14 7-5 5 5 5"/>
+{% elif name=='next' %}<path d="m10 7 5 5-5 5"/>
+{% elif name=='award' %}<path d="M13 2H5v20h9M13 2v6h6l-6-6Zm6 6v5M8 12h6m-6 4h3"/><circle cx="17" cy="17" r="3"/><path d="m15 19-2 4 4-2 4 1-2-3"/>
+{% else %}<path d="M14 2H5v20h14V7l-5-5Zm0 0v5h5M8 11h8m-8 4h8m-8 4h5"/>{% endif %}
+</svg>
+{%- endmacro %}
+
 {% macro page_header(title,description,glyph='document') -%}
 <div class="procurement-workspace-hero"><div class="procurement-workspace-title"><span class="procurement-workspace-mark">{{icon(glyph)}}</span><div><h2>{{title}}</h2><p>{{description}}</p></div></div></div>
 {%- endmacro %}
