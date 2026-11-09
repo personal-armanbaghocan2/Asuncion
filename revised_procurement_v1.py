@@ -15,7 +15,7 @@ import secrets
 import uuid
 from pathlib import Path
 from flask import abort,flash,redirect,render_template,request,url_for,has_request_context,g
-from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import HTTPException, ServiceUnavailable
 import procurement_comparison_v1 as evidence
 
 RPC={
@@ -60,8 +60,15 @@ RELEASE_GUARDED_ROUTINES = (
 )
 
 
-def release_context():
-    """Deployment capability, never a browser-supplied workflow override."""
+def unavailable(diagnostic, message):
+    """Fixed safe diagnostics, never driver text, credentials or source values."""
+    error = ServiceUnavailable(description=message)
+    error.psms_diagnostic = diagnostic
+    raise error
+
+
+def configured_release_context():
+    """Validate the existing server-side Option B contract, without activation."""
     release = os.environ.get('PSMS_PROCUREMENT_RELEASE', '')
     token = os.environ.get('PSMS_PROCUREMENT_RELEASE_TOKEN', '')
     if not release and not token:
@@ -71,10 +78,17 @@ def release_context():
             or os.environ.get('VERCEL') != '1'
             or os.environ.get('VERCEL_ENV') != 'preview'
             or os.environ.get('VERCEL_PROJECT_ID') != RELEASE_PROJECT
-            or not re.fullmatch(r'asuncion-[a-z0-9]{9}-arman-a87f\.vercel\.app', host)
-            or not has_request_context() or request.host != host):
-        abort(503, description='The procurement release deployment is not authorized.')
+            or not re.fullmatch(r'asuncion-[a-z0-9]{9}-arman-a87f\.vercel\.app', host)):
+        unavailable('PROCUREMENT_RELEASE_CONFIG_INVALID', 'The procurement release deployment is not authorized.')
     return release, host, token
+
+
+def release_context():
+    """Deployment capability, never a browser-supplied workflow override."""
+    context = configured_release_context()
+    if context and (not has_request_context() or request.host != context[1]):
+        unavailable('PROCUREMENT_RELEASE_HOST_MISMATCH', 'The procurement release requires its exact authorized Preview hostname.')
+    return context
 
 
 def apply_release_context(con):
@@ -148,19 +162,23 @@ def enabled(api):
                         else 'select policy from psms_documents.procurement_policy where singleton').fetchone()
         active=bool(row and type(row['policy']) is dict and row['policy'].get('enabled') is True)
         if scoped and not active:
-            abort(503,description='The procurement release is not enabled for this deployment.')
+            unavailable('PROCUREMENT_CAPABILITY_DENIED', 'The procurement release is not enabled for this deployment.')
         if active and (row['policy'].get('link_authority') not in ('ADMIN_DOCUMENTED','EXISTING_REVIEWERS_DOCUMENTED')
                        or row['policy'].get('po_clock')!='ASIA_MANILA'):
-            abort(503,description='The revised relationship authority and PO numbering policy are not approved. No legacy write was attempted.')
+            unavailable('PROCUREMENT_POLICY_PENDING', 'The revised relationship authority and PO numbering policy are not approved. No legacy write was attempted.')
         if active and not contracts_ready(con):
-            abort(503,description='The revised procurement database contract is unavailable. No legacy write was attempted.')
+            unavailable('PROCUREMENT_CONTRACT_UNAVAILABLE', 'The revised procurement database contract is unavailable. No legacy write was attempted.')
     except HTTPException:
         raise
     except Exception as error:
         # A genuinely absent pre-expansion relation preserves the legacy path.
         # Denied/unavailable metadata must not select an older write path.
         if active or release_context() or getattr(error,'sqlstate',None) not in ('42P01','3F000'):
-            abort(503,description='The revised procurement database contract could not be verified. No legacy write was attempted.')
+            state = getattr(error, 'sqlstate', None)
+            diagnostic = ('PROCUREMENT_CAPABILITY_DENIED' if state == 'PA007' else
+                          'PROCUREMENT_CONTRACT_UNAVAILABLE' if state in ('42P01','3F000','42883') else
+                          'PROCUREMENT_DATABASE_UNAVAILABLE')
+            unavailable(diagnostic, 'The revised procurement database contract could not be verified. No legacy write was attempted.')
         active=False
     finally:
         if con is not None:
@@ -253,8 +271,14 @@ def nlp_page(api):
         pr,po=source_pair(api,pr_id,po_id)
         if po['status']!='For Review':abort(409,description='Final PO approval already occurred. Open its saved verification.')
         existing=api['q']('select id,pr_id,pr_items_hash,po_items_hash,workflow_version from nlp where po_id=? order by id',(po_id,))
-        if len(existing)==1 and existing[0].get('workflow_version')==1 and existing[0].get('pr_id')==pr_id:
-            return redirect(url_for('nlp_review',id=existing[0]['id']))
+        if existing:
+            if (len(existing)==1 and existing[0].get('workflow_version')==1
+                    and existing[0].get('pr_id')==pr_id
+                    and existing[0].get('pr_items_hash')==evidence.fingerprint(pr['items'])
+                    and existing[0].get('po_items_hash')==evidence.fingerprint(po['items'])):
+                return redirect(url_for('nlp_review',id=existing[0]['id']))
+            abort(409,description='The saved verification uses different or changed sources. '
+                  'Open the existing evidence for review; no result was overwritten or rerun.')
         from nlp_runtime_selection import require_available
         require_available(api['app'].config)
         try:

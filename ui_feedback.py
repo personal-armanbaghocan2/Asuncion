@@ -3,6 +3,17 @@ import re
 import secrets
 from flask import current_app, get_flashed_messages, jsonify, render_template, request
 from psycopg import Error as DatabaseError
+from werkzeug.exceptions import SecurityError
+
+
+WORKFLOW_UNAVAILABLE = {
+    'PROCUREMENT_RELEASE_CONFIG_INVALID': 'The revised workflow requires its approved Vercel Preview release configuration.',
+    'PROCUREMENT_RELEASE_HOST_MISMATCH': 'Use the approved immutable Preview URL. Localhost and the Production URL cannot use this release capability.',
+    'PROCUREMENT_CAPABILITY_DENIED': 'This Preview deployment is not authorized by the database, or its authorization expired or was revoked.',
+    'PROCUREMENT_POLICY_PENDING': 'The procurement relationship authority or PO numbering policy has not been approved.',
+    'PROCUREMENT_CONTRACT_UNAVAILABLE': 'The reviewed procurement SQL contract is missing or incompatible, or its required permissions are unavailable.',
+    'PROCUREMENT_DATABASE_UNAVAILABLE': 'The procurement database connection or permissions could not be verified.',
+}
 
 
 def database_failure(error):
@@ -50,12 +61,24 @@ def register(app):
         503:'This operation is temporarily unavailable. Your previous records remain retained; reopen the review before retrying.'}
     def error_page(error):
         code=error.code
+        if isinstance(error, SecurityError):
+            # A rejected Host has no URL adapter. Rendering a layout that calls
+            # url_for() would replace the intended 400 with a second exception.
+            response=app.response_class('The requested host is not authorized.',status=400,mimetype='text/plain')
+            response.headers['Cache-Control']='private, no-store'
+            return response
         message=public_messages.get(code,'The operation could not be completed. No success is assumed.')
+        diagnostic=getattr(error,'psms_diagnostic',None)
+        if code==503 and diagnostic in WORKFLOW_UNAVAILABLE:
+            message=WORKFLOW_UNAVAILABLE[diagnostic]+' No legacy operation was attempted.'
+            app.logger.warning('Procurement unavailable [%s]',diagnostic)
         if request.is_json or request.accept_mimetypes.best=='application/json':
             response=jsonify(saved=False,message=message,status=code);response.status_code=code
         else:
             response=app.make_response((render_template('operation_error.html',active='',title='Operation needs attention',
                 message=message,status=code),code))
         response.headers['Cache-Control']='private, no-store'
+        if code==503 and diagnostic in WORKFLOW_UNAVAILABLE:
+            response.headers['X-PSMS-Diagnostic']=diagnostic
         return response
     for code in public_messages:app.register_error_handler(code,error_page)
