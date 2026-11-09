@@ -2161,9 +2161,25 @@ def add_no_cache_headers(response):
 @app.route('/')
 def dashboard():
     from dashboard_data import build_dashboard
+    workflow_unavailable = False
+    try:
+        revised_active = revised_procurement.enabled(globals())
+    except HTTPException as error:
+        if error.code != 503:
+            raise
+        # Unavailable procurement capabilities must not disable the unrelated
+        # read-only dashboard. No revised operation or policy is enabled here.
+        revised_active = False
+        workflow_unavailable = True
     dashboard_data = build_dashboard(q)
+    procurement_queue = []
+    if revised_active:
+        from dashboard_data import revised_procurement_queue
+        procurement_queue = revised_procurement_queue(q)
     return render_template('dashboard.html', active='dashboard', title='Dashboard',
-                           dashboard_data=dashboard_data,
+                           dashboard_data=dashboard_data, procurement_queue=procurement_queue,
+                           revised_workflow_active=revised_active,
+                           workflow_unavailable=workflow_unavailable,
                            municipal_banner_available=os.path.isfile(os.path.join(
                                BASE_DIR, 'static', 'images', 'asuncion_municipal.jpg')))
 
@@ -3148,21 +3164,22 @@ def aoq():
     independent_aoq = revised_workflow_preview.active() or revised_procurement.enabled(globals())
     if request.method == 'POST':
         return durable_ocr.protected(durable_ocr.aoq_post, globals())
-    raw_aoq_rows = paged_q('''select aq.*, r.no pr_no, r.office pr_office from aoq aq
+    raw_aoq_rows = paged_q('''select aq.*, aq.winning_offer as items,
+                r.no pr_no, r.office pr_office,
+                (select d.source_id from psms_documents.aoq_drafts d
+                 where d.official_aoq_id=aq.id and d.owner_id=? and d.status='CONFIRMED'
+                 order by d.updated_at desc limit 1) owned_source_id from aoq aq
                 left join pr r on r.id=aq.pr_id
-                order by aq.id desc''')
+                order by aq.id desc''', (session.get('user_id'),))
+    aoq_counts = q("""select count(*) total,
+        count(*) filter(where status='For Review') for_review,
+        count(*) filter(where status='Approved') approved from aoq""", one=True)
     rows=[]
     for aq in raw_aoq_rows:
         d=dict(aq)
         d['item_preview']=item_preview_from_json(d.get('winning_offer'),limit=2, include_offer_name=True)
         rows.append(d)
-    _, _, prs, _, _, _ = next_available_records('pr')
-    pr_previews = []
-    for r in prs:
-        d = dict(r)
-        d['item_preview'] = item_preview_from_json(d.get('items'), limit=2, include_offer_name=True)
-        d['search_terms'] = item_preview_from_json(d.get('items'), limit=200, include_offer_name=True)
-        pr_previews.append(d)
+    pr_previews = []  # Independent upload never needs a PR selector.
     ocr_data = load_aoq_preview()
     selected_pr = None
     if ocr_data and ocr_data.get('pr_id'):
@@ -3172,6 +3189,7 @@ def aoq():
             selected_pr['items_list'] = parse_items(selected_pr.get('items'))
     return render_template(
         'aoq.html', independent_aoq=independent_aoq, active='aoq', rows=rows, prs=pr_previews,
+        aoq_counts=aoq_counts,
         ocr_data=ocr_data or None, selected_pr=selected_pr, title='AOQ',
         history=document_history.listing(globals(),'aoq'),quotation_view=aoq_quotation_page(ocr_data or {}),
         supported_aoq_formats=', '.join(sorted(x.upper().lstrip('.') for x in ALLOWED_OCR_EXTENSIONS)),
@@ -3223,7 +3241,7 @@ def aoq_review(id):
         ],
         approve_url=url_for('aoq_approve', id=id), approve_label=f'Approve AOQ {d["no"]}',
         approval_effect='Approval locks the reviewed winning offer and makes this AOQ available for Purchase Order generation.',
-        back_url=url_for('aoq'), print_url=None, can_approve=d.get('status') != 'Approved',
+        back_url=url_for('aoq'), print_url=None, can_approve=d.get('status') == 'For Review' and revised_procurement.enabled(globals()),
         approval_details=[('AOQ', d['no']), ('Linked PR', d.get('pr_no') or 'Not linked'),
                           ('Winning supplier', d.get('winner') or 'Not selected'),
                           ('Winning amount', money_text(d.get('winning_amount'))), ('Item count', len(offer_items))],
@@ -3266,6 +3284,7 @@ def po():
               left join aoq aq on aq.id=p.aoq_id
               left join pr r on r.id={revised_procurement.pr_reference(globals())}
               order by p.id desc""")
+    rows = request_queries.recorded_pr_references(q, rows)
     _,_,_,raw_aoqs,_,_ = next_available_records('aoq')
     aoqs=[]
     for a in raw_aoqs:
@@ -3277,7 +3296,7 @@ def po():
         d['offer_summary'] = '; '.join(f"{value_any(item, 'item', 'Item Name', default='Item')}: {quantity_text(item.get('qty'))} {item.get('unit') or '—'} at {source_money_text(item.get('unit_cost'))}"
                                       for item in parse_items(a['winning_offer']))
         aoqs.append(d)
-    return render_template('po.html', active='po', rows=rows, aoqs=aoqs, title='PO')
+    return render_template('po.html', active='po', rows=rows, aoqs=aoqs, title='PO', revised_workflow_active=revised_procurement.enabled(globals()))
 
 @app.route('/po/<int:id>/view')
 def po_review(id):
@@ -3291,7 +3310,7 @@ def po_review(id):
     if not row:
         flash('PO record not found.')
         return redirect(url_for('po'))
-    d = dict(row)
+    d = request_queries.recorded_pr_references(q, [row])[0]
     po_items = parse_items(d.get('items'))
     return render_review_page(
         active='po', title=f'Review PO {d["no"]}', document_type='Purchase Order',
@@ -3317,7 +3336,7 @@ def po_review(id):
         approve_url=url_for('po_approve', id=id), approve_label=f'Approve PO {d["no"]}',
         approval_effect=('Final approval requires a recorded authorized PR-PO relationship and reviewed NLP evidence.' if revised_procurement.enabled(globals()) else 'Approval locks this PO and makes the linked PR–PO pair available for NLP Verification.'),
         back_url=url_for('po'), print_url=url_for('po_print', id=id),
-        can_approve=d.get('status') != 'Approved' and (not revised_procurement.enabled(globals()) or revised_procurement.po_has_review(globals(),id)),
+        can_approve=d.get('status') == 'For Review' and revised_procurement.enabled(globals()) and revised_procurement.po_has_review(globals(),id),
         approval_details=[('PO', d['no']), ('Supplier', d.get('supplier') or 'Not recorded'),
                           ('Linked AOQ', d.get('aoq_no') or 'Not linked'), ('Amount', money_text(d.get('total')))],
     )
@@ -3383,67 +3402,13 @@ def nlp_item_comparison(pr_items_json, po_items_json):
 def nlp():
     if revised_procurement.enabled(globals()):
         return revised_procurement.nlp_page(globals())
-    if request.method=='POST':
-        if request.form.get('action') == 'compare':
-            if not app.config['PR_PO_ITEM_COMPARISON_ENABLED']:
-                abort(404)
-            return redirect(url_for('nlp', comparison_po_id=request.form.get('po_id', '')))
-        from nlp_runtime_selection import require_available
-        require_available(app.config)
-        return procurement_creation.create_nlp(globals(), request.form.get('po_id'))
-    raw_rows=paged_q('''select n.*, p.no po_no, p.supplier, aq.no aoq_no, r.no pr_no
-                  from nlp n
-                  join po p on p.id=n.po_id
-                  left join aoq aq on aq.id=p.aoq_id
-                  left join pr r on r.id=aq.pr_id
-                  order by n.id desc''')
-    rows=[]
-    for row in raw_rows:
-        d=dict(row)
-        d['findings'] = nlp_short_finding(d.get('result'), d.get('details'))
-        d['remarks'] = nlp_dynamic_remarks(d.get('result'), d.get('details'))
-        rows.append(d)
-    _,_,_,_,raw_pos,_ = next_available_records('nlp')
-    pos = []
-    for p in raw_pos:
-        d = dict(p)
-        trace = trace_for_po(p)
-        d['pr_no'] = trace.get('pr')['no'] if trace.get('pr') else 'No linked PR'
-        d['aoq_no'] = trace.get('aoq')['no'] if trace.get('aoq') else 'No linked AOQ'
-        d['item_preview'] = item_preview_from_json(d.get('items'), limit=1, include_offer_name=True)
-        pos.append(d)
-    comparison_pos, comparison_source, item_comparison = [], None, None
-    comparison_enabled = app.config['PR_PO_ITEM_COMPARISON_ENABLED']
-    if comparison_enabled:
-        comparison_pos = q('''select p.id, p.no, p.supplier, r.no pr_no, p.items, p.total
-                              from po p join aoq aq on aq.id=p.aoq_id
-                              join pr r on r.id=aq.pr_id
-                              where p.status='Approved' and aq.status='Approved' and r.status='Approved'
-                              order by p.id desc''')
-        if 'comparison_po_id' in request.args:
-            po_id = request.args.get('comparison_po_id', type=int)
-            if not po_id or po_id < 1:
-                abort(404)
-            # Derive the PR from the PO's existing AOQ relationship.
-            comparison_source = q('''select p.id, p.no po_no, p.items po_items, r.no pr_no, r.items pr_items
-                                     from po p join aoq aq on aq.id=p.aoq_id
-                                     join pr r on r.id=aq.pr_id
-                                     where p.id=? and p.status='Approved'
-                                       and aq.status='Approved' and r.status='Approved' ''', (po_id,), one=True)
-            if not comparison_source:
-                abort(404)
-            item_comparison = nlp_item_comparison(comparison_source['pr_items'], comparison_source['po_items'])
-    selectable_pos = {str(p['id']): dict(p, can_run=True, can_compare=False) for p in pos}
-    for p in comparison_pos:
-        key = str(p['id'])
-        if key not in selectable_pos:
-            selectable_pos[key] = dict(p, can_run=False, item_preview=item_preview_from_json(p.get('items'), limit=1, include_offer_name=True))
-        selectable_pos[key]['can_compare'] = True
-    for p in selectable_pos.values():
-        p['search_terms'] = item_preview_from_json(p.get('items'), limit=200, include_offer_name=True)
-    return render_template('nlp.html', active='nlp', rows=rows, pos=pos, selector_pos=list(selectable_pos.values()), model_state=trained_nlp_model_status(), title='PR–PO NLP Verification',
-                           comparison_enabled=comparison_enabled, comparison_pos=comparison_pos,
-                           comparison_source=comparison_source, item_comparison=item_comparison)
+    if request.method == 'POST':
+        abort(409, description='The replacement PR-PO workflow requires an authorized active release. Legacy verification creation is retired.')
+    rows = paged_q('''select n.*,p.no po_no,aq.no aoq_no,r.no pr_no from nlp n
+        join po p on p.id=n.po_id left join aoq aq on aq.id=p.aoq_id
+        left join pr r on r.id=aq.pr_id order by n.id desc''')
+    rows = request_queries.recorded_pr_references(q, rows)
+    return render_template('nlp.html', active='nlp', rows=rows, title='NLP Verification History')
 
 def nlp_pricing_advisory(record_id):
     """Optional read-only diagnostics; unavailable diagnostics cannot change review."""

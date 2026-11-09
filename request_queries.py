@@ -5,6 +5,28 @@ import json
 import server_sessions_v0_1_0 as sessions
 
 
+def recorded_pr_references(query, rows):
+    """Render recorded PRs across code versions without requiring new columns.
+
+    A new PO/NLP exposes pr_id through SELECT *. Older rows do not, so their
+    legacy joins remain valid. This projection never creates a relationship.
+    """
+    result = [dict(row) for row in rows]
+    ids = sorted({row['pr_id'] for row in result
+                  if type(row.get('pr_id')) is int and row['pr_id'] > 0})
+    if not ids:
+        return result
+    if len(ids) > 100:
+        raise ValueError('PR references require a bounded document page')
+    references = {row['id']: row for row in query(
+        'select id,no,items,office from pr where id=ANY(?::bigint[])', (ids,))}
+    for row in result:
+        source = references.get(row.get('pr_id'))
+        if source:
+            row.update(pr_no=source['no'], pr_items=source.get('items'), pr_office=source.get('office'))
+    return result
+
+
 def _bind_actor(con):
     """Bind only the server-validated request identity, transaction locally.
 

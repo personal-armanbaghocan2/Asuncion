@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/dashboard.css')}}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/dashboard.css')}}"><link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 {% set d = dashboard_data %}
 {% macro dash_icon(name) %}
@@ -16,6 +16,14 @@
 <div><h2 id="welcome-title"><img class="welcome-avatar profile-avatar" src="{{url_for('account_photo')}}" alt="Your profile picture" width="36" height="36">Good day, {{(current_account or {}).get('display_name') or (current_account or {}).get('full_name') or session.get('username','')}}!</h2><p>Monitor procurement documents, inventory, and property records for a more<br class="welcome-break"> transparent and accountable Municipality of Asuncion.</p></div>
 <div class="dash-banner-note">{{icon('document')}}<span>Efficient Procurement<br>Accountable Management<br>Better Public Service</span></div>
 </section>
+{% if workflow_unavailable %}<div class="notice" role="status">The revised procurement workspace is currently unavailable. Existing dashboard records remain visible; no procurement operation was enabled.</div>{% endif %}
+{% if revised_workflow_active %}
+<section class="dash-panel procurement-queue" aria-labelledby="procurement-queue-title">
+  <div class="dash-heading"><h3 id="procurement-queue-title">{{icon('document')}}Procurement Work Queue</h3><a href="{{url_for('aoq')}}">Open independent AOQ workspace</a></div>
+  <p class="muted">PR and AOQ are prepared independently. Verify the created PO against its approved PR, document the relationship, then complete separate final approval.</p>
+  <div class="procurement-queue-grid">{% for step in procurement_queue %}<a href="{{url_for(step.endpoint)}}"><b>{{step.label}}</b><strong>{{step.count}}</strong><small>{{step.note}}</small></a>{% else %}<p class="notice">Workflow counts are unavailable. Open the document lists to inspect existing records.</p>{% endfor %}</div>
+</section>
+{% endif %}
 <div class="dash-kpis">
 {% for label,glyph,tone,endpoint in [('Total PPMP Records','document','blue','ppmp_home'),('For Review','clipboard','amber','dashboard'),('Approved Documents','check','green','dashboard'),('Low Stock Alerts','box','red','inventory')] %}
 <a class="dash-kpi {{tone}}" href="{{url_for(endpoint,stock='low') if loop.index==4 else url_for(endpoint)}}{% if loop.index==2 %}#pending-reviews{% elif loop.index==3 %}#document-status{% endif %}"><span class="dash-kpi-icon">{{dash_icon(glyph)}}</span><span class="dash-kpi-copy"><b>{{label}}</b><strong>{{'{:,}'.format(d.kpis[loop.index0])}}</strong></span><span class="dash-kpi-mini">{{dash_icon('clock' if loop.index==2 else 'circle-check' if loop.index==3 else 'warning' if loop.index==4 else glyph)}}</span></a>

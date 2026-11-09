@@ -452,52 +452,9 @@ def aoq_load(api):
     return result
 
 def aoq_upload(api):
-    if revised_procurement.enabled(api):
-        return revised_procurement.upload_aoq(api)
-    from nlp_runtime_selection import require_available
-    require_available(getattr(api.get('app'),'config',{}))
-    try:pr_id=int(request.form.get('pr_id',''))
-    except ValueError:abort(400)
-    pr=api['q']("select * from pr where id=? and status='Approved'",(pr_id,),one=True)
-    if not pr:abort(400,description='Choose an approved PR.')
-    name,ext,content=validate(request.files.get('ocr_file'))
-    digest=hashlib.sha256(content).hexdigest()
-    lookup="""select d.id,d.status,d.official_aoq_id from psms_documents.aoq_drafts d
-        join psms_documents.sources s on s.id=d.source_id
-        where d.owner_id=? and d.pr_id=? and s.sha256=? and d.status<>'CANCELLED'
-        order by d.created_at limit 1"""
-    existing=api['q'](lookup,(_uid(),pr_id,digest),one=True)
-    if existing:
-        return redirect(url_for('aoq_review',id=existing['official_aoq_id']) if existing['status']=='CONFIRMED'
-                        else url_for('aoq',draft_id=str(existing['id'])))
-    with extraction_path(content,ext) as path:
-        document=api['extract_aoq_document'](path)
-        preview=api['build_flexible_aoq_preview'](document,api['parse_items'](pr['items']))
-    if len(preview.get('offer_items') or [])>200 or len(preview.get('suppliers') or [])>100:abort(400)
-    idx=preview.get('winner_index',-1)
-    preview.update(pr_id=pr_id,pr_no=pr['no'],ocr_filename=name,stored_filename='',offer_review_token=secrets.token_urlsafe(24),
-        offer_supplier_index=preview.get('offer_supplier_index',str(idx) if isinstance(idx,int) and idx>=0 else 'custom'))
-    # Source award evidence remains a hint. The reviewer selects the supplier
-    # before its quotation becomes the proposed winning offer.
-    preview.update(source_award_hint=idx,selected_winner_index=-1,offer_items=[],offer_supplier_index='')
-    if pr.get('ppmp_id'):
-        parent=api['q']('select type from ppmp where id=?',(pr['ppmp_id'],),one=True)
-        preview['pr_category']=parent['type'] if parent else ''
-    did=str(uuid.uuid4())
-    with transaction(api) as (con,uid):
-        current=con.execute("select id from pr where id=? and status='Approved' for update",(pr_id,)).fetchone()
-        if not current:abort(409,description='The linked PR changed during extraction. Reopen its approved review.')
-        existing=con.execute(lookup,(uid,pr_id,digest)).fetchone()
-        if existing:
-            return redirect(url_for('aoq_review',id=existing['official_aoq_id']) if existing['status']=='CONFIRMED'
-                            else url_for('aoq',draft_id=str(existing['id'])))
-        if con.execute('select 1 from aoq where pr_id=?',(pr_id,)).fetchone():abort(409,description='This PR already has an AOQ.')
-        sid=source(con,uid,'aoq',None,name,ext,content,document)
-        con.execute('insert into psms_documents.aoq_drafts(id,owner_id,source_id,pr_id,payload) values(?,?,?,?,?::jsonb)',(did,uid,sid,pr_id,payload(preview)))
-        audit(api,con,'Extracted Private OCR Draft','AOQ',did)
-    session['aoq_draft_id']=did
-    flash('Extraction saved privately. Edit and explicitly confirm the reviewed quotation before official saving.')
-    return redirect(url_for('aoq',draft_id=did))
+    if not revised_procurement.enabled(api):
+        abort(409, description='Independent AOQ upload requires the authorized revised workflow. PR-linked upload is retired.')
+    return revised_procurement.upload_aoq(api)
 
 def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
     """Proposed save adapter. Current authentication/CSRF/navigation remain outside this helper."""
@@ -556,6 +513,8 @@ def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
 
 def aoq_post(api):
     action=request.form.get('action') or 'extract_ocr'
+    if action=='save_ocr' and not revised_procurement.enabled(api):
+        abort(409, description='Official AOQ saving requires the authorized revised workflow.')
     if action=='extract_ocr':return aoq_upload(api)
     if not request.form.get('draft_id'):abort(400,description='Reopen the saved review form.')
     preview=aoq_load(api)
