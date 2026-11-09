@@ -152,7 +152,7 @@
 {% include 'pr_po_item_comparison.html' %}
 {% endif %}
 
-<div class="card approval-review-card">
+<div class="card approval-review-card {{'procurement-final-approval' if updated_review}}">
   {% if can_review and not workflow_preview and not retired_nlp %}
   <div class="approval-warning-title">Review Completion</div>
   <p>{{ review_effect }}</p>

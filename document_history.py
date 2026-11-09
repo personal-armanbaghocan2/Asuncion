@@ -179,7 +179,8 @@ def _catalog_sql(kind=None):
         CASE WHEN s.kind='aoq' THEN CASE WHEN source_groups.total>0 THEN source_groups.unclassified ELSE {fallback_total} END
           ELSE coalesce(p.unclassified,0) END AS unclassified,coalesce(p.reviewed,0) AS reviewed,
         coalesce(p.converted,0) AS converted,a.id AS draft_id,a.status AS aoq_status,
-        a.official_aoq_id,coalesce(official.no,'') AS search_references,
+        a.official_aoq_id,official.no AS official_no,official.status AS official_status,
+        coalesce(official.no,'') AS search_references,
         CASE WHEN source_groups.total>0 THEN source_groups.total ELSE {fallback_total} END AS aoq_total,
         greatest({quote_count},coalesce(quotations.row_count,0)) AS quotation_count,
         {suppliers} AS supplier_count,r.status AS run_status,
@@ -317,10 +318,16 @@ def _decorate(row, group):
     elif row.get('official_aoq_id'):
         row['reopen_url'] = url_for('aoq_review', id=row['official_aoq_id'])
     row['official_links'] = []
+    if row.get('kind') == 'aoq' and row.get('official_aoq_id') and row.get('official_no'):
+        row['official_links'].append(dict(label=row['official_no'],
+            status=row.get('official_status') or 'Not recorded',
+            url=url_for('aoq_review', id=row['official_aoq_id'])))
     row['workflow_stage'] = ('Official document created' if row['review_status'] == 'CONFIRMED'
                              else 'Item review completed' if row['review_status'] == 'REVIEWED'
                              else 'Extraction ' + row['processing_status'].lower() if row['processing_status'] != 'COMPLETE'
                              else 'Human review required')
+    if row.get('kind') == 'aoq' and row.get('official_aoq_id'):
+        row['workflow_stage'] = 'Saved AOQ: ' + (row.get('official_status') or 'status not recorded')
     if group == 'month':
         row['group_label'] = str(row.get('created_at') or '')[:7]
     elif group == 'type':
@@ -451,7 +458,7 @@ def detail(api, sid):
         sid = str(uuid.UUID(str(sid)))
     except (ValueError, TypeError, AttributeError):
         abort(404)
-    result = dict(source=None, extraction={}, run=None, runs=[], events=[], links=[], unavailable=False, history=[],
+    result = dict(source=None, extraction={}, run=None, runs=[], events=[], links=[], unavailable=False, history=[], verifications=[],
                   events_truncated=False, links_truncated=False)
     with connection(api) as (con, uid):
         source = con.execute('''SELECT id,owner_id,kind,category,filename,extension,sha256,created_at,extraction
@@ -542,7 +549,9 @@ def detail(api, sid):
         endpoints = {'ppmp': 'ppmp_review', 'app': 'app_review', 'pr': 'pr_review', 'aoq': 'aoq_review',
                      'po': 'po_review', 'nlp': 'nlp_review', 'iar': 'iar_review', 'ris': 'ris_ics_review'}
         import revised_procurement_v1 as revised_procurement
-        workflow_sql = _REVISED_WORKFLOW if revised_procurement.enabled(api) else _WORKFLOW
+        revised_active = revised_procurement.enabled(api)
+        result['revised_workflow_active'] = revised_active
+        workflow_sql = _REVISED_WORKFLOW if revised_active else _WORKFLOW
         linked = con.execute(workflow_sql, (sid, uid, sid, uid)).fetchall()
         result['links_truncated'] = len(linked) > 100
         for record in linked[:100]:
@@ -553,6 +562,23 @@ def detail(api, sid):
             result['links'].append(link)
             if record['no']:
                 references.add(record['no'])
+        if source['kind']=='aoq' and revised_active:
+            verifications = con.execute('''SELECT DISTINCT n.id,n.no,n.result,n.confidence,n.status,
+                n.technical_status,n.reviewed_by,n.reviewed_at,n.relationship_reason,n.evidence_reference,
+                r.no pr_no,p.id po_id,p.no po_no,p.status po_status,
+                exists(select 1 from psms_documents.pr_po_reviews proof
+                    where proof.nlp_id=n.id and proof.po_id=p.id) relationship_recorded
+                FROM psms_documents.aoq_drafts d JOIN public.po p ON p.aoq_id=d.official_aoq_id
+                JOIN public.nlp n ON n.po_id=p.id AND n.workflow_version=1
+                LEFT JOIN public.pr r ON r.id=n.pr_id
+                WHERE d.source_id=? AND d.owner_id=? ORDER BY n.id LIMIT 100''', (sid,uid)).fetchall()
+            for verification in verifications:
+                record = dict(verification)
+                record['review_url'] = url_for('nlp_review',id=record['id'])
+                record['po_url'] = url_for('po_review',id=record['po_id'])
+                result['verifications'].append(record)
+                if record.get('no'):references.add(record['no'])
+                if record.get('po_no'):references.add(record['po_no'])
         audit = con.execute('''SELECT dt,"user" AS actor,action,module,ref FROM public.audit_trail
             WHERE ref=ANY(?::text[]) AND module=ANY(?::text[]) ORDER BY ''' + _legacy_sort('dt') + ' DESC,id DESC LIMIT 300',
             (sorted(references), ['PPMP', 'APP', 'PR', 'AOQ', 'PO', 'NLP', 'IAR', 'Inventory', 'RIS/ICS'])).fetchall()

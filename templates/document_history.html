@@ -1,9 +1,10 @@
 {% if history %}
-<section id="document-history" class="card document-history" aria-labelledby="document-history-title">
-  <div class="toolbar"><div><h3 id="document-history-title">My uploaded documents</h3><p class="muted">Saved originals, extraction progress and review status. Official approval remains a separate workflow.</p></div></div>
+<section id="document-history" class="card document-history {{'aoq-history-workspace' if history.kind=='aoq'}}" aria-labelledby="document-history-title">
+  <div class="toolbar"><div><h3 id="document-history-title">{{'AOQ Document History' if history.kind=='aoq' else 'My uploaded documents'}}</h3><p class="muted">Saved originals, extraction progress and review status. Official approval remains a separate workflow.</p></div>{% if history.kind=='aoq' and not history.unavailable %}<span class="badge info">{{history.total}} matching upload(s)</span>{% endif %}</div>
   {% if history.unavailable %}
   <p class="notice" role="status" data-category="info">Document history is temporarily unavailable. Existing documents remain preserved. Please report reference {{history.reference or 'unavailable'}} to the administrator.</p>
   {% else %}
+  {% if history.kind=='aoq' %}<details class="history-filter-panel"><summary class="btn">Search and filter saved uploads</summary>{% endif %}
   <form method="get" class="history-filters" aria-label="Document history filters" action="#document-history">
     <input type="hidden" name="_nav" value="{{navigation_token()}}">
     {% for name,value in history.preserved_args %}<input type="hidden" name="{{name}}" value="{{value}}">{% endfor %}
@@ -18,6 +19,7 @@
     <label>Group this page<select name="h_group"><option value="">No grouping</option>{% for value,label in [('category','Category'),('month','Upload month'),('type','File type'),('status','Status')] %}<option value="{{value}}" {{'selected' if history.filters.h_group==value}}>{{label}}</option>{% endfor %}</select></label>
     <div class="actions"><button class="btn" type="submit">Apply filters</button><a class="btn" href="{{history.reset_url}}">Reset</a></div>
   </form>
+  {% if history.kind=='aoq' %}</details>{% endif %}
   <div data-live-region="document-history-results">
   <p class="muted" aria-live="polite">{{history.total}} saved document{{'' if history.total==1 else 's'}} · Page {{history.page}} · Up to 20 documents per page{% if history.group %}. Groups cover this page.{% endif %}</p>
   {% for group in history.groups %}

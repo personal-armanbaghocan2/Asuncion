@@ -1,27 +1,35 @@
 {% extends 'base.html' %}
 {% from 'procurement_ui.html' import stages with context %}
+{% from 'ui.html' import icon %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
-<div class="toolbar">
-  <div><h2>AOQ / Bidding Result</h2><p class="muted">Upload the bidding result independently. Review the quotations and winning supplier, save the AOQ, then approve it before PO creation.</p></div>
+<div class="procurement-workspace-hero">
+  <div class="procurement-workspace-title"><span class="procurement-workspace-mark">{{icon('document')}}</span><div><h2>AOQ / Abstract of Quotation</h2><p>Independent AOQ upload, quotation review, and approval before Purchase Order creation.</p></div></div>
+  <div class="procurement-independence-note">{{icon('check')}}<span><b>AOQ is independent from PR.</b><br>PR–PO matching is handled later in NLP Verification.</span></div>
 </div>
 
 {{stages(2)}}
+<div class="procurement-action-grid">
+  <section class="procurement-action-card upload"><span class="procurement-action-icon">{{icon('document')}}</span><div><h3>Upload AOQ (Independent)</h3><p>Upload an AOQ Excel or bidding result file. No PR selection required.</p>{% if independent_aoq and not workflow_preview %}<a class="btn primary" href="#aoq-upload-form" data-open-upload>Upload AOQ File</a>{% else %}<button class="btn primary" type="button" disabled>Upload AOQ File</button>{% endif %}</div></section>
+  <section class="procurement-action-card review"><span class="procurement-action-icon">{{icon('check')}}</span><div><h3>Review &amp; Approve AOQ</h3><p>Review supplier quotations and the winning offer before separate AOQ approval.</p><a class="btn blue" href="{{'#aoq-draft-review' if ocr_data and (selected_pr or independent_aoq) else '#aoq-records'}}">{{'Review Uploaded Quotation' if ocr_data and (selected_pr or independent_aoq) else 'Review AOQ Records'}}</a></div></section>
+  {% if not workflow_preview %}<section class="procurement-action-card history"><span class="procurement-action-icon">{{icon('box')}}</span><div><h3>Document History</h3><p>View saved originals, extraction results, quotation reviews and official record links.</p><a class="btn" href="#document-history">Open Document History</a></div></section>{% endif %}
+</div>
+{% include 'aoq_records.html' %}
 {% if not independent_aoq %}<p class="warning-box" role="status">Independent AOQ upload is unavailable until the revised workflow is active. The retired PR-linked upload is not offered here.</p>{% endif %}
-<div class="card" style="margin-top:16px">
+<details class="card aoq-upload-panel" id="aoq-upload-panel"><summary>Choose an AOQ file and extract supplier quotations</summary>
   <div class="step-title"><span>1</span><div><h3>Upload an independent AOQ / bidding result</h3><p class="muted">Supported formats: {{ supported_aoq_formats }}. The layout may be different; the system normalizes detected data into the review form below.</p></div></div>
-  <form method="post" enctype="multipart/form-data" class="compact-upload" data-document-processing action="{{url_for('aoq')}}" data-confirm="Extract the supplier quotations from this independent AOQ file?">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <form id="aoq-upload-form" method="post" enctype="multipart/form-data" class="compact-upload" data-document-processing action="{{url_for('aoq')}}" data-confirm="Extract the supplier quotations from this independent AOQ file?">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="extract_ocr">
-    <div class="form-field full"><label>AOQ / Bidding Result File</label><input name="ocr_file" type="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt" required></div>
+    <div class="form-field full"><label for="aoq-file-input">AOQ / Bidding Result File</label><input id="aoq-file-input" name="ocr_file" type="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt" required></div>
     <div class="form-actions full"><button class="btn primary" type="submit">Upload and Detect AOQ</button></div>
   {% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
   <p class="muted">No PR selection is required. Choose the approved PR later in NLP verification.</p>
-</div>
+</details>
 {% include 'aoq_quotations.html' %}
 
 {% if ocr_data and not ocr_data.get('offer_review_token') %}<form method="post">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="prepare_preview"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><p class="notice">Resume the saved quotation review before continuing.</p><button class="btn" type="submit">Resume review</button>{% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>{% endif %}
 {% if ocr_data and (selected_pr or independent_aoq) %}
-<div class="card" style="margin-top:16px">
+<div class="card aoq-draft-review" id="aoq-draft-review" data-active-draft style="margin-top:16px">
   <div class="toolbar">
     <div class="step-title"><span>2</span><div><h3>Review the uploaded supplier quotations</h3><p class="muted">This is a private extraction draft. Review and confirm it before saving an official AOQ.</p></div></div>
     <form method="post">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="clear_ocr"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><button class="btn danger" type="submit">Discard and Upload Another</button>{% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
@@ -102,16 +110,10 @@
 </div>
 {% endif %}
 
-<div class="card" style="margin-top:16px">
-  <div class="step-title"><span>4</span><div><h3>Review and Approve Saved AOQ Records</h3><p class="muted">Only approved AOQ records can be used to generate a PO.</p></div></div>
-  <div class="table-scroll"><table class="table"><tr><th>AOQ</th><th>Historical PR reference</th><th>Uploaded File</th><th>Winning Supplier</th><th>Winning Amount</th><th>Status</th><th>Next Action</th></tr>
-    {% for r in rows %}<tr><td><span class="id-chip">{{r.no}}</span></td><td class="document-ref">{{r.pr_no or 'Independent AOQ'}}<br><span class="muted">{{r.pr_office}}</span></td><td>{{r.ocr_filename or 'Legacy record'}}</td><td><b>{{r.winner}}</b><br><span class="muted">{{r.item_preview}}</span></td><td class="numeric">{{r.winning_amount|money}}</td><td><span class="badge {{'ok' if r.status=='Approved' else 'warn'}}">{{r.status}}</span></td><td><a class="btn small blue" href="{{url_for('aoq_review',id=r.id)}}">Review</a>{% if r.status=='Approved' %}<a class="btn small blue" href="{{url_for('po')}}">Continue to PO</a>{% endif %}</td></tr>{% else %}<tr><td colspan="7" class="center muted">No AOQ records yet.</td></tr>{% endfor %}
-  </table></div>
-</div>
 {% if not workflow_preview %}{% include 'document_history.html' %}{% endif %}
 {% endblock %}
 
-{% block scripts %}{% if not workflow_preview %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>
+{% block scripts %}{% if not workflow_preview %}<script defer src="{{url_for('static',filename='js/procurement-workspace.js')}}"></script><script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>
 {% if ocr_data %}
 <script>
 (function(){

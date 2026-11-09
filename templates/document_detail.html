@@ -1,7 +1,22 @@
-{% extends 'base.html' %}{% block content %}
-<div class="page-head"><div><h2>Document History</h2><p>{{source.filename}}</p><p class="muted">{{source.id}} · {{source.extension}} · Uploaded {{source.created_at}}</p></div><a class="btn" href="{{url_for('document_history_source',sid=source.id)}}">Download original</a></div>
+{% extends 'base.html' %}
+{% block head_extra %}{% if source.kind=='aoq' %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endif %}{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>Document History</h2><p>{{source.filename}}</p><p class="muted">{{source.id}} · {{source.extension}} · Uploaded {{source.created_at}}</p></div><div class="actions"><a class="btn" href="{{url_for('aoq' if source.kind=='aoq' else 'ppmp_intake')}}">Back to workspace</a><a class="btn" href="{{url_for('document_history_source',sid=source.id)}}">Download original</a></div></div>
 {% if unavailable %}<p class="notice" data-category="info">Processing history requires the reviewed document-processing installation. The original remains preserved.</p>{% endif %}
-<section class="card"><h3>Saved source and workflow</h3><div class="document-link-list">{% if source.kind=='ppmp' %}<a class="btn primary" href="{{url_for('ppmp_intake_review',sid=source.id)}}">Open saved item workspace</a>{% endif %}{% for link in links %}<a class="btn" href="{{link.url}}">{{link.module|upper}} {{link.no}} · {{link.status}}</a>{% endfor %}</div>{% if not links %}<p class="muted">No linked official procurement record has been recorded.</p>{% endif %}</section>
+{% if source.kind=='aoq' %}<div class="procurement-evidence-grid">{% endif %}
+<section class="card"><h3>Saved source and workflow</h3><div class="document-link-list">{% if source.kind=='ppmp' %}<a class="btn primary" href="{{url_for('ppmp_intake_review',sid=source.id)}}">Open saved item workspace</a>{% endif %}{% for link in links %}<a class="btn" href="{{link.url}}">{{link.module|upper}} {{link.no}} · {{link.status}}</a>{% endfor %}</div>{% if not links %}<p class="muted">No linked official procurement record has been recorded.</p>{% endif %}
+{% if source.kind=='aoq' %}
+<div class="procurement-section"><h3>PR–PO verification and human review</h3><p class="muted">A selected PR is not an authorized relationship until its review is recorded. Stored reviews do not replace current final-approval checks. Up to 100 saved verifications are shown.</p>
+{% if revised_workflow_active %}{% for record in verifications %}<article class="procurement-source-item">
+  <div class="section-heading-row"><b>{{record.no}}</b><span class="badge {{'ok' if record.relationship_recorded else 'warn'}}">{{'Relationship recorded' if record.relationship_recorded else 'Selection awaiting authorization'}}</span></div>
+  <dl><dt>Selected PR / Created PO</dt><dd>{{record.pr_no or 'Not recorded'}} / {{record.po_no}}</dd><dt>Saved NLP / Technical checks</dt><dd>{{record.result}} / {{record.technical_status}}</dd><dt>Verification / PO status</dt><dd>{{record.status}} / {{record.po_status}}</dd></dl>
+  {% if record.relationship_recorded %}<p><b>Reviewer ID:</b> {{record.reviewed_by or 'Not recorded'}} · {{record.reviewed_at or 'Time not recorded'}}</p><p>{{record.relationship_reason}}</p><p><b>Evidence reference:</b> {{record.evidence_reference}}</p>{% endif %}
+  <div class="actions"><a class="btn small blue" href="{{record.review_url}}">View verification evidence</a><a class="btn small" href="{{record.po_url}}">Review PO</a></div>
+</article>{% else %}<p class="notice">No revised PR–PO verification is recorded for this saved AOQ.</p>{% endfor %}{% else %}<p class="notice">Detailed revised verification evidence is unavailable for this workflow release. Existing source and audit history remain preserved.</p>{% endif %}
+</div>{% endif %}</section>
 <section class="card"><h3>Recorded processing and procurement events</h3><ol class="document-timeline" data-live-region="document-timeline">{% for event in events %}<li><time>{{event.at}}</time><strong>{{event.action}}</strong>{% if event.actor %}<p>Recorded actor: {{event.actor}}</p>{% endif %}{% if event.reference %}<p>Reference: {{event.reference}}</p>{% endif %}</li>{% else %}<li>No additional recorded events are available.</li>{% endfor %}</ol></section>
+{% if source.kind=='aoq' %}</div>{% endif %}
+{% if events_truncated %}<p class="notice">Only the latest 300 recorded events are displayed. Older audit evidence remains stored.</p>{% endif %}
+{% if links_truncated %}<p class="notice">Only the first 100 linked records are displayed. Existing records remain stored.</p>{% endif %}
 {% if extraction.get('warnings') %}<div class="warning-box"><ul>{% for warning in extraction.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}<details class="card"><summary>Original extracted text</summary><pre class="raw-ocr-pre">{{extraction.get('text') or extraction.get('raw_text','')}}</pre></details>
-{% include 'document_history.html' %}{% endblock %}
+{% endblock %}

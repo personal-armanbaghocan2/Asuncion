@@ -1,8 +1,8 @@
 {% extends 'base.html' %}
-{% from 'procurement_ui.html' import stages with context %}
+{% from 'procurement_ui.html' import stages,page_header with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
-<div class="toolbar page-head"><div><h2>Purchase Request</h2><p class="muted">Prepare the original requirements from an approved APP. AOQ upload is independent.</p></div></div>
+{{page_header('Purchase Request','Create and approve original requirements from an approved APP. Prepare the AOQ independently.','edit')}}
 {{stages(1)}}
 <section class="card"><h3>Create a purchase request</h3>
 <form action="{{url_for('pr')}}" method="post" class="source-bar pr-source-bar" data-confirm="Create a Purchase Request from the selected approved APP?">{% if workflow_preview %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

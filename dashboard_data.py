@@ -51,6 +51,34 @@ def segments(counts, colors=None):
             for i, (label, count) in enumerate(counts.items())]
 
 
+def revised_procurement_queue(query):
+    """Read existing statuses only; queue counts never grant approval authority."""
+    row = query("""select
+      (select count(*) from pr where status='Approved') approved_pr,
+      (select count(*) from aoq where status='For Review') aoq_review,
+      (select count(*) from aoq a where a.status='Approved'
+        and not exists(select 1 from po p where p.aoq_id=a.id)) po_creation,
+      (select count(*) from po p join aoq a on a.id=p.aoq_id
+        where p.status='For Review' and a.status='Approved'
+        and not exists(select 1 from nlp n where n.po_id=p.id)) verification,
+      (select count(*) from nlp n where n.workflow_version=1 and n.status='For Review'
+        and n.technical_status='MATCH' and n.result in ('Acceptable','Needs Review')) relationship_review,
+      (select count(*) from po p where p.status='For Review'
+        and exists(select 1 from psms_documents.pr_po_reviews r join nlp n on n.id=r.nlp_id
+          where r.po_id=p.id and n.workflow_version=1 and n.status='Approved')) final_review
+      """, one=True)
+    if row is None:
+        return []
+    return [dict(label=label, count=int(row[key]), endpoint=endpoint, note=note)
+            for key, label, endpoint, note in (
+                ('approved_pr', 'Approved PRs', 'pr', 'Stored approved requirements; source eligibility still applies'),
+                ('aoq_review', 'AOQ review', 'aoq', 'Saved quotations awaiting approval'),
+                ('po_creation', 'PO creation', 'po', 'Approved AOQs without a PO'),
+                ('verification', 'NLP verification', 'nlp', 'POs For Review without saved NLP evidence'),
+                ('relationship_review', 'Admin review', 'nlp', 'Saved results eligible for further human checks'),
+                ('final_review', 'Final PO review', 'po', 'Relationship recorded; final source checks still apply'))]
+
+
 def build_dashboard(query, today=None):
     """Use the existing q() PostgreSQL layer; project only needed public fields."""
     today = today or datetime.now()
