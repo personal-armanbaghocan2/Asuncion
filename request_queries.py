@@ -13,6 +13,8 @@ def _bind_actor(con):
     No row lock, write, commit, persistent connection state or client role claim.
     """
     if not has_request_context():return
+    if not (getattr(g,'workflow_preview',False) or getattr(g,'revised_procurement_enabled',False)):
+        return
     account=getattr(g,'psms_account',None);uid=session.get('user_id')
     if (session.get('logged_in') is not True or type(uid) is not int or uid<=0
             or not account or account.get('id')!=uid or account.get('status')!='Active'
@@ -54,8 +56,10 @@ def read(factory,sql,params=(),one=False):
         return result
     finally:
         if con is not None and not shared:
-            try:con.rollback()
-            finally:con.close()
+            if has_request_context() and (getattr(g,'workflow_preview',False) or getattr(g,'revised_procurement_enabled',False)):
+                try:con.rollback()
+                finally:con.close()
+            else:con.close()
 
 
 def close(error=None):

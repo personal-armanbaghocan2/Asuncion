@@ -15,29 +15,31 @@
 <script defer src="{{url_for('static',filename='js/source-preview.js')}}"></script>
 <script defer src="{{url_for('static',filename='js/record-selectors.js')}}"></script>
 {% block head_extra %}{% endblock %}
-</head><body data-sync-url="{{url_for('sync_revisions')}}" data-sync-topics='{{sync_topics(active)|tojson}}' class="reference-shell{% if active=='dashboard' %} approved-dashboard{% endif %}{% if active in ['ppmp','app','pr','aoq','po','nlp'] %} procurement-page{% endif %}">
+</head><body data-workflow-preview="{{'true' if workflow_preview else 'false'}}" data-sync-url="{{url_for('sync_revisions')}}" data-sync-topics='{{([] if workflow_preview else sync_topics(active))|tojson}}' class="reference-shell{% if active=='dashboard' %} approved-dashboard{% endif %}{% if active in ['ppmp','app','pr','aoq','po','nlp'] %} procurement-page{% endif %}">
 <a class="skip-link" href="#mainContent">Skip to content</a>
 <div class="nav-scrim" id="navScrim" hidden></div>
 <aside class="sidebar" id="sideNav" aria-label="Main navigation">
   <div class="brand"><img class="seal" src="{{url_for('static',filename='images/asuncion-seal.png')}}" alt="Municipality of Asuncion official seal"><div><strong>Municipality of<br>Asuncion</strong><small>Supply &amp; Property<br>Management</small></div></div>
   <button class="nav-close icon-button" id="navClose" aria-label="Close navigation">{{icon('close')}}</button>
   <nav class="nav">
-    <a class="{{'active' if active=='dashboard'}}" href="{{url_for('dashboard')}}" {% if active=='dashboard' %}aria-current="page"{% endif %}>{{icon('dashboard')}}Dashboard{% if active=='dashboard' %}<span class="active-dot"></span>{% endif %}</a>
-    <div class="nav-title">Procurement planning</div>
-    <button class="nav-parent {{'active-parent' if active=='ppmp'}}" id="ppmpToggle" aria-expanded="{{ 'true' if active=='ppmp' else 'false' }}" aria-controls="ppmpSub">{{icon('document')}}<span>PPMP</span>{{icon('chevron')}}</button>
+    {% if not workflow_preview %}<a class="{{'active' if active=='dashboard'}}" href="{{url_for('dashboard')}}" {% if active=='dashboard' %}aria-current="page"{% endif %}>{{icon('dashboard')}}Dashboard{% if active=='dashboard' %}<span class="active-dot"></span>{% endif %}</a>
+    {% endif %}<div class="nav-title">Procurement planning</div>
+    {% if not workflow_preview %}<button class="nav-parent {{'active-parent' if active=='ppmp'}}" id="ppmpToggle" aria-expanded="{{ 'true' if active=='ppmp' else 'false' }}" aria-controls="ppmpSub">{{icon('document')}}<span>PPMP</span>{{icon('chevron')}}</button>
     <div class="sub" id="ppmpSub" {% if active!='ppmp' %}hidden{% endif %}>
       <a href="{{url_for('ppmp_home')}}">PPMP Overview</a>
       <a class="{{'active' if request.endpoint in ['ppmp_intake','ppmp_intake_review']}}" href="{{url_for('ppmp_intake')}}">Document Upload &amp; Review</a>
       {% for category in ['DBM','NON-DBM','LIB'] %}<a class="{{'active' if request.endpoint=='ppmp_type' and request.view_args.get('ptype')==category}}" href="{{url_for('ppmp_type',ptype=category)}}">{{category}}</a>{% endfor %}
       <a class="{{'active' if request.endpoint=='ppmp_dataset'}}" href="{{url_for('ppmp_dataset')}}">Inventory Item Source</a>
     </div>
-    {% for key,label,endpoint,glyph in [('app','APP','app_plan','document'),('pr','Purchase Request','pr','edit'),('aoq','AOQ / Bidding Result','aoq','document'),('po','Purchase Order','po','cart'),('nlp','NLP Verification','nlp','check')] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{label}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endfor %}
-    <div class="nav-title">Receiving &amp; property</div>
+    {% endif %}{% for key,label,endpoint,glyph in [('app','APP','app_plan','document'),('pr','Purchase Request','pr','edit'),('aoq','AOQ / Bidding Result','aoq','document'),('po','Purchase Order','po','cart'),('nlp','NLP Verification','nlp','check')] %}{% if not workflow_preview or key in ['pr','aoq','po','nlp'] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{label}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endif %}{% endfor %}
+    {% if not workflow_preview %}<div class="nav-title">Receiving &amp; property</div>
     {% for key,label,endpoint,glyph in [('iar','IAR / AIR','iar','check'),('inventory','Inventory','inventory','box'),('ris','RIS / ICS','ris_ics','document')] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{label}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endfor %}
     <div class="nav-title">System</div>
     <a class="{{'active' if active=='reports'}}" href="{{url_for('reports')}}">{{icon('report')}}Reports{% if active=='reports' %}<span class="active-dot"></span>{% endif %}</a>
     <a class="{{'active' if active=='audit'}}" href="{{url_for('audit')}}">{{icon('history')}}Audit Trail{% if active=='audit' %}<span class="active-dot"></span>{% endif %}</a>
     {% if session.get('role')=='Admin' %}<a class="{{'active' if active=='users'}}" href="{{url_for('users')}}">{{icon('users')}}User Management{% if active=='users' %}<span class="active-dot"></span>{% endif %}</a>{% endif %}
+    {% endif %}
+    {% if workflow_preview_available and not workflow_preview %}<a href="{{url_for('workflow_preview_pr')}}">Read-only revised workflow</a>{% endif %}
   </nav>
 </aside>
 <div class="app"><main class="main">
@@ -57,14 +59,14 @@
       <div class="account-dropdown" id="accountMenu" role="menu" hidden>
         <div class="account-dropdown-head"><img class="avatar small-avatar profile-avatar" src="{{url_for('account_photo')}}" alt="Your profile picture" width="32" height="32"><span><b>{{acct_name}}</b><small>{{acct.get('role') or session.get('role','Staff')}}</small></span></div>
         <div class="account-dropdown-links">
-          <a role="menuitem" href="{{url_for('account')}}">My Account</a>
+          {% if not workflow_preview %}<a role="menuitem" href="{{url_for('account')}}">My Account</a>
           <a role="menuitem" href="{{url_for('account')}}#change-password">Change Password</a>
-          <form method="post" action="{{url_for('logout')}}" data-confirm-category="logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" role="menuitem" class="danger-link">Sign Out</button></form>
+          <form method="post" action="{{url_for('logout')}}" data-confirm-category="logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" role="menuitem" class="danger-link">Sign Out</button></form>{% endif %}
         </div>
       </div>
     </div>
   </div>
 </header>
-<section class="content" id="mainContent" tabindex="-1">{% with messages=get_flashed_messages(with_categories=true) %}{% for category,m in messages %}<div class="notice" data-category="{{category}}" role="{{'alert' if category=='error' else 'status'}}">{{m}}</div>{% endfor %}{% endwith %}{% include 'record_filters.html' %}{% block content %}{% endblock %}{% include 'record_pagination.html' %}<footer class="page-footer">Municipality of Asuncion<span>Supply &amp; Property Management</span></footer></section></main></div>
+<section class="content" id="mainContent" tabindex="-1">{% with messages=get_flashed_messages(with_categories=true) %}{% for category,m in messages %}<div class="notice" data-category="{{category}}" role="{{'alert' if category=='error' else 'status'}}">{{m}}</div>{% endfor %}{% endwith %}{% include 'record_filters.html' %}{% if workflow_preview %}<div class="warning-box" role="status"><b>Read-only revised workflow preview</b><br>Approved PR → Independent AOQ → PO For Review → NLP verification → Authorized PO approval → Delivery and inventory.<br>Uploads, saving, approvals and model execution are disabled. Existing authorized records only. The operational workflow policy is unchanged.</div>{% endif %}{% block content %}{% endblock %}{% include 'record_pagination.html' %}<footer class="page-footer">Municipality of Asuncion<span>Supply &amp; Property Management</span></footer></section></main></div>
 {% include 'confirmation_dialog.html' %}
 {% block scripts %}{% endblock %}</body></html>

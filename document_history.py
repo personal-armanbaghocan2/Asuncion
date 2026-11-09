@@ -398,22 +398,19 @@ _WORKFLOW = """WITH owned_ppmp AS (
  SELECT official_ppmp_id AS id FROM public.ppmp_ocr_drafts WHERE source_id=? AND owner_id=? AND official_ppmp_id IS NOT NULL
 ), owned_aoq AS (
  SELECT official_aoq_id AS id,pr_id FROM psms_documents.aoq_drafts WHERE source_id=? AND owner_id=?
-), related_pr AS (
- SELECT pr_id AS id FROM owned_aoq WHERE pr_id IS NOT NULL
- UNION SELECT p.pr_id FROM public.po p WHERE p.aoq_id IN (SELECT id FROM owned_aoq) AND p.pr_id IS NOT NULL
 ), lp AS (
  SELECT p.id,p.no,p.status,p.created_at FROM public.ppmp p WHERE p.id IN (SELECT id FROM owned_ppmp)
- OR p.id IN (SELECT r.ppmp_id FROM public.pr r WHERE r.id IN (SELECT id FROM related_pr))
- OR p.id IN (SELECT a.ppmp_id FROM public.app_plan a JOIN public.pr r ON r.app_id=a.id WHERE r.id IN (SELECT id FROM related_pr))
+ OR p.id IN (SELECT r.ppmp_id FROM public.pr r WHERE r.id IN (SELECT pr_id FROM owned_aoq))
+ OR p.id IN (SELECT a.ppmp_id FROM public.app_plan a JOIN public.pr r ON r.app_id=a.id WHERE r.id IN (SELECT pr_id FROM owned_aoq))
 ), la AS (
  SELECT a.id,a.no,a.status,a.created_at FROM public.app_plan a WHERE a.ppmp_id IN (SELECT id FROM owned_ppmp)
- OR a.id IN (SELECT app_id FROM public.pr WHERE id IN (SELECT id FROM related_pr))
+ OR a.id IN (SELECT app_id FROM public.pr WHERE id IN (SELECT pr_id FROM owned_aoq))
 ), lr AS (
  SELECT r.id,r.no,r.status,r.created_at FROM public.pr r WHERE r.ppmp_id IN (SELECT id FROM owned_ppmp)
- OR r.app_id IN (SELECT id FROM la WHERE EXISTS(SELECT 1 FROM owned_ppmp)) OR r.id IN (SELECT id FROM related_pr)
+ OR r.app_id IN (SELECT id FROM la WHERE EXISTS(SELECT 1 FROM owned_ppmp)) OR r.id IN (SELECT pr_id FROM owned_aoq)
 ), lq AS (
  SELECT a.id,a.no,a.status,a.created_at FROM public.aoq a WHERE a.id IN (SELECT id FROM owned_aoq)
- OR (EXISTS(SELECT 1 FROM owned_ppmp) AND (a.pr_id IN (SELECT id FROM lr) OR EXISTS(SELECT 1 FROM public.po p WHERE p.aoq_id=a.id AND p.pr_id IN (SELECT id FROM lr))))
+ OR (EXISTS(SELECT 1 FROM owned_ppmp) AND a.pr_id IN (SELECT id FROM lr))
 ), lo AS (
  SELECT p.id,p.no,p.status,p.created_at FROM public.po p WHERE p.aoq_id IN (SELECT id FROM lq)
 ), li AS (
@@ -430,6 +427,9 @@ _WORKFLOW = """WITH owned_ppmp AS (
  SELECT 9,'ris',id,no,status,created_at FROM public.ris_ics WHERE no IN (
    SELECT document_no FROM public.inventory_transactions WHERE inventory_id IN (SELECT id FROM li))
 ) SELECT * FROM linked ORDER BY stage,id LIMIT 101"""
+
+
+_REVISED_WORKFLOW = "WITH owned_ppmp AS (\n SELECT official_ppmp_id AS id FROM public.ppmp_ocr_drafts WHERE source_id=? AND owner_id=? AND official_ppmp_id IS NOT NULL\n), owned_aoq AS (\n SELECT official_aoq_id AS id,pr_id FROM psms_documents.aoq_drafts WHERE source_id=? AND owner_id=?\n), related_pr AS (\n SELECT pr_id AS id FROM owned_aoq WHERE pr_id IS NOT NULL\n UNION SELECT p.pr_id FROM public.po p WHERE p.aoq_id IN (SELECT id FROM owned_aoq) AND p.pr_id IS NOT NULL\n), lp AS (\n SELECT p.id,p.no,p.status,p.created_at FROM public.ppmp p WHERE p.id IN (SELECT id FROM owned_ppmp)\n OR p.id IN (SELECT r.ppmp_id FROM public.pr r WHERE r.id IN (SELECT id FROM related_pr))\n OR p.id IN (SELECT a.ppmp_id FROM public.app_plan a JOIN public.pr r ON r.app_id=a.id WHERE r.id IN (SELECT id FROM related_pr))\n), la AS (\n SELECT a.id,a.no,a.status,a.created_at FROM public.app_plan a WHERE a.ppmp_id IN (SELECT id FROM owned_ppmp)\n OR a.id IN (SELECT app_id FROM public.pr WHERE id IN (SELECT id FROM related_pr))\n), lr AS (\n SELECT r.id,r.no,r.status,r.created_at FROM public.pr r WHERE r.ppmp_id IN (SELECT id FROM owned_ppmp)\n OR r.app_id IN (SELECT id FROM la WHERE EXISTS(SELECT 1 FROM owned_ppmp)) OR r.id IN (SELECT id FROM related_pr)\n), lq AS (\n SELECT a.id,a.no,a.status,a.created_at FROM public.aoq a WHERE a.id IN (SELECT id FROM owned_aoq)\n OR (EXISTS(SELECT 1 FROM owned_ppmp) AND (a.pr_id IN (SELECT id FROM lr) OR EXISTS(SELECT 1 FROM public.po p WHERE p.aoq_id=a.id AND p.pr_id IN (SELECT id FROM lr))))\n), lo AS (\n SELECT p.id,p.no,p.status,p.created_at FROM public.po p WHERE p.aoq_id IN (SELECT id FROM lq)\n), li AS (\n SELECT i.id,i.item_code AS no,i.status,i.created_at FROM public.inventory i WHERE i.source_po IN (SELECT no FROM lo)\n), linked AS (\n SELECT 1 AS stage,'ppmp' AS module,id,no,status,created_at FROM lp UNION ALL\n SELECT 2,'app',id,no,status,created_at FROM la UNION ALL\n SELECT 3,'pr',id,no,status,created_at FROM lr UNION ALL\n SELECT 4,'aoq',id,no,status,created_at FROM lq UNION ALL\n SELECT 5,'po',id,no,status,created_at FROM lo UNION ALL\n SELECT 6,'nlp',id,no,status,created_at FROM public.nlp WHERE po_id IN (SELECT id FROM lo) UNION ALL\n SELECT 7,'iar',id,no,status,created_at FROM public.iar WHERE po_id IN (SELECT id FROM lo) UNION ALL\n SELECT 8,'inventory',id,no,status,created_at FROM li UNION ALL\n SELECT 9,'ris',id,no,status,created_at FROM public.ris_ics WHERE no IN (\n   SELECT document_no FROM public.inventory_transactions WHERE inventory_id IN (SELECT id FROM li))\n) SELECT * FROM linked ORDER BY stage,id LIMIT 101"
 
 
 def _event_key(event):
@@ -541,7 +541,9 @@ def detail(api, sid):
                 category=assignment['category'], evidence=assignment['evidence']))
         endpoints = {'ppmp': 'ppmp_review', 'app': 'app_review', 'pr': 'pr_review', 'aoq': 'aoq_review',
                      'po': 'po_review', 'nlp': 'nlp_review', 'iar': 'iar_review', 'ris': 'ris_ics_review'}
-        linked = con.execute(_WORKFLOW, (sid, uid, sid, uid)).fetchall()
+        import revised_procurement_v1 as revised_procurement
+        workflow_sql = _REVISED_WORKFLOW if revised_procurement.enabled(api) else _WORKFLOW
+        linked = con.execute(workflow_sql, (sid, uid, sid, uid)).fetchall()
         result['links_truncated'] = len(linked) > 100
         for record in linked[:100]:
             link = dict(record)

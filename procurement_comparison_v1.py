@@ -17,15 +17,41 @@ QUANTITY=('Quantity','quantity','qty','QTY','Requested Quantity','Awarded Quanti
 UNIT=('Unit','unit','Unit of Measure','unit_of_measure','uom')
 DESCRIPTIVE={'description','description / specification','item description','specification','specifications',
  'detailed specifications','technical specifications','brand','model','item type','category','capacity',
- 'dimensions','dimension','size','material','weight','color','colour','technical ratings','rating',
+ 'dimensions','dimension','size','material','weight','color','colour','technical ratings','rating','source category',
  'compatibility','performance','processor','cpu','ram','memory','ssd','hdd','storage','interface',
  'general description and objective of the project to be procured','full description','detailed specification',
  'type of the project to be procured','article','article / description',
- 'quantity and size of the project to be procured'}
+ 'quantity and size of the project to be procured','warranty','warranty period','operating system','body material'}
 UNITS={'pc':'piece','pcs':'piece','pieces':'piece','piece':'piece','units':'unit','unit':'unit',
  'ream':'ream','reams':'ream','bottle':'bottle','bottles':'bottle','set':'set','sets':'set'}
 
 def norm(value):return re.sub(r'\s+',' ',str(value or '')).strip().casefold()
+
+def specification_tokens(value):
+    """Bounded spelling/format equivalence, never human adjudication of prose.
+
+    Keep numbers, operators, negation and punctuation. Unknown wording stays
+    different even after a reviewer establishes the corresponding item.
+    """
+    text=norm(value)
+    for pattern,replacement in (
+        (r'\bsolid[ -]state drive\b','ssd'),
+        (r'\bgigabytes?\b','gb'),(r'\bmegabytes?\b','mb'),(r'\bterabytes?\b','tb'),
+        (r'\bat least\b','minimum'),(r'\bat most\b','maximum')):
+        text=re.sub(pattern,replacement,text)
+    # A bounded exact USB-capacity grammar supports reordered factual wording
+    # in the existing equivalent-item fixture. Every other word must belong to
+    # the optional product phrase; unknown requirements/negations cannot vanish.
+    capacities=list(re.finditer(r'\b(\d+(?:\.\d+)?)\s*(gb|mb|tb)\b',text))
+    interfaces=list(re.finditer(r'\busb\s*(\d+(?:\.\d+)?)\b',text))
+    if len(capacities)==len(interfaces)==1:
+        remaining=text
+        for match in sorted(capacities+interfaces,key=lambda match:match.start(),reverse=True):
+            remaining=remaining[:match.start()]+' '+remaining[match.end():]
+        if re.fullmatch(r'\s*(?:flash\s+(?:memory|drive|storage))?\s*',remaining):
+            return ('exact USB capacity',str(Decimal(capacities[0][1])),capacities[0][2],
+                    'interface',str(Decimal(interfaces[0][1])))
+    return re.findall(r'\d+(?:\.\d+)?|[^\W\d_]+|[^\w\s]',text)
 def first(item,keys):return next((item[k] for k in keys if item.get(k) not in (None,'')),None)
 def fingerprint(text):return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
@@ -44,7 +70,7 @@ def evidence(item,position,side):
     for key,value in item.items():
         label=norm(str(key).replace('_',' '))
         if not str(key).startswith('_') and (key in NAME or label in DESCRIPTIVE or re.search(
-            r'capacity|model|power|voltage|length|width|height|frequency|technical|resolution|speed|compatib|specification|material|colou?r|brand|size|weight|rating|performance',label)):
+            r'capacity|model|power|voltage|length|width|height|frequency|technical|resolution|speed|compatib|specification|material|colou?r|brand|size|weight|rating|performance|warranty|operating system',label)):
             if value is None or type(value) not in (str,int,float):continue
             text=str(value).strip()
             if len(text)>8000:raise ValueError('SOURCE_DESCRIPTION_LIMIT')
@@ -73,6 +99,8 @@ def inference_items(items,side):
 def facts(row):
     result={}
     text=row['description']
+    for match in re.finditer(r'(?i)\b(A[0-6]|B[0-6]|letter|legal)\b',text):
+        result.setdefault('paper size',[]).append(dict(value=norm(match[1]),unit='literal',operator='exact'))
     # No silent GB/TB binary/decimal conversion: mixed capacity units remain a
     # difference for review. Explicit minimum/maximum applies to that occurrence.
     for match in re.finditer(r'(?i)(?:(minimum|maximum|at least|at most)\s+)?(\d+(?:\.\d+)?)\s*(GB|MB|TB)\b',text):
@@ -87,7 +115,8 @@ def facts(row):
         result.setdefault('measurement '+match[3].lower(),[]).append(dict(value=str(Decimal(match[2])),unit=match[3].lower(),operator=(match[1] or 'exact').lower()))
     for key,value in row['fields'].items():
         if norm(key) in {'brand','model','material','color','colour','compatibility','dimensions','size','weight','technical ratings','rating',
-            'processor','cpu','ram','memory','ssd','hdd','storage','interface','resolution','performance','performance characteristics'}:
+            'processor','cpu','ram','memory','ssd','hdd','storage','interface','resolution','performance','performance characteristics',
+            'warranty','warranty period','operating system','body material'}:
             result.setdefault(norm(key).replace('colour','color'),[]).append(dict(value=norm(value),unit='literal',operator='exact'))
     for match in re.finditer(r'(?i)\b(model|brand|material|colou?r)\s*[:=]\s*([\w.-]+)',text):
         result.setdefault(match[1].lower().replace('colour','color'),[]).append(dict(value=norm(match[2]),unit='literal',operator='exact'))
@@ -102,7 +131,31 @@ def check_pair(left,right,identity):
     add('quantity','UNKNOWN' if left['conflicting_quantity'] or right['conflicting_quantity'] or lq is None or rq is None or lq<=0 or rq<=0 else 'MATCH' if lq==rq else 'MISMATCH',left['quantity'],right['quantity'])
     lu,ru=norm(left['unit']),norm(right['unit'])
     add('unit','UNKNOWN' if left['conflicting_unit'] or right['conflicting_unit'] or not lu or not ru else 'MATCH' if UNITS.get(lu,lu)==UNITS.get(ru,ru) else 'MISMATCH',left['unit'],right['unit'])
+    categories=('category','source category','item type','type of the project to be procured')
+    for category in categories:
+        required=[norm(value) for key,value in left['fields'].items() if norm(key.replace('_',' '))==category]
+        offered=[norm(value) for key,value in right['fields'].items() if norm(key.replace('_',' '))==category]
+        if required:add(category,'MISSING_SPECIFICATION' if not offered else 'MATCH' if required==offered else 'MISMATCH',required,offered)
+    narrative_keys={'description','description / specification','item description','specification','specifications','detailed specifications','technical specifications'}
+    requested_text=' '.join(norm(v) for k,v in left['fields'].items() if norm(k) in narrative_keys)
+    offered_text=' '.join(norm(v) for k,v in right['fields'].items() if norm(k) in narrative_keys)
+    if requested_text:
+        add('source specification wording', 'MATCH' if specification_tokens(requested_text)==specification_tokens(offered_text) else
+            'MISSING_SPECIFICATION' if not offered_text else
+            'REQUIRES_HUMAN_REVIEW', requested_text,offered_text)
     requested,offered=facts(left),facts(right)
+    # A retained structured attribute without a dedicated fact parser must not
+    # disappear from compliance checks (e.g. "Warranty duration (months)").
+    # Only exact bounded spelling/format equivalence resolves it; mapping never
+    # adjudicates a different value. Known parsed attributes keep their rules.
+    for key,value in left['fields'].items():
+        label=norm(key.replace('_',' '))
+        if key in NAME or label in narrative_keys or label in categories or label in requested:continue
+        available=[v for k,v in right['fields'].items() if norm(k.replace('_',' '))==label]
+        state=('MISSING_SPECIFICATION' if not available else 'MATCH'
+               if all(specification_tokens(value)==specification_tokens(v) for v in available)
+               else 'REQUIRES_HUMAN_REVIEW')
+        add('source specification field '+label,state,value,available)
     for attribute,values in requested.items():
         available=offered.get(attribute,[])
         for required in values:
