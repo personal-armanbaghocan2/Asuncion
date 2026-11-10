@@ -1,8 +1,10 @@
 {% from 'ui.html' import icon %}
+{% set workspace_names = {'dashboard':'Dashboard','ppmp':'PPMP Preparation','app':'Annual Procurement Plan (APP)','pr':'Purchase Requests','aoq':'Quotation Evaluation (AOQ)','po':'Purchase Orders','nlp':'PR–PO Review','iar':'Inspection & Acceptance','inventory':'Inventory Management','ris':'Issuance & Custody','reports':'Reports','audit':'Audit Log','users':'User Accounts & Roles'} %}
+{% set page_title = title or workspace_names.get(active, 'Supply and Property Management') %}
 <!doctype html><html lang="en"><head><meta name="csrf-token" content="{{ csrf_token() }}"><script defer src="{{url_for('static',filename='js/csrf.js')}}"></script>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="document-upload-limit" content="{{config.get('DOCUMENT_UPLOAD_LIMIT',0)}}">
-<title>{{ title or 'Supply and Property Management' }} · Asuncion</title>
+<title>{{page_title}} · Asuncion</title>
 <link rel="icon" href="{{url_for('static',filename='images/asuncion-seal.png')}}">
 <link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}">
 <link rel="stylesheet" href="{{url_for('static',filename='css/reference-layout.css')}}">
@@ -12,6 +14,7 @@
 <script defer src="{{url_for('static',filename='js/confirm-actions.js')}}"></script>
 <script defer src="{{url_for('static',filename='js/ui.js')}}"></script>
 <script defer src="{{url_for('static',filename='js/live-updates.js')}}"></script>
+{% if active in ['ppmp','app','pr','aoq','po','nlp','iar','ris'] and not workflow_preview %}<script defer src="{{url_for('static',filename='js/procurement-workspace.js')}}"></script>{% endif %}
 <script defer src="{{url_for('static',filename='js/source-preview.js')}}"></script>
 <script defer src="{{url_for('static',filename='js/record-selectors.js')}}"></script>
 {% block head_extra %}{% endblock %}
@@ -24,26 +27,26 @@
   <nav class="nav">
     {% if not workflow_preview %}<a class="{{'active' if active=='dashboard'}}" href="{{url_for('dashboard')}}" {% if active=='dashboard' %}aria-current="page"{% endif %}>{{icon('dashboard')}}Dashboard{% if active=='dashboard' %}<span class="active-dot"></span>{% endif %}</a>
     {% endif %}<div class="nav-title">Procurement planning</div>
-    {% if not workflow_preview %}<button class="nav-parent {{'active-parent' if active=='ppmp'}}" id="ppmpToggle" aria-expanded="{{ 'true' if active=='ppmp' else 'false' }}" aria-controls="ppmpSub">{{icon('document')}}<span>PPMP</span>{{icon('chevron')}}</button>
+    {% if not workflow_preview %}<button class="nav-parent {{'active-parent' if active=='ppmp'}}" id="ppmpToggle" aria-expanded="{{ 'true' if active=='ppmp' else 'false' }}" aria-controls="ppmpSub">{{icon('document')}}<span>PPMP Preparation</span>{{icon('chevron')}}</button>
     <div class="sub" id="ppmpSub" {% if active!='ppmp' %}hidden{% endif %}>
       <a href="{{url_for('ppmp_home')}}">PPMP Overview</a>
       <a class="{{'active' if request.endpoint in ['ppmp_intake','ppmp_intake_review']}}" href="{{url_for('ppmp_intake')}}">Document Upload &amp; Review</a>
       {% for category in ['DBM','NON-DBM','LIB'] %}<a class="{{'active' if request.endpoint=='ppmp_type' and request.view_args.get('ptype')==category}}" href="{{url_for('ppmp_type',ptype=category)}}">{{category}}</a>{% endfor %}
       <a class="{{'active' if request.endpoint=='ppmp_dataset'}}" href="{{url_for('ppmp_dataset')}}">Inventory Item Source</a>
     </div>
-    {% endif %}{% for key,label,endpoint,glyph in [('app','APP','app_plan','document'),('pr','Purchase Request','pr','edit'),('aoq','AOQ / Bidding Result','aoq','document'),('po','Purchase Order','po','cart'),('nlp','NLP Verification','nlp','check')] %}{% if not workflow_preview or key in ['pr','aoq','po','nlp'] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{label}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endif %}{% endfor %}
+    {% endif %}{% for key,label,endpoint,glyph in [('app','Annual Procurement Plan (APP)','app_plan','document'),('pr','Purchase Requests','pr','edit'),('aoq','Quotation Evaluation (AOQ)','aoq','document'),('po','Purchase Orders','po','cart'),('nlp','PR–PO Review','nlp','check')] %}{% if not workflow_preview or key in ['pr','aoq','po','nlp'] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{workspace_names.get(key,label)}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endif %}{% endfor %}
     {% if not workflow_preview %}<div class="nav-title">Receiving &amp; property</div>
-    {% for key,label,endpoint,glyph in [('iar','IAR / AIR','iar','check'),('inventory','Inventory','inventory','box'),('ris','RIS / ICS','ris_ics','document')] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{label}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endfor %}
+    {% for key,label,endpoint,glyph in [('iar','Inspection & Acceptance','iar','check'),('inventory','Inventory Management','inventory','box'),('ris','Issuance & Custody','ris_ics','document')] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{workspace_names.get(key,label)}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endfor %}
     <div class="nav-title">System</div>
     <a class="{{'active' if active=='reports'}}" href="{{url_for('reports')}}">{{icon('report')}}Reports{% if active=='reports' %}<span class="active-dot"></span>{% endif %}</a>
-    <a class="{{'active' if active=='audit'}}" href="{{url_for('audit')}}">{{icon('history')}}Audit Trail{% if active=='audit' %}<span class="active-dot"></span>{% endif %}</a>
-    {% if session.get('role')=='Admin' %}<a class="{{'active' if active=='users'}}" href="{{url_for('users')}}">{{icon('users')}}User Management{% if active=='users' %}<span class="active-dot"></span>{% endif %}</a>{% endif %}
+    <a class="{{'active' if active=='audit'}}" href="{{url_for('audit')}}">{{icon('history')}}Audit Log{% if active=='audit' %}<span class="active-dot"></span>{% endif %}</a>
+    {% if session.get('role')=='Admin' %}<a class="{{'active' if active=='users'}}" href="{{url_for('users')}}">{{icon('users')}}User Accounts &amp; Roles{% if active=='users' %}<span class="active-dot"></span>{% endif %}</a>{% endif %}
     {% endif %}
   </nav>
 </aside>
 <div class="app"><main class="main">
 <header class="topbar">
-  <div class="top-left"><button class="icon-button mobile-nav-toggle" id="navToggle" aria-label="Open navigation" aria-controls="sideNav" aria-expanded="false">{{icon('menu')}}</button><strong class="page-context">{{ title or 'Supply & Property Management' }}</strong></div>
+  <div class="top-left"><button class="icon-button mobile-nav-toggle" id="navToggle" aria-label="Open navigation" aria-controls="sideNav" aria-expanded="false">{{icon('menu')}}</button><strong class="page-context">{{page_title}}</strong></div>
   <div class="top-meta">
     <span class="header-date" id="header-date">{{header_date}}</span>
     <span class="clock-pill" id="header-time" aria-live="off">--:--:-- --</span>
@@ -66,6 +69,6 @@
     </div>
   </div>
 </header>
-<section class="content" id="mainContent" tabindex="-1">{% with messages=get_flashed_messages(with_categories=true) %}{% for category,m in messages %}<div class="notice" data-category="{{category}}" role="{{'alert' if category=='error' else 'status'}}">{{m}}</div>{% endfor %}{% endwith %}{% include 'record_filters.html' %}{% if workflow_preview %}<div class="warning-box" role="status"><b>Read-only revised workflow preview</b><br>Approved PR → Independent AOQ → PO For Review → NLP verification → Authorized PO approval → Delivery and inventory.<br>Uploads, saving, approvals and model execution are disabled. Existing authorized records only. The operational workflow policy is unchanged.</div>{% endif %}{% block content %}{% endblock %}{% include 'record_pagination.html' %}<footer class="page-footer">Municipality of Asuncion<span>Supply &amp; Property Management</span></footer></section></main></div>
+<section class="content" id="mainContent" tabindex="-1">{% with messages=get_flashed_messages(with_categories=true) %}{% for category,m in messages %}<div class="notice" data-category="{{category}}" role="{{'alert' if category=='error' else 'status'}}">{{m}}</div>{% endfor %}{% endwith %}{% if active!='aoq' %}{% include 'record_filters.html' %}{% endif %}{% if workflow_preview %}<div class="warning-box" role="status"><b>Read-only revised workflow preview</b><br>Approved PR → Independent AOQ → PO For Review → PR–PO Review → Authorized PO approval → Delivery and inventory.<br>Uploads, saving, approvals and model execution are disabled. Existing authorized records only. The operational workflow policy is unchanged.</div>{% endif %}{% block content %}{% endblock %}{% if active!='aoq' %}{% include 'record_pagination.html' %}{% endif %}<footer class="page-footer">Municipality of Asuncion<span>Supply &amp; Property Management</span></footer></section></main></div>
 {% include 'confirmation_dialog.html' %}
 {% block scripts %}{% endblock %}</body></html>

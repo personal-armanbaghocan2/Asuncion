@@ -1,22 +1,27 @@
 {% from 'procurement_ui.html' import aoq_icon %}
-{% set current_status=request.args.get('status','') %}
+{% set current_status=request.args.get('status','').strip() %}
+{% set search_term=request.args.get('q','').strip() %}
+{% set record_context = {'draft_id':ocr_data.draft_id} if ocr_data else {} %}
+{% set matching_count = (aoq_counts or {}).get('matching',(aoq_counts or {}).get('for_review' if current_status=='For Review' else 'approved' if current_status=='Approved' else 'total',0)) %}
 <section class="card aoq-records" id="aoq-records" aria-labelledby="aoq-records-title">
   <div class="aoq-records-heading">
     <h3 id="aoq-records-title"><span class="procurement-mini-mark">{{aoq_icon('document')}}</span>AOQ Records</h3>
-    <form method="get" action="{{url_for('aoq')}}" class="aoq-record-controls" role="search">
+  </div>
+    <form method="get" action="{{url_for('aoq')}}#aoq-records" class="aoq-record-controls" role="search" data-record-navigation>
       <input type="hidden" name="_nav" value="{{navigation_token()}}">
-      {% if ocr_data %}<input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}">{% endif %}
-      <div class="aoq-search"><label class="sr-only" for="aoq-record-search">Search AOQ records</label><button type="submit" aria-label="Search AOQ records">{{aoq_icon('search')}}</button><input id="aoq-record-search" name="q" type="search" maxlength="160" value="{{request.args.get('q','')}}" placeholder="Search AOQ number, supplier, or item…"></div>
-      <details class="aoq-filter-panel"><summary class="btn">{{aoq_icon('filters')}}Filters</summary><div>
+      {% if ocr_data %}<input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}">{% elif request.args.get('draft_id') %}<input type="hidden" name="draft_id" value="{{request.args.draft_id}}">{% endif %}
+      {% for key,value in request.args.items() if key.startswith('h_') or key in ['quote_q','quote_supplier','quote_sort','quote_page'] %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}
+      <div class="aoq-search"><label for="aoq-record-search">Search AOQ records</label><div class="aoq-search-field"><span aria-hidden="true">{{aoq_icon('search')}}</span><input id="aoq-record-search" name="q" type="search" maxlength="160" value="{{search_term}}" placeholder="AOQ number, supplier, item or description"></div></div>
+      <div class="aoq-search-actions"><button class="btn primary" type="submit">Search</button>{% if search_term %}<a class="btn" href="{{pagination_url(1,q='',**record_context)}}#aoq-records" data-record-navigation>Clear search</a>{% endif %}</div>
+      <details class="aoq-filter-panel"><summary class="btn" aria-controls="aoq-record-filter-fields">{{aoq_icon('filters')}}Filters</summary><div id="aoq-record-filter-fields">
         <label>Status<select name="status"><option value="">All records</option>{% for state in ['For Review','Approved'] %}<option value="{{state}}" {{'selected' if current_status==state}}>{{state}}</option>{% endfor %}{% if current_status and current_status not in ['For Review','Approved'] %}<option value="{{current_status}}" selected>{{current_status}}</option>{% endif %}</select></label>
         <label>Sort<select name="sort">{% for key,label in [('newest','Newest first'),('oldest','Oldest first'),('number','AOQ number A–Z'),('number_desc','AOQ number Z–A'),('status','Status')] %}<option value="{{key}}" {{'selected' if request.args.get('sort','newest')==key}}>{{label}}</option>{% endfor %}</select></label>
-        <button class="btn primary" type="submit">Apply filters</button>
+        <div class="actions"><button class="btn primary" type="submit">Apply filters</button><button class="btn" type="button" data-close-aoq-filters>Close</button><a class="btn" href="{{pagination_url(1,status='',sort='newest',**record_context)}}#aoq-records" data-record-navigation>Reset filters</a></div>
       </div></details>
     </form>
-  </div>
-  <nav class="aoq-record-tabs" aria-label="AOQ status filters">
+  <nav class="aoq-record-tabs" aria-label="AOQ status filters" data-record-navigation>
     {% for state,label,key in [('For Review','For Review','for_review'),('Approved','Approved','approved'),('','All Records','total')] %}
-    <a class="btn {{'primary' if current_status==state}}" href="{{url_for('aoq',status=state,q=request.args.get('q',''),sort=request.args.get('sort','newest'))}}" {% if current_status==state %}aria-current="page"{% endif %}>{{aoq_icon('clock' if state=='For Review' else 'shield' if state else 'stack')}}{{label}}{% if aoq_counts %} <span>({{aoq_counts[key]}})</span>{% endif %}</a>
+    <a class="btn {{'primary' if current_status==state}}" href="{{pagination_url(1,status=state,**record_context)}}#aoq-records" {% if current_status==state %}aria-current="page"{% endif %}>{{aoq_icon('clock' if state=='For Review' else 'shield' if state else 'stack')}}{{label}}{% if aoq_counts %} <span data-live-status="aoq-count-{{key}}">({{aoq_counts[key]}})</span>{% endif %}</a>
     {% endfor %}
   </nav>
   <div class="table-scroll"><table class="table aoq-record-table">
@@ -35,13 +40,13 @@
           <a href="{{url_for('aoq_review',id=r.id)}}">View quotation details</a>
         </div></details>{% endif %}
       </div></td>
-    </tr>{% else %}<tr><td colspan="7" class="empty-state">No AOQ records match these filters. Upload an independent AOQ or adjust the search.</td></tr>{% endfor %}</tbody>
+    </tr>{% else %}<tr><td colspan="7" class="empty-state">{% if matching_count %}No records on this page. <a href="{{pagination_url(1,**record_context)}}#aoq-records" data-record-navigation>Return to the first matching page</a>.{% elif search_term or current_status %}No AOQ records match this search and status filter. Adjust the search or reset the filters.{% else %}No AOQ records are available.{% endif %}</td></tr>{% endfor %}</tbody>
   </table></div>
-  <div class="aoq-record-footer"><span class="muted" title="Status counts cover all authorized AOQ records. Search filters apply to the table.">{{rows|length}} record{{'' if rows|length==1 else 's'}} on this page{% if current_status %} ({{current_status}}){% endif %}</span>
-    {% if record_pagination %}<nav class="aoq-pagination" aria-label="AOQ record pages">
-      {% if record_pagination.page>1 %}<a class="btn" href="{{pagination_url(record_pagination.page-1)}}" aria-label="Previous page">{{aoq_icon('previous')}}</a>{% else %}<button class="btn" type="button" disabled aria-label="Previous page">{{aoq_icon('previous')}}</button>{% endif %}
+  <div class="aoq-record-footer"><span class="muted" data-live-status="aoq-record-count">{{rows|length}} on this page · {{matching_count}} matching record{{'' if matching_count==1 else 's'}}. Tab counts {{'reflect this search' if search_term else 'cover all authorized AOQ records'}}.</span>
+    {% if record_pagination %}<nav class="aoq-pagination" aria-label="AOQ record pages" data-record-navigation data-live-pagination>
+      {% if record_pagination.page>1 %}<a class="btn" href="{{pagination_url(record_pagination.page-1,**record_context)}}#aoq-records" aria-label="Previous page">{{aoq_icon('previous')}}</a>{% else %}<button class="btn" type="button" disabled aria-label="Previous page">{{aoq_icon('previous')}}</button>{% endif %}
       <span class="btn primary" aria-current="page" aria-label="Page {{record_pagination.page}}">{{record_pagination.page}}</span>
-      {% if record_pagination.has_next %}<a class="btn" href="{{pagination_url(record_pagination.page+1)}}" aria-label="Next page">{{aoq_icon('next')}}</a>{% else %}<button class="btn" type="button" disabled aria-label="Next page">{{aoq_icon('next')}}</button>{% endif %}
+      {% if record_pagination.has_next %}<a class="btn" href="{{pagination_url(record_pagination.page+1,**record_context)}}#aoq-records" aria-label="Next page">{{aoq_icon('next')}}</a>{% else %}<button class="btn" type="button" disabled aria-label="Next page">{{aoq_icon('next')}}</button>{% endif %}
     </nav>{% endif %}
   </div>
 </section>

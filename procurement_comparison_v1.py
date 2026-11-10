@@ -12,6 +12,13 @@ import math
 import re
 
 VERSION='PR_PO_REVIEW_V1'
+# Shared planning context is retained in source records and model input, but is
+# not an item specification which a supplier must repeat on its purchase order.
+PLANNING_CONTEXT = {
+ 'general description and objective of the project to be procured',
+ 'type of the project to be procured',
+ 'quantity and size of the project to be procured',
+}
 NAME=('Item Name','item','name','Item')
 QUANTITY=('Quantity','quantity','qty','QTY','Requested Quantity','Awarded Quantity')
 UNIT=('Unit','unit','Unit of Measure','unit_of_measure','uom')
@@ -39,6 +46,16 @@ def specification_tokens(value):
         (r'\bgigabytes?\b','gb'),(r'\bmegabytes?\b','mb'),(r'\bterabytes?\b','tb'),
         (r'\bat least\b','minimum'),(r'\bat most\b','maximum')):
         text=re.sub(pattern,replacement,text)
+    paper_patterns=(r'\b(a[0-6]|b[0-6]|letter|legal)\b',
+                    r'\b(\d+(?:\.\d+)?)\s*(?:gsm|g/m[²2])\b',
+                    r'\b(\d+)\s*sheets?\s*(?:per|/)\s*ream\b')
+    paper=[list(re.finditer(pattern,text)) for pattern in paper_patterns]
+    if all(len(matches)==1 for matches in paper):
+        remainder=text
+        for match in sorted((matches[0] for matches in paper),key=lambda m:m.start(),reverse=True):
+            remainder=remainder[:match.start()]+' '+remainder[match.end():]
+        if re.fullmatch(r'(?:\s|[,;:]|\bcopy\b|\bpaper\b)*',remainder):
+            return ('paper',paper[0][0][1],str(Decimal(paper[1][0][1]).normalize()),str(Decimal(paper[2][0][1]).normalize()))
     # A bounded exact USB-capacity grammar supports reordered factual wording
     # in the existing equivalent-item fixture. Every other word must belong to
     # the optional product phrase; unknown requirements/negations cannot vanish.
@@ -64,12 +81,35 @@ def number(value):
         return result if result.is_finite() and result>=0 else None
     except InvalidOperation:return None
 
-def evidence(item,position,side):
+def classification_scope(item,label,value):
+    """Recognize only source-backed planning aliases, not arbitrary item types.
+
+    normalize_excel_row copies the PPMP project description into Category.
+    AOQ's category input accepts DBM/NON-DBM/LIB; these are procurement classes.
+    Unknown categories and explicitly required product types stay technical.
+    """
+    if label in ('category','source category'):
+        if value in ('dbm','non-dbm','lib'):return 'procurement classification'
+        general=next((norm(v) for k,v in item.items()
+                      if norm(str(k).replace('_',' '))=='general description and objective of the project to be procured'),None)
+        if general and value==general:return 'planning description'
+    if label in ('item type','type of the project to be procured','type of project'):
+        if value in ('goods','services','infrastructure','infrastructure projects','consulting services'):
+            return 'procurement project type'
+    return None
+
+def evidence(item,position,side,*,technical=False):
     if type(item) is not dict:raise ValueError('SOURCE_ITEM_OBJECT_REQUIRED')
-    fields={}
+    fields={};context={}
     for key,value in item.items():
         label=norm(str(key).replace('_',' '))
-        if not str(key).startswith('_') and (key in NAME or label in DESCRIPTIVE or re.search(
+        scope=classification_scope(item,label,norm(value)) if technical else None
+        if scope:
+            context.setdefault(scope,set()).add(norm(value))
+            continue
+        if technical and label in PLANNING_CONTEXT:continue
+        if not str(key).startswith('_') and (key in NAME or label in DESCRIPTIVE
+            or technical and label in {'required category','required item type','product category','product type'} or re.search(
             r'capacity|model|power|voltage|length|width|height|frequency|technical|resolution|speed|compatib|specification|material|colou?r|brand|size|weight|rating|performance|warranty|operating system',label)):
             if value is None or type(value) not in (str,int,float):continue
             text=str(value).strip()
@@ -81,13 +121,13 @@ def evidence(item,position,side):
     if len(description)>16000:raise ValueError('SOURCE_DESCRIPTION_LIMIT')
     quantities=[number(item[k]) for k in QUANTITY if item.get(k) not in (None,'')]
     units=[UNITS.get(norm(item[k]),norm(item[k])) for k in UNIT if item.get(k) not in (None,'')]
-    return dict(position=position,reference=ref,name=name,fields=fields,description=description,
+    return dict(position=position,reference=ref,name=name,fields=fields,description=description,context=context,
         quantity=first(item,QUANTITY),unit=first(item,UNIT),
         conflicting_quantity=len(set(quantities))>1,conflicting_unit=len(set(units))>1)
 
-def project(items,side):
+def project(items,side,*,technical=False):
     if type(items) is not list or not 1<=len(items)<=200:raise ValueError('SOURCE_ITEM_LIMIT')
-    rows=[evidence(item,index,side) for index,item in enumerate(items,1)]
+    rows=[evidence(item,index,side,technical=technical) for index,item in enumerate(items,1)]
     if any(not row['description'] for row in rows):raise ValueError('SOURCE_DESCRIPTION_REQUIRED')
     if sum(len(row['description']) for row in rows)>1000000:raise ValueError('SOURCE_DOCUMENT_LIMIT')
     return rows
@@ -101,6 +141,11 @@ def facts(row):
     text=row['description']
     for match in re.finditer(r'(?i)\b(A[0-6]|B[0-6]|letter|legal)\b',text):
         result.setdefault('paper size',[]).append(dict(value=norm(match[1]),unit='literal',operator='exact'))
+    for attribute,pattern,unit in (
+        ('paper weight',r'(?i)\b(\d+(?:\.\d+)?)\s*(?:gsm|g/m[²2])\b','gsm'),
+        ('sheets per ream',r'(?i)\b(\d+)\s*sheets?\s*(?:per|/|a)\s*ream\b','sheets/ream')):
+        for match in re.finditer(pattern,text):
+            result.setdefault(attribute,[]).append(dict(value=str(Decimal(match[1])),unit=unit,operator='exact'))
     # No silent GB/TB binary/decimal conversion: mixed capacity units remain a
     # difference for review. Explicit minimum/maximum applies to that occurrence.
     for match in re.finditer(r'(?i)(?:(minimum|maximum|at least|at most)\s+)?(\d+(?:\.\d+)?)\s*(GB|MB|TB)\b',text):
@@ -120,7 +165,14 @@ def facts(row):
             result.setdefault(norm(key).replace('colour','color'),[]).append(dict(value=norm(value),unit='literal',operator='exact'))
     for match in re.finditer(r'(?i)\b(model|brand|material|colou?r)\s*[:=]\s*([\w.-]+)',text):
         result.setdefault(match[1].lower().replace('colour','color'),[]).append(dict(value=norm(match[2]),unit='literal',operator='exact'))
-    return result
+    # Repeated source aliases must not multiply the same requirement. Preserve
+    # different values: contradictory specifications must still block a match.
+    for values in result.values():
+        for value in values:
+            if value['unit'] not in ('literal','version'):
+                value['value']=format(Decimal(value['value']).normalize(),'f')
+    return {attribute:list({json.dumps(value,sort_keys=True):value for value in values}.values())
+            for attribute,values in result.items()}
 
 def check_pair(left,right,identity):
     findings=[]
@@ -131,14 +183,24 @@ def check_pair(left,right,identity):
     add('quantity','UNKNOWN' if left['conflicting_quantity'] or right['conflicting_quantity'] or lq is None or rq is None or lq<=0 or rq<=0 else 'MATCH' if lq==rq else 'MISMATCH',left['quantity'],right['quantity'])
     lu,ru=norm(left['unit']),norm(right['unit'])
     add('unit','UNKNOWN' if left['conflicting_unit'] or right['conflicting_unit'] or not lu or not ru else 'MATCH' if UNITS.get(lu,lu)==UNITS.get(ru,ru) else 'MISMATCH',left['unit'],right['unit'])
+    # Missing copies of planning classifications are not missing supplier
+    # specifications. Conflicting recorded classifications still block review.
+    for attribute in ('procurement classification','procurement project type'):
+        required=sorted(left['context'].get(attribute,()))
+        offered=sorted(right['context'].get(attribute,()))
+        if len(required)>1 or len(offered)>1 or required and offered and required!=offered:
+            add(attribute,'MISMATCH',required,offered)
     categories=('category','source category','item type','type of the project to be procured')
-    for category in categories:
-        required=[norm(value) for key,value in left['fields'].items() if norm(key.replace('_',' '))==category]
-        offered=[norm(value) for key,value in right['fields'].items() if norm(key.replace('_',' '))==category]
-        if required:add(category,'MISSING_SPECIFICATION' if not offered else 'MATCH' if required==offered else 'MISMATCH',required,offered)
+    for category,aliases in [('category',('category','source category')),('item type',('item type',)),
+                             ('type of the project to be procured',('type of the project to be procured',))]:
+        required=sorted({norm(value) for key,value in left['fields'].items() if norm(key.replace('_',' ')) in aliases})
+        offered=sorted({norm(value) for key,value in right['fields'].items() if norm(key.replace('_',' ')) in aliases})
+        # An unproven classification is not automatically a supplier technical
+        # requirement. Keep it unresolved (and approval-blocking) when absent.
+        if required:add(category,'UNKNOWN' if not offered else 'MATCH' if required==offered else 'MISMATCH',required,offered)
     narrative_keys={'description','description / specification','item description','specification','specifications','detailed specifications','technical specifications'}
-    requested_text=' '.join(norm(v) for k,v in left['fields'].items() if norm(k) in narrative_keys)
-    offered_text=' '.join(norm(v) for k,v in right['fields'].items() if norm(k) in narrative_keys)
+    requested_text=' '.join(dict.fromkeys(norm(v) for k,v in left['fields'].items() if norm(k) in narrative_keys))
+    offered_text=' '.join(dict.fromkeys(norm(v) for k,v in right['fields'].items() if norm(k) in narrative_keys))
     if requested_text:
         add('source specification wording', 'MATCH' if specification_tokens(requested_text)==specification_tokens(offered_text) else
             'MISSING_SPECIFICATION' if not offered_text else
@@ -196,7 +258,7 @@ def fasttext_candidates(pr_items,po_items,model_root):
     return result
 
 def compare(pr_items,po_items,*,semantic_candidates=(),manual_mapping=None):
-    left,right=project(pr_items,'PR'),project(po_items,'PO')
+    left,right=project(pr_items,'PR',technical=True),project(po_items,'PO',technical=True)
     if manual_mapping is not None:
         if (type(manual_mapping) is not list or len(manual_mapping)!=len(left)
             or any(type(n) is not int or n<1 or n>len(right) for n in manual_mapping)
