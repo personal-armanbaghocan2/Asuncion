@@ -101,4 +101,4 @@ jobs:
           # Bare --env names read server-side values from this step's environment.
           # No token value enters argv, source files or project-wide configuration.
           npx --yes vercel@latest deploy --prod --yes \
-          --env PSMS_PROCUREMENT_RELEASE --env PSMS_PROCUREMENT_RELEASE_TOKEN
+            --env PSMS_PROCUREMENT_RELEASE --env PSMS_PROCUREMENT_RELEASE_TOKEN
