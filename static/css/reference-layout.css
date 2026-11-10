@@ -189,3 +189,10 @@ dialog.ppmp-editor-modal .modal-footer{background:#fbfdfc;border-top:1px solid #
 .procurement-page #prPoItemComparison .comparison-summary td:nth-child(2){min-width:180px;white-space:pre-wrap}
 .procurement-page .comparison-stale{display:none}
 @media(max-width:760px){.procurement-page .app-source-bar,.procurement-page .pr-source-bar{display:flex;flex-direction:column;align-items:stretch}.procurement-page .app-source-bar>*,.procurement-page .pr-source-bar>*{width:100%;flex:auto;max-width:none}.procurement-page .source-bar>.btn{margin-left:0}}
+
+/* Readable item tables and contextual selectors across office workspaces. */
+.reference-shell .table-scroll,.reference-shell .table-wrap {max-width:100%;overflow-x:auto}
+.reference-shell .table th,.reference-shell .table td {vertical-align:top;overflow-wrap:break-word}
+.reference-shell .table select {min-width:10rem;max-width:100%;height:auto;padding-right:30px}
+.reference-shell .table input,.reference-shell .table textarea {max-width:100%}
+.reference-shell select:focus-visible,.reference-shell input:focus-visible {outline:2px solid #167044;outline-offset:2px}

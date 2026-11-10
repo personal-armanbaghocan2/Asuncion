@@ -2,28 +2,28 @@
 {% from 'procurement_ui.html' import aoq_icon with context %}
 {% from 'ui.html' import icon %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
-{% block content %}
+{% block content %}<datalist id="quotation-units">{% for unit in ['piece','ream','box','bottle','pack','set','kilogram','litre','meter'] %}<option value="{{unit}}">{% endfor %}</datalist>
 <div class="aoq-reference-workspace">
 <div class="procurement-workspace-hero">
-  <div class="procurement-workspace-title"><span class="procurement-workspace-mark">{{aoq_icon('award')}}</span><div><h2>AOQ / Abstract of Quotation</h2><p>Independent AOQ upload, quotation review, and approval before Purchase Order (PO) creation.</p></div></div>
-  <div class="procurement-independence-note">{{aoq_icon('info')}}<span><b>AOQ is independent from PR.</b><br>PR–PO matching is handled later in NLP Verification.</span></div>
+  <div class="procurement-workspace-title"><span class="procurement-workspace-mark">{{aoq_icon('award')}}</span><div><h2>Quotation Evaluation (AOQ)</h2><p>Independent AOQ upload, quotation review, and approval before Purchase Order (PO) creation.</p></div></div>
+  <div class="procurement-independence-note">{{aoq_icon('info')}}<span><b>AOQ is independent from PR.</b><br>PR–PO matching is handled later in PR–PO Review.</span></div>
 </div>
 
-<div class="procurement-action-grid">
-  <section class="procurement-action-card upload"><span class="procurement-action-icon">{{aoq_icon('upload')}}</span><div><h3>Upload AOQ (Independent)</h3><p>Upload an AOQ or bidding result file<br>(no PR selection required).</p>{% if independent_aoq and not workflow_preview %}<a class="btn primary" href="#aoq-upload-form" data-open-upload>{{aoq_icon('upload')}}Upload AOQ File</a>{% else %}<button class="btn primary" type="button" disabled>{{aoq_icon('upload')}}Upload AOQ File</button>{% endif %}</div></section>
-  <section class="procurement-action-card review"><span class="procurement-action-icon">{{aoq_icon('shield')}}</span><div><h3>Review &amp; Approve AOQ</h3><p>Review uploaded quotations, determine the winning supplier, and approve for PO creation.</p><a class="btn blue" href="{{'#aoq-draft-review' if ocr_data and (selected_pr or independent_aoq) else '#aoq-records'}}">{{aoq_icon('check')}}{{'Review Uploaded Quotation' if ocr_data and (selected_pr or independent_aoq) else 'Review AOQ Records'}}</a></div></section>
-  {% if not workflow_preview %}<section class="procurement-action-card history"><span class="procurement-action-icon">{{aoq_icon('stack')}}</span><div><h3>Document History</h3><p>View, search, and track uploaded AOQ documents, extraction results, and approval status.</p><a class="btn" href="#document-history">{{aoq_icon('document')}}Open Document History</a></div></section>{% endif %}
+<div class="actions aoq-workspace-toolbar" aria-label="Quotation actions">
+{% if independent_aoq and not workflow_preview %}<a class="btn primary" href="#aoq-upload-form" data-open-upload>Upload Quotation File</a>{% endif %}
+<a class="btn" href="{{'#aoq-draft-review' if ocr_data else '#aoq-records'}}">Review Quotations</a>
+{% if not workflow_preview %}<a class="btn" href="#document-history">Document History</a>{% endif %}
 </div>
 {% include 'aoq_records.html' %}
 {% if not independent_aoq %}<p class="warning-box" role="status">Independent AOQ upload is unavailable until the revised workflow is active. The retired PR-linked upload is not offered here.</p>{% endif %}
 <details class="card aoq-upload-panel" id="aoq-upload-panel"><summary>Choose an AOQ file and extract supplier quotations</summary>
-  <div class="step-title"><span>1</span><div><h3>Upload an independent AOQ / bidding result</h3><p class="muted">Supported formats: {{ supported_aoq_formats }}. The layout may be different; the system normalizes detected data into the review form below.</p></div></div>
+  <div class="step-title"><div><h3>Upload an independent AOQ / bidding result</h3><p class="muted">Supported formats: {{ supported_aoq_formats }}. The layout may be different; the system normalizes detected data into the review form below.</p></div></div>
   <form id="aoq-upload-form" method="post" enctype="multipart/form-data" class="compact-upload" data-document-processing action="{{url_for('aoq')}}" data-confirm="Extract the supplier quotations from this independent AOQ file?">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="extract_ocr">
     <div class="form-field full"><label for="aoq-file-input">AOQ / Bidding Result File</label><input id="aoq-file-input" name="ocr_file" type="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt" required></div>
     <div class="form-actions full"><button class="btn primary" type="submit">Upload and Detect AOQ</button></div>
   {% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
-  <p class="muted">No PR selection is required. Choose the approved PR later in NLP verification.</p>
+  <p class="muted">No PR selection is required. Choose the approved PR later in PR–PO Review.</p>
 </details>
 {% include 'aoq_quotations.html' %}
 
@@ -31,7 +31,7 @@
 {% if ocr_data and (selected_pr or independent_aoq) %}
 <div class="card aoq-draft-review" id="aoq-draft-review" data-active-draft style="margin-top:16px">
   <div class="toolbar">
-    <div class="step-title"><span>2</span><div><h3>Review the uploaded supplier quotations</h3><p class="muted">This is a private extraction draft. Review and confirm it before saving an official AOQ.</p></div></div>
+    <div class="step-title"><div><h3>Review the uploaded supplier quotations</h3><p class="muted">This is a private extraction draft. Review and confirm it before saving an official AOQ.</p></div></div>
     <form method="post">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="clear_ocr"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><button class="btn danger" type="submit">Discard and Upload Another</button>{% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
   </div>
 
@@ -70,7 +70,7 @@
     <input type="hidden" name="offer_supplier_index" value="{{ocr_data.offer_supplier_index|default('')}}">
     <input type="hidden" name="offer_review_token" value="{{ocr_data.offer_review_token|default('')}}">
 
-    <div class="aoq-supplier-offer"><section><div class="step-title section-gap"><span>2A</span><div><h3>Supplier quotations: select the winning supplier</h3><p class="muted">Choose exactly one winner. Supplier names and amounts may be corrected.</p></div></div>
+    <div class="aoq-supplier-offer"><section><div class="step-title section-gap"><div><h3>Supplier quotations: select the winning supplier</h3><p class="muted">Choose exactly one winner. Supplier names and amounts may be corrected.</p></div></div>
     <div class="table-scroll"><table class="table"><tr><th>Winner</th><th>Supplier / Bidder</th><th>Quotation Total</th><th>Remarks</th><th>Detected Items</th></tr>
       {% for supplier in ocr_data.suppliers %}
       {% set edited = ocr_data.supplier_form[loop.index0] if ocr_data.supplier_form is defined and loop.index0 < ocr_data.supplier_form|length else supplier %}
@@ -87,23 +87,23 @@
     </table></div>
     <div class="form-field" style="margin-top:12px"><label>Manual Winner Name (only when the winner is not in the detected list)</label><input name="winner_custom" value="{{ocr_data.offer_custom_winner|default('')}}" placeholder="Leave blank when a supplier above is selected"></div>
 
-    </section><section><div class="step-title section-gap"><span>2B</span><div><h3>AOQ Quotation Items for Review</h3><p class="muted">Review the actual item values extracted from the uploaded AOQ. Viewing a quotation does not select its supplier as the winner. Saved, approved AOQ items later become the PO items.</p></div></div>
+    </section><section><div class="step-title section-gap"><div><h3>AOQ Quotation Items for Review</h3><p class="muted">Review the actual item values extracted from the uploaded AOQ. Viewing a quotation does not select its supplier as the winner. Saved, approved AOQ items later become the PO items.</p></div></div>
     {% if not ocr_data.offer_items %}<p class="notice">No quotation is loaded. Choose a supplier above to review its source items, or add verified AOQ items manually. PR fields are not copied into this table.</p>{% endif %}
     {% if ocr_data.pr_category %}<p class="muted">Historical PR category: {{ocr_data.pr_category}}. Confirm the appropriate category for each quotation item.</p>{% endif %}
     <div class="table-scroll"><table class="table offer-table"><thead><tr><th>#</th><th>Item</th><th>Description / Specification</th><th>Qty</th><th>Unit</th><th>Unit Price</th><th>Total</th><th>Category</th><th>Remarks</th><th></th></tr></thead><tbody id="offerBody">
       {% for item in ocr_data.offer_items %}
-      <tr><td class="row-number">{{loop.index}}</td><td><input name="offer_item" value="{{item.item}}" required><small class="muted">{{item.source}}</small></td><td><textarea name="offer_description" rows="2" required>{{item.description}}</textarea></td><td><input class="qty-input" name="offer_qty" type="number" step="0.01" value="{{item.qty|quantity if item.qty is not none and item.qty != '' else ''}}" placeholder="Missing" required></td><td><input name="offer_unit" value="{{item.unit}}" placeholder="Missing" required></td><td><input class="cost-input" name="offer_unit_cost" type="number" step="0.01" value="{{item.unit_cost}}" placeholder="Missing — review source" required></td><td><input class="amount-input" name="offer_amount" type="number" step="0.01" value="{{item.amount}}" placeholder="Missing — review source" required></td><td><select name="offer_category"><option value="">Not established</option>{% for category in ['DBM','NON-DBM','LIB'] %}<option {{'selected' if (item.get('category') or item.get('source_category'))==category}}>{{category}}</option>{% endfor %}</select></td><td><input name="offer_remarks" value="{{item.remarks}}"></td><td><button class="btn small remove-row danger" type="button">Remove</button></td></tr>
+      <tr><td class="row-number">{{loop.index}}</td><td><input name="offer_item" value="{{item.item}}" required><small class="muted">{{item.source}}</small></td><td><textarea name="offer_description" rows="2" required>{{item.description}}</textarea></td><td><input class="qty-input" name="offer_qty" type="number" step="0.01" value="{{item.qty|quantity if item.qty is not none and item.qty != '' else ''}}" placeholder="Missing" required></td><td><input name="offer_unit" list="quotation-units" value="{{item.unit}}" placeholder="Missing" required></td><td><input class="cost-input" name="offer_unit_cost" type="number" step="0.01" value="{{item.unit_cost}}" placeholder="Missing — review source" required></td><td><input class="amount-input" name="offer_amount" type="number" step="0.01" value="{{item.amount}}" placeholder="Missing — review source" required></td><td><select name="offer_category"><option value="">Not established</option>{% for category in ['DBM','NON-DBM','LIB'] %}<option {{'selected' if (item.get('category') or item.get('source_category'))==category}}>{{category}}</option>{% endfor %}</select></td><td><input name="offer_remarks" value="{{item.remarks}}"></td><td><button class="btn small remove-row danger" type="button">Remove</button></td></tr>
       {% endfor %}
     </tbody></table></div>
     <div class="actions" style="margin-top:10px"><button class="btn primary" type="button" id="addOfferRow">+ Add Item</button></div>
     </section></div><div class="form-field full" style="margin-top:12px"><label>General AOQ Remarks</label><textarea name="remarks">{{ocr_data.remarks}}</textarea></div>
 
-    <details class="advanced-box"><summary>Advanced: view original detected tables and extracted text</summary>
+    {% if session.get('role')=='Admin' %}<details class="advanced-box"><summary>Technical evidence (authorized review)</summary>
       {% for table in ocr_data.detected_tables %}<h4>{{table.source}}</h4><div class="table-scroll"><table class="table compact-table">{% for row in table.rows %}<tr>{% for cell in row %}<td>{{cell}}</td>{% endfor %}</tr>{% endfor %}</table></div>{% endfor %}
       <textarea rows="12" readonly>{{ocr_data.raw_text}}</textarea>
-    </details>
+    </details>{% endif %}
 
-    <div class="step-title section-gap"><span>3</span><div><h3>Save the Reviewed AOQ</h3><p class="muted">After saving, open the AOQ record below and approve it. The approved AOQ becomes available on the PO page.</p></div></div>
+    <div class="step-title section-gap"><div><h3>Save the Reviewed AOQ</h3><p class="muted">After saving, open the AOQ record below and approve it. The approved AOQ becomes available on the PO page.</p></div></div>
     <label class="full"><input type="checkbox" name="confirm_reviewed" value="yes" required> I reviewed and corrected the extracted quotation and confirm these values for saving. This does not approve procurement or update inventory.</label>
     <div class="form-actions"><button class="btn primary" type="submit">Save reviewed AOQ</button><button type="submit" id="loadSupplierReview" formnovalidate hidden>Load supplier quotation</button></div>
   {% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
@@ -115,24 +115,7 @@
 {% endblock %}
 
 {% block scripts %}{% if not workflow_preview %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>
-<script>
-// Presentation only; all uploads and approvals retain their server-side checks.
-(() => {
-  const panel = document.getElementById('aoq-upload-panel');
-  document.querySelectorAll('[data-open-upload]').forEach(link => {
-    link.addEventListener('click', () => {
-      if (!panel) return;
-      panel.open = true;
-      requestAnimationFrame(() => panel.querySelector('input[type="file"]')?.focus({preventScroll: true}));
-    });
-  });
-  const params = new URLSearchParams(window.location.search);
-  const draft = document.querySelector('[data-active-draft]');
-  if (draft && params.has('draft_id') && !['q', 'status', 'page'].some(key => params.has(key))) {
-    draft.scrollIntoView({block: 'start'});
-  }
-})();
-</script>
+{# // Presentation only; all uploads and approvals retain their server-side checks. #}
 {% if ocr_data %}
 <script>
 (function(){
@@ -155,8 +138,8 @@
   });
   radios.forEach(r=>r.required=!custom.value.trim());
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-  function rowHtml(){return `<tr><td class="row-number"></td><td><input name="offer_item" required></td><td><textarea name="offer_description" rows="2" required></textarea></td><td><input class="qty-input" name="offer_qty" type="number" step="0.01" value="" placeholder="Missing" required></td><td><input name="offer_unit" value="" placeholder="Missing" required></td><td><input class="cost-input" name="offer_unit_cost" type="number" step="0.01" value="" placeholder="Missing — review source" required></td><td><input class="amount-input" name="offer_amount" type="number" step="0.01" value="" placeholder="Missing — review source" required></td><td><select name="offer_category"><option value="">Not established</option><option>DBM</option><option>NON-DBM</option><option>LIB</option></select></td><td><input name="offer_remarks"></td><td><button class="btn small remove-row danger" type="button">Remove</button></td></tr>`;}
-  function renumber(){body.querySelectorAll('tr').forEach((r,i)=>r.querySelector('.row-number').textContent=i+1);}
+  function rowHtml(){return `<tr><td class="row-number"></td><td><input name="offer_item" required></td><td><textarea name="offer_description" rows="2" required></textarea></td><td><input class="qty-input" name="offer_qty" type="number" step="0.01" value="" placeholder="Missing" required></td><td><input name="offer_unit" list="quotation-units" value="" placeholder="Missing" required></td><td><input class="cost-input" name="offer_unit_cost" type="number" step="0.01" value="" placeholder="Missing — review source" required></td><td><input class="amount-input" name="offer_amount" type="number" step="0.01" value="" placeholder="Missing — review source" required></td><td><select name="offer_category"><option value="">Not established</option><option>DBM</option><option>NON-DBM</option><option>LIB</option></select></td><td><input name="offer_remarks"></td><td><button class="btn small remove-row danger" type="button">Remove</button></td></tr>`;}
+  function renumber(){body.querySelectorAll('tr').forEach((r,i)=>{r.querySelector('.row-number').textContent=i+1;r.querySelectorAll('input,select,textarea').forEach(field=>field.setAttribute('aria-label',(field.name||'Quotation field').replaceAll('_',' ')+' for item '+(i+1)));});}
   function bind(row){
     const remove=row.querySelector('.remove-row'); if(remove) remove.onclick=()=>{row.remove();renumber();};
     const qty=row.querySelector('.qty-input'), cost=row.querySelector('.cost-input'), amount=row.querySelector('.amount-input');

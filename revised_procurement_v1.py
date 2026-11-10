@@ -328,14 +328,14 @@ def nlp_page(api):
     prs=api['q']("select id,no,office,items from pr where status='Approved' order by id desc")
     pos=api['q']("""select p.id,p.no,p.supplier,p.items,a.no aoq_no,exists(select 1 from nlp n where n.po_id=p.id) has_verification
        from po p join aoq a on a.id=p.aoq_id where p.status='For Review' and a.status='Approved' order by p.id desc""")
-    rows=api['q']("""select n.id,n.no,n.result,n.status,n.technical_status,n.workflow_version,
-       p.no po_no,r.no pr_no from nlp n join po p on p.id=n.po_id
+    rows=api['paged_q']("""select n.id,n.no,n.result,n.status,n.technical_status,n.workflow_version,
+       p.no po_no,p.items po_items,p.supplier,r.no pr_no,r.items pr_items,r.office,a.no aoq_no from nlp n join po p on p.id=n.po_id
        left join aoq a on a.id=p.aoq_id left join pr r on r.id=coalesce(n.pr_id,p.pr_id,a.pr_id) order by n.id desc""")
     pr=po=None;technical=None
     if request.args.get('pr_id') or request.args.get('po_id'):
         pr,po=source_pair(api,request.args.get('pr_id'),request.args.get('po_id'))
         technical=comparison(api,pr,po)
-    return render_template('revised_nlp.html',active='nlp',title='PR-PO NLP Verification',prs=prs,pos=pos,rows=rows,
+    return render_template('revised_nlp.html',active='nlp',title='Purchase Request-Purchase Order Review',prs=prs,pos=pos,rows=rows,
         selected_pr=pr,selected_po=po,comparison=technical,
         pr_items=api['parse_items'](pr['items']) if pr else [],po_items=api['parse_items'](po['items']) if po else [],
         model_state=api['trained_nlp_model_status']())
@@ -379,9 +379,12 @@ def modern_review(api,row):
     try:details=json.loads(row.get('details') or '{}')
     except (ValueError,TypeError):details={}
     stale=evidence.fingerprint(pr['items'])!=row['pr_items_hash'] or evidence.fingerprint(po['items'])!=row['po_items_hash']
-    return render_template('revised_nlp_review.html',active='nlp',title='Review PR-PO Verification',row=row,pr=pr,po=po,
+    current_mapping=[item.get('po_position') for item in technical.get('rows',[])]
+    review_evidence_current=stored_review_matches(row,current_mapping,technical)
+    return render_template('revised_nlp_review.html',active='nlp',title='Review Comparison',row=row,pr=pr,po=po,
         pr_items=api['parse_items'](pr['items']),po_items=api['parse_items'](po['items']),comparison=technical,
-        details=details,stale=stale,can_review_relationship=relationship_review_allowed(api,po))
+        details=details,stale=stale,review_evidence_current=review_evidence_current,
+        can_review_relationship=relationship_review_allowed(api,po))
 
 def stored_review_matches(row,mapping,current):
     """Confirmation cannot replace saved server compliance or correspondence."""

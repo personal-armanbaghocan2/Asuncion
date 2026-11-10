@@ -108,7 +108,16 @@ def q(sql, params=(), one=False):
     return request_queries.read(conn,sql,params,one)
 
 
+def record_search_sql():
+    """Search existing business projections without SQL from browser input."""
+    fields=('no','items','app_items','ppmp_items','pr_items','po_items','office','pr_office','supplier','winner','suppliers',
+            'pr_no','po_no','aoq_no','app_no','ppmp_no','ocr_filename','purpose','year','type','ppmp_type','ref','action','result')
+    values=','.join("to_jsonb(records)->>'"+field+"'" for field in fields)
+    return "strpos(lower(concat_ws(' ',"+values+")),lower(?))>0"
+
+
 def paged_q(sql,params=()):
+    if any(len(request.args.getlist(key))>1 for key in ('page','q','status','sort')):abort(400)
     page=request.args.get('page','1')
     if not re.fullmatch(r'[1-9][0-9]{0,3}',page):abort(400,description='Choose a valid record page.')
     page=int(page);size=100
@@ -117,7 +126,7 @@ def paged_q(sql,params=()):
     if request.endpoint!='inventory' and (search or status or sort!='newest'):
         base=sql.rstrip().rstrip(';');conditions=[];values=list(params)
         if search:
-            conditions.append("strpos(lower(concat_ws(' ',to_jsonb(records)->>'no',to_jsonb(records)->>'items',to_jsonb(records)->>'office',to_jsonb(records)->>'supplier',to_jsonb(records)->>'winner',to_jsonb(records)->>'ref',to_jsonb(records)->>'action')),lower(?))>0");values.append(search)
+            conditions.append(record_search_sql());values.append(search)
         if status:conditions.append("to_jsonb(records)->>'status'=?");values.append(status)
         order={'newest':'id desc','oldest':'id','number':"to_jsonb(records)->>'no',id",'number_desc':"to_jsonb(records)->>'no' desc,id",'status':"to_jsonb(records)->>'status',id desc"}[sort]
         sql='select * from ('+base+') records'+(' where '+' and '.join(conditions) if conditions else '')+' order by '+order
@@ -127,9 +136,11 @@ def paged_q(sql,params=()):
     return rows[:size]
 
 
-def pagination_url(page):
-    filters={key:request.args[key] for key in ('q','status','sort','sheet','category','stock','comparison_po_id','ocr_source') if key in request.args}
+def pagination_url(page,**updates):
+    filters={key:request.args[key] for key in ('q','status','sort','sheet','category','stock','comparison_po_id','ocr_source',
+        'draft_id','pr_id','po_id','quote_q','quote_supplier','quote_sort','quote_page') if key in request.args}
     filters.update({key:request.args[key] for key in request.args if key.startswith('h_')})
+    filters.update(updates)
     return url_for(request.endpoint,**dict(request.view_args or {}),page=page,**filters)
 
 def exec_db(sql, params=()):
@@ -658,6 +669,18 @@ def parse_json_list(value):
 
 def money(v):
     return '₱{:,.2f}'.format(to_float(v))
+def philippine_time(value):
+    """Localize explicit timestamps; never invent a timezone for legacy text."""
+    from datetime import datetime as timestamp
+    from zoneinfo import ZoneInfo
+    if value in (None, ''):return 'Not recorded'
+    try:
+        parsed=value if isinstance(value,timestamp) else timestamp.fromisoformat(str(value).replace('Z','+00:00'))
+    except (ValueError,TypeError):return str(value)
+    if parsed.tzinfo is None:return parsed.strftime('%d %b %Y, %I:%M %p')+' (timezone not recorded)'
+    return parsed.astimezone(ZoneInfo('Asia/Manila')).strftime('%d %b %Y, %I:%M %p')+' PHT'
+
+app.jinja_env.filters['philippine_time'] = philippine_time
 app.jinja_env.filters['money'] = money
 
 def quantity_text(value):
@@ -1221,6 +1244,55 @@ def review_value(value):
     return str(value)
 
 
+_REVIEW_DIAGNOSTIC_FIELDS = frozenset('''
+    id uuid internalid recordid rowid draftid tempid uploadtoken sourceid sourceitemid
+    sourcefileid documentid lineid ppmpitemid appitemid pritemid aoqitemid poitemid iaritemid issueitemid
+    parser parsermetadata parserdiagnostics parserprofile parserversion
+    extractionprofile extractionmetadata extractionmethod rawextractedtext rawocrtext rawtext detectedtables
+    fieldconfidence averageconfidence confidencejson ocrconfidence ocrfieldevidence ocrmetadata
+    sourcecells sourcecoordinates sourcebounds sourceevidence positionedfields sharedfieldevidence fieldevidence
+    diagnostics diagnosticcode diagnosticevidence technicalevidence
+    ocrrawtext ocraverageconfidence sourcedatasetrecordid extractiontimestamp ocrextractiontimestamp
+'''.split())
+
+
+def review_field_is_diagnostic(key):
+    """Recognize internal/extraction fields without hiding ordinary item requirements."""
+    text = str(key).strip()
+    return text.startswith('_') or re.sub(r'[^a-z0-9]', '', text.casefold()) in _REVIEW_DIAGNOSTIC_FIELDS
+
+
+def review_public_value(value):
+    """Return a presentation-only copy; preserve business fields in mixed structures.
+
+    Source records and technical evidence remain unchanged. Unknown business
+    fields, official stock/serial numbers and meaningful warnings are retained.
+    """
+    if isinstance(value, dict):
+        visible = {}
+        for key, child in value.items():
+            if review_field_is_diagnostic(key):
+                continue
+            cleaned = review_public_value(child)
+            if isinstance(child, (dict, list)) and child and not cleaned:
+                continue
+            visible[key] = cleaned
+        return visible
+    if isinstance(value, list):
+        visible = []
+        for child in value:
+            cleaned = review_public_value(child)
+            if isinstance(child, (dict, list)) and child and not cleaned:
+                continue
+            visible.append(cleaned)
+        return visible
+    return value
+
+
+app.jinja_env.globals.update(review_public_value=review_public_value,
+                            review_field_is_diagnostic=review_field_is_diagnostic)
+
+
 def review_item_rows(items, document_no='DOC'):
     """Normalize different procurement item schemas for one consistent review table.
 
@@ -1275,13 +1347,23 @@ def review_item_rows(items, document_no='DOC'):
         )
         unit_cost = money_text(unit_cost_raw) if unit_cost_raw not in ('', None) else '—'
         amount = money_text(amount_raw) if amount_raw not in ('', None) else '—'
+        def visible_price(value):
+            if isinstance(value, (dict, list)):
+                return review_public_value(value)
+            parsed = parse_currency_decimal(value)
+            return money_text(parsed) if parsed is not None else review_value(value)
+
         details = []
         for key, value in item.items():
             if value in (None, '', [], {}):
                 continue
             label = str(key).lstrip('_').replace('_', ' ').strip()
-            details.append({'label': label, 'value': review_value(value), 'is_primary': key in known_keys,
-                            'diagnostic': str(key).startswith('_') or isinstance(value, (dict, list))})
+            public_value = review_public_value(value)
+            diagnostic = review_field_is_diagnostic(key) or (isinstance(value, (dict, list)) and not public_value)
+            details.append({'label': label,
+                            'value': public_value if isinstance(value, (dict, list)) and not diagnostic else review_value(value if diagnostic else public_value),
+                            'technical_value': review_value(value) if diagnostic or public_value != value else None,
+                            'is_primary': key in known_keys, 'diagnostic': diagnostic})
         rows.append({
             'index': index,
             'line_id': line_id,
@@ -1293,6 +1375,9 @@ def review_item_rows(items, document_no='DOC'):
             'unit': review_value(unit),
             'unit_cost': unit_cost,
             'amount': amount,
+            'public': dict(item=review_public_value(item_name), description=review_public_value(description),
+                           quantity=review_public_value(quantity), unit=review_public_value(unit),
+                           unit_cost=visible_price(unit_cost_raw), amount=visible_price(amount_raw)),
             'details': details,
         })
     return rows
@@ -2596,7 +2681,7 @@ def ppmp_home():
         # PPMPs already read successfully, or expose connection diagnostics.
         app.logger.warning('PPMP source status unavailable [DATASET_STATUS_UNAVAILABLE].')
         dataset_status = dict(config=None, sheets=[], unavailable=True)
-    return render_template('ppmp_home.html', active='ppmp', rows=rows, dataset_status=dataset_status, title='PPMP')
+    return render_template('ppmp_home.html', active='ppmp', rows=rows, dataset_status=dataset_status, title='PPMP Preparation')
 
 
 @app.route('/ppmp/<int:id>/view')
@@ -2954,7 +3039,7 @@ def app_plan():
         # the display of historical OCR PPMPs whose parent total was saved as 0.
         d['total'] = payload['total']
         ppmps.append(d)
-    return render_template('app.html', active='app', plans=plans, ppmps=ppmps, title='APP')
+    return render_template('app.html', active='app', plans=plans, ppmps=ppmps, title='Annual Procurement Plan (APP)')
 
 @app.route('/app/<int:id>/view')
 def app_review(id):
@@ -3057,7 +3142,7 @@ def pr():
         d['ppmp_no'] = ppmp_row['no'] if ppmp_row else 'No linked PPMP'
         d['ppmp_type'] = ppmp_row['type'] if ppmp_row else ''
         apps.append(d)
-    return render_template('pr.html', active='pr', prs=prs, apps=apps, title='PR')
+    return render_template('pr.html', active='pr', prs=prs, apps=apps, title='Purchase Requests')
 
 @app.route('/pr/<int:id>/view')
 def pr_review(id):
@@ -3079,7 +3164,7 @@ def pr_review(id):
         sections.append(review_section('Compare with Source PPMP', source_items, d.get('ppmp_no') or 'PPMP',
                                        'Original PPMP values for comparison. Review any changed requirements against the PR.', optional=True))
     return render_review_page(
-        active='pr', title=f'Review PR {d["no"]}', document_type='Purchase Request',
+        active='pr', title=f'Review Purchase Request {d["no"]}', document_type='Purchase Request',
         document_no=d['no'], status=d['status'], created_at=d.get('created_at'),
         linked_records=[
             {'label': 'Source PPMP', 'value': d.get('ppmp_no') or 'No linked PPMP'},
@@ -3171,13 +3256,20 @@ def aoq():
     source_reference = '''(select d.source_id from psms_documents.aoq_drafts d
                  where d.official_aoq_id=aq.id and d.owner_id=? and d.status='CONFIRMED'
                  order by d.updated_at desc limit 1)''' if independent_aoq else 'null'
-    raw_aoq_rows = paged_q('''select aq.*, aq.winning_offer as items,
-                r.no pr_no, r.office pr_office, ''' + source_reference + ''' as owned_source_id from aoq aq
-                left join pr r on r.id=aq.pr_id
-                order by aq.id desc''', (session.get('user_id'),) if independent_aoq else ())
+    # Both queries search the same business projection. AOQ stores its lines in
+    # winning_offer; unlike PR/PO it has no native items column.
+    aoq_projection='select aq.*,aq.winning_offer as items,r.no pr_no,r.office pr_office'
+    aoq_from=' from aoq aq left join pr r on r.id=aq.pr_id'
+    raw_aoq_rows = paged_q(aoq_projection+', '+source_reference+' as owned_source_id'+aoq_from+
+                ' order by aq.id desc', (session.get('user_id'),) if independent_aoq else ())
+    search=request.args.get('q','').strip();status=request.args.get('status','').strip()
+    count_where=' where '+record_search_sql() if search else ''
     aoq_counts = q("""select count(*) total,
         count(*) filter(where status='For Review') for_review,
-        count(*) filter(where status='Approved') approved from aoq""", one=True)
+        count(*) filter(where status='Approved') approved,
+        count(*) filter(where (?='' or status=?)) matching
+        from ("""+aoq_projection+aoq_from+") records"+count_where,
+        (status,status,*([search] if search else [])),one=True)
     rows=[]
     for aq in raw_aoq_rows:
         d=dict(aq)
@@ -3194,7 +3286,7 @@ def aoq():
     return render_template(
         'aoq.html', independent_aoq=independent_aoq, active='aoq', rows=rows, prs=pr_previews,
         aoq_counts=aoq_counts,
-        ocr_data=ocr_data or None, selected_pr=selected_pr, title='AOQ',
+        ocr_data=ocr_data or None, selected_pr=selected_pr, title='Quotation Evaluation (AOQ)',
         history=document_history.listing(globals(),'aoq'),quotation_view=aoq_quotation_page(ocr_data or {}),
         supported_aoq_formats=', '.join(sorted(x.upper().lstrip('.') for x in ALLOWED_OCR_EXTENSIONS)),
     )
@@ -3213,18 +3305,22 @@ def aoq_review(id):
         flash('AOQ record not found.')
         return redirect(url_for('aoq'))
     d = dict(row)
-    pr_items = parse_items(d.get('pr_items'))
+    historical_pr_no = d['pr_no'].strip() if isinstance(d.get('pr_no'), str) else ''
+    if (type(d.get('pr_id')) is not int or d['pr_id'] <= 0
+            or historical_pr_no.casefold() in ('', 'none', 'null', 'n/a', 'not recorded', 'no linked pr', 'independent aoq', '—', '-')):
+        historical_pr_no = None
+    pr_items = parse_items(d.get('pr_items')) if historical_pr_no else []
     offer_items = parse_items(d.get('winning_offer'))
     suppliers = parse_items(d.get('suppliers'))
     return render_review_page(
-        active='aoq', title=f'Review AOQ {d["no"]}', document_type='AOQ / Bidding Result',
+        active='aoq', title=f'Review Quotation Evaluation {d["no"]}', document_type='AOQ / Bidding Result',
         document_no=d['no'], status=d['status'], created_at=d.get('created_at'),
         linked_records=[
-            {'label': 'Related PR', 'value': d.get('pr_no') or 'No linked PR'},
+            *([{'label': 'Historical PR reference', 'value': historical_pr_no}] if historical_pr_no else []),
             {'label': 'Source File', 'value': d.get('ocr_filename') or 'Legacy/manual record',
              'url': url_for('aoq_source_file', id=id) if d.get('stored_filename') or d.get('has_durable_source') else ''},
             {'label': 'Detected Document Type', 'value': d.get('source_type') or 'Legacy/manual record'},
-            {'label': 'Extraction Method', 'value': d.get('extraction_method') or 'Legacy/manual extraction'},
+            {'label': 'Extraction Method', 'value': d.get('extraction_method') or 'Legacy/manual extraction', 'diagnostic': True},
         ],
         summary=[
             {'label': 'Requesting Office', 'value': d.get('pr_office') or '—'},
@@ -3233,21 +3329,27 @@ def aoq_review(id):
             {'label': 'Winning Offer Items', 'value': len(offer_items)},
         ],
         item_sections=[
-            review_section('Approved PR Requirements', pr_items, d.get('pr_no') or 'PR',
-                           'Use this section to confirm what the procurement originally requested.'),
-            review_section('OCR-Reviewed Winning Offer', offer_items, d['no'],
+            *([review_section('Approved PR Requirements', pr_items, historical_pr_no,
+                              'Retained historical requirements; independent AOQ approval does not require a PR link.',
+                              optional=True)] if historical_pr_no else []),
+            review_section('Winning Quotation Details', offer_items, d['no'],
                            'Double-check the supplier offer, description, specification, quantity, unit, and price before approval.'),
+            *[review_section('Supplier quotation: '+str(supplier.get('supplier') or 'Name not recorded'),
+                             [item for item in supplier.get('items',[]) if isinstance(item,dict)], d['no'],
+                             'Recorded quotation total: '+review_value(supplier.get('amount'))+'. '+str(supplier.get('remarks') or ''),
+                             optional=True)
+              for supplier in suppliers if isinstance(supplier,dict) and isinstance(supplier.get('items',[]),list)],
         ],
         text_blocks=[
-            {'title': 'Supplier / Quotation Records', 'content': json.dumps(suppliers, indent=2, ensure_ascii=False, default=str) if suppliers else 'No supplier list stored.'},
-            {'title': 'Flexible Extraction Profile', 'content': json.dumps(parse_json_object(d.get('extraction_profile')), indent=2, ensure_ascii=False, default=str) if d.get('extraction_profile') else 'No extraction profile stored.'},
-            {'title': 'Extraction Warnings', 'content': json.dumps(parse_json_list(d.get('extraction_warnings')), indent=2, ensure_ascii=False, default=str) if d.get('extraction_warnings') else 'No extraction warnings stored.'},
-            {'title': 'Raw Extracted Text', 'content': d.get('ocr_text') or 'No raw extracted text stored.'},
+            {'title': 'Supplier / Quotation Records', 'content': json.dumps(suppliers, indent=2, ensure_ascii=False, default=str) if suppliers else 'No supplier list stored.', 'diagnostic': True},
+            {'title': 'Flexible Extraction Profile', 'content': json.dumps(parse_json_object(d.get('extraction_profile')), indent=2, ensure_ascii=False, default=str) if d.get('extraction_profile') else 'No extraction profile stored.', 'diagnostic': True},
+            {'title': 'Source Review Warnings', 'content': parse_json_list(d.get('extraction_warnings')) or ['No source review warnings stored.']},
+            {'title': 'Raw Extracted Text', 'content': d.get('ocr_text') or 'No raw extracted text stored.', 'diagnostic': True},
         ],
         approve_url=url_for('aoq_approve', id=id), approve_label=f'Approve AOQ {d["no"]}',
         approval_effect='Approval locks the reviewed winning offer and makes this AOQ available for Purchase Order generation.',
         back_url=url_for('aoq'), print_url=None, can_approve=d.get('status') == 'For Review' and workflow_active and not revised_workflow_preview.active(),
-        approval_details=[('AOQ', d['no']), ('Linked PR', d.get('pr_no') or 'Not linked'),
+        approval_details=[('AOQ', d['no']), *([('Historical PR', historical_pr_no)] if historical_pr_no else []),
                           ('Winning supplier', d.get('winner') or 'Not selected'),
                           ('Winning amount', money_text(d.get('winning_amount'))), ('Item count', len(offer_items))],
     )
@@ -3301,7 +3403,7 @@ def po():
         d['offer_summary'] = '; '.join(f"{value_any(item, 'item', 'Item Name', default='Item')}: {quantity_text(item.get('qty'))} {item.get('unit') or '—'} at {source_money_text(item.get('unit_cost'))}"
                                       for item in parse_items(a['winning_offer']))
         aoqs.append(d)
-    return render_template('po.html', active='po', rows=rows, aoqs=aoqs, title='PO', revised_workflow_active=revised_procurement.enabled(globals()))
+    return render_template('po.html', active='po', rows=rows, aoqs=aoqs, title='Purchase Orders', revised_workflow_active=revised_procurement.enabled(globals()))
 
 @app.route('/po/<int:id>/view')
 def po_review(id):
@@ -3318,7 +3420,7 @@ def po_review(id):
     d = request_queries.recorded_pr_references(q, [row])[0]
     po_items = parse_items(d.get('items'))
     return render_review_page(
-        active='po', title=f'Review PO {d["no"]}', document_type='Purchase Order',
+        active='po', title=f'Review Purchase Order {d["no"]}', document_type='Purchase Order',
         document_no=d['no'], status=d['status'], created_at=d.get('created_at'),
         linked_records=([{'label':'PR-PO verification','value':'Review sources before final PO approval','url':url_for('nlp')}] if revised_procurement.enabled(globals()) else [])+[
             {'label': 'Related PR', 'value': d.get('pr_no') or 'No linked PR'},
@@ -3409,11 +3511,12 @@ def nlp():
         return revised_procurement.nlp_page(globals())
     if request.method == 'POST':
         abort(409, description='The replacement PR-PO workflow requires an authorized active release. Legacy verification creation is retired.')
-    rows = paged_q('''select n.*,p.no po_no,aq.no aoq_no,r.no pr_no from nlp n
+    rows = paged_q('''select n.*,p.no po_no,p.items po_items,p.supplier,aq.no aoq_no,r.no pr_no,r.items pr_items,r.office from nlp n
         join po p on p.id=n.po_id left join aoq aq on aq.id=p.aoq_id
-        left join pr r on r.id=aq.pr_id order by n.id desc''')
+        left join pr r on r.id=coalesce((to_jsonb(n)->>'pr_id')::bigint,
+            (to_jsonb(p)->>'pr_id')::bigint,aq.pr_id) order by n.id desc''')
     rows = request_queries.recorded_pr_references(q, rows)
-    return render_template('nlp.html', active='nlp', rows=rows, title='NLP Verification History')
+    return render_template('nlp.html', active='nlp', rows=rows, title='Comparison Records')
 
 def nlp_pricing_advisory(record_id):
     """Optional read-only diagnostics; unavailable diagnostics cannot change review."""
@@ -3449,7 +3552,7 @@ def nlp_review(id):
     remarks = nlp_dynamic_remarks(d.get('result'), details)
     source = details.get('final_decision_source') or 'AI-only FastText PR–PO verification'
     return render_review_page(
-        active='nlp', title=f'Review NLP {d.get("no") or id}', document_type='PR–PO NLP Verification',
+        active='nlp', title=f'Review Comparison {d.get("no") or id}', document_type='Purchase Request–Purchase Order Review',
         document_no=d.get('no') or f'NLP-{id}', status=d.get('status') or 'For Review',
         created_at=d.get('created_at'),
         linked_records=[
@@ -3459,20 +3562,20 @@ def nlp_review(id):
         ],
         summary=[
             {'label': 'Supplier', 'value': d.get('supplier') or '—'},
-            {'label': 'NLP Result', 'value': d.get('result') or '—'},
+            {'label': 'Saved model result', 'value': d.get('result') or '—'},
             {'label': 'Match / Certainty Score', 'value': f'{to_float(d.get("confidence")):.2f}%'},
-            {'label': 'Decision Source', 'value': source},
+            {'label': 'Decision Source', 'value': source, 'diagnostic': True},
         ],
         item_sections=[
             review_section('Approved PR Requirements', parse_items(d.get('pr_items')), d.get('pr_no') or 'PR',
-                           'Original requirements supplied to the NLP model.'),
+                           'Original approved item requirements.'),
             review_section('Approved PO Items', parse_items(d.get('po_items')), d.get('po_no') or 'PO',
-                           'Final purchase-order values compared by the NLP model.'),
+                           'Recorded purchase-order items used in this comparison.'),
         ],
         text_blocks=[
-            {'title': 'Primary NLP Finding', 'content': finding},
+            {'title': 'Saved Comparison Finding', 'content': finding},
             {'title': 'Recommended Staff Action', 'content': remarks},
-            {'title': 'Complete NLP Comparison Details', 'content': json.dumps(details, indent=2, ensure_ascii=False, default=str)},
+            {'title': 'Complete Comparison Evidence', 'content': json.dumps(details, indent=2, ensure_ascii=False, default=str), 'diagnostic': True},
         ],
         approve_url=url_for('nlp_approve', id=id),
         approve_label=f'Approve NLP Result {d.get("no") or id}',
@@ -4160,13 +4263,13 @@ def users():
                 flash(f'Password reset for {user["username"]}.')
         return redirect(url_for('users'))
     rows = q('select id,username,role from users order by lower(username)')
-    return render_template('users.html', active='users', rows=rows, title='User Management')
+    return render_template('users.html', active='users', rows=rows, title='User Accounts & Roles')
 
 
 @app.route('/audit')
 def audit():
     rows = paged_q('select * from audit_trail order by id desc')
-    return render_template('audit.html', active='audit', rows=rows, title='Audit Trail')
+    return render_template('audit.html', active='audit', rows=rows, title='Audit Log')
 
 
 @app.route('/health')

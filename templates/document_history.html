@@ -1,6 +1,6 @@
 {% if history %}
 <section id="document-history" class="card document-history {{'aoq-history-workspace' if history.kind=='aoq'}}" aria-labelledby="document-history-title">
-  <div class="toolbar"><div><h3 id="document-history-title">{{'AOQ Document History' if history.kind=='aoq' else 'My uploaded documents'}}</h3><p class="muted">Saved originals, extraction progress and review status. Official approval remains a separate workflow.</p></div>{% if history.kind=='aoq' and not history.unavailable %}<span class="badge info">{{history.total}} matching upload(s)</span>{% endif %}</div>
+  <div class="toolbar"><a class="btn" href="{{url_for('aoq' if history.kind=='aoq' else 'ppmp_intake')}}">Back to workspace</a><div><h3 id="document-history-title">{{'AOQ Document History' if history.kind=='aoq' else 'Document History'}}</h3><p class="muted">Saved originals, extraction progress and review status. Official approval remains a separate workflow.</p></div>{% if history.kind=='aoq' and not history.unavailable %}<span class="badge info">{{history.total}} matching upload(s)</span>{% endif %}</div>
   {% if history.unavailable %}
   <p class="notice" role="status" data-category="info">Document history is temporarily unavailable. Existing documents remain preserved. Please report reference {{history.reference or 'unavailable'}} to the administrator.</p>
   {% else %}
@@ -28,7 +28,7 @@
       <thead><tr><th scope="col">Document</th><th scope="col">Uploaded / modified</th><th scope="col">Uploader</th><th scope="col">Extracted items</th><th scope="col">Categories</th><th scope="col">Processing / review</th><th scope="col">Workflow stage</th><th scope="col">Actions</th></tr></thead>
       <tbody>{% for row in group.rows %}<tr data-history-source="{{row.id}}">
         <td><a href="{{row.detail_url}}"><strong>{{row.filename}}</strong></a><br><small>{{row.extension|upper}} · {{row.id}}</small></td>
-        <td><span>{{row.created_at}}</span><br><small>Modified {{row.modified_at}}</small></td><td>{{row.uploader}}</td>
+        <td><span>{{row.created_at|philippine_time}}</span><br><small>Modified {{row.modified_at|philippine_time}}</small></td><td>{{row.uploader}}</td>
         <td><strong>{{row.total}}</strong>{% if history.kind=='aoq' %}<br><small>{{row.quotation_count or 0}} quotations · {{row.supplier_count or 0}} supplier rows</small>{% endif %}</td>
         <td>DBM {{row.DBM}}<br>NON-DBM {{row['NON-DBM']}}<br>LIB {{row.LIB}}<br>Needs classification {{row.needs_classification}}</td>
         <td><span class="badge {{'ok' if row.processing_status=='COMPLETE' else 'warn'}}">{{row.processing_status|replace('_',' ')|title}}</span><br><span>{{row.review_status|replace('_',' ')|title}}</span></td>

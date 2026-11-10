@@ -22,13 +22,23 @@
 <div class="procurement-workspace-hero"><div class="procurement-workspace-title"><span class="procurement-workspace-mark">{{icon(glyph)}}</span><div><h2>{{title}}</h2><p>{{description}}</p></div></div></div>
 {%- endmacro %}
 
+{% macro display_value(value) -%}
+{% set value = review_public_value(value) %}
+{% if value is mapping %}
+  {% if 'value' in value %}{{'At least ' if value.get('operator') in ['minimum','at least'] else 'At most ' if value.get('operator') in ['maximum','at most'] else (value.operator|string+' ') if value.get('operator') not in [none,'','exact'] else ''}}{{display_value(value.value)}}{% if value.get('unit') and value.unit not in ['literal','version'] %} {{value.unit}}{% endif %}{% for key,item in value.items() if key not in ['value','unit','operator'] %}; {{key|replace('_',' ')|capitalize}}: {{display_value(item)}}{% endfor %}
+  {% else %}{% for key,item in value.items() %}{{key|replace('_',' ')|capitalize}}: {{display_value(item)}}{% if not loop.last %}; {% endif %}{% else %}Not recorded{% endfor %}{% endif %}
+{% elif value is sequence and value is not string %}
+  {% for item in value %}{{display_value(item)}}{% if not loop.last %}; {% endif %}{% else %}Not recorded{% endfor %}
+{% elif value is boolean %}{{'Yes' if value else 'No'}}{% else %}{{value if value is not none and value!='' else 'Not recorded'}}{% endif %}
+{%- endmacro %}
+
 {% macro source_items(label,document,items) -%}
-<section class="card procurement-source-panel">
+<details class="card procurement-source-panel"><summary>View Document Details — {{label}} {{document.no}}</summary>
   <div class="section-heading-row"><div><span class="review-kicker">{{label}} SOURCE</span><h3>{{document.no}}</h3></div><span class="badge {{'ok' if document.status=='Approved' else 'warn'}}">{{document.status}}</span></div>
   {% for item in items %}
   <article class="procurement-source-item"><h4>{{label}} item {{loop.index}}</h4><dl>
-    {% for key,value in item.items() if not key.startswith('_') %}<div><dt>{{key}}</dt><dd class="source-value">{{value if value is not none and value!='' else 'Not recorded'}}</dd></div>{% endfor %}
+    {% for key,value in item.items() if not review_field_is_diagnostic(key) %}<div><dt>{{key|replace('_',' ')}}</dt><dd class="source-value">{% if key|replace('_',' ')|lower in ['estimated unit cost','unit cost','unit price','amount','total','total cost'] and value is number and value is not boolean %}₱{{'{:,.2f}'.format(value)}}{% else %}{{display_value(value)}}{% endif %}</dd></div>{% endfor %}
   </dl></article>
   {% else %}<p class="warning-box">No source items are stored. Verification cannot proceed.</p>{% endfor %}
-</section>
+</details>
 {%- endmacro %}

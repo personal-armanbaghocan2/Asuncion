@@ -8,8 +8,13 @@
   let current=null,etag='',delay=15000,timer=null,running=false,controller=null;
   const notice=document.createElement('div');
   notice.className='notice live-update-notice';notice.dataset.category='info';notice.hidden=true;notice.setAttribute('role','status');
+  const noticeText=document.createElement('span'),retry=document.createElement('button');
+  retry.type='button';retry.className='btn small';retry.textContent='Retry updates';retry.hidden=true;
+  retry.addEventListener('click',()=>{clearTimeout(timer);poll();});
+  notice.append(noticeText,retry);
   document.querySelector('#mainContent')?.prepend(notice);
-  function message(text,error=false){notice.textContent=text;notice.dataset.category=error?'error':'info';notice.hidden=false;}
+  function message(text,error=false,failure=false){noticeText.textContent=text+' ';notice.dataset.category=error?'error':'info';notice.dataset.syncFailure=String(failure);retry.hidden=!failure||error;notice.hidden=false;}
+  function recovered(){if(notice.dataset.syncFailure==='true'){notice.hidden=true;notice.dataset.syncFailure='false';retry.hidden=true;}}
   function dirty(){return !!document.querySelector('form[data-sync-dirty="true"]');}
   function mark(event){
     if(event.target.type==='search')return;
@@ -23,7 +28,12 @@
   }
   async function updateView(versions,initial=false){
     const response=await fetch(window.location.href,{credentials:'same-origin',cache:'no-store',headers:{'X-PSMS-Fragment':'1'},signal:controller.signal});
-    if(!response.ok||response.redirected)throw new Error('VIEW_UNAVAILABLE');
+    if(!response.ok||response.redirected){
+      const error=new Error('VIEW_UNAVAILABLE');error.status=response.status;
+      error.authentication=response.redirected||response.status===401||response.status===403;
+      error.diagnostic=response.headers.get('X-PSMS-Diagnostic')||'';
+      throw error;
+    }
     const fresh=new DOMParser().parseFromString(await response.text(),'text/html');
     let applied=true;
     // Explicit read-only workspaces and timelines can change shape. Editors,
@@ -96,34 +106,43 @@
       const freshNames=[...fresh.querySelectorAll('.user-copy b,.account-dropdown-head b')];
       if(names.length===freshNames.length)names.forEach((node,index)=>{node.textContent=freshNames[index].textContent;});
     }
-    if(!initial||dirty())message(dirty()?'Shared records changed. Your unsaved edits were retained. Save or cancel them before reloading editable item lists.':'Records and workflow status updated from the shared database.');
+    if(!initial||dirty())message(dirty()?'Shared records changed. Your unsaved edits were retained. Save or cancel them before reloading editable item lists.':!applied?'Shared records changed. The focused table will refresh after you leave it.':'Records and workflow status updated from the shared database.');
     return applied;
   }
   function schedule(){clearTimeout(timer);if(!document.hidden)timer=setTimeout(poll,delay+Math.floor(Math.random()*2000));}
   async function poll(){
     if(document.hidden||running)return;
     running=true;controller=new AbortController();
+    let stage='revisions',status=0,diagnostic='';
     try{
       const url=new URL(root.dataset.syncUrl,window.location.origin);url.searchParams.set('topics',topics.join(','));
       const headers={'Accept':'application/json'};if(etag)headers['If-None-Match']=etag;
       const response=await fetch(url,{credentials:'same-origin',cache:'no-store',headers,signal:controller.signal});
-      if(response.redirected||response.status===401||response.status===403){message('Your session changed. Sign in again before continuing.',true);delay=120000;return;}
+      status=response.status;diagnostic=response.headers.get('X-PSMS-Diagnostic')||'';
+      if(response.redirected||response.status===401||response.status===403){message('Your session changed. Sign in again before continuing.',true,true);delay=120000;return;}
       const csrf=response.headers.get('X-CSRFToken');
       if(csrf&&csrf.length<512){
         document.querySelectorAll('input[name="csrf_token"]').forEach(input=>{input.value=csrf;input.defaultValue=csrf;});
         document.querySelector('meta[name="csrf-token"]')?.setAttribute('content',csrf);
       }
-      if(response.status===304){delay=15000;return;}
+      if(response.status===304){recovered();delay=15000;return;}
       if(!response.ok||!response.headers.get('content-type')?.includes('application/json'))throw new Error('SYNC_UNAVAILABLE');
       const result=await response.json();
       let applied=true;
-      if(!current||JSON.stringify(current)!==JSON.stringify(result.versions))applied=await updateView(result.versions,!current);
+      if(!current||JSON.stringify(current)!==JSON.stringify(result.versions)){stage='view';status=0;diagnostic='';applied=await updateView(result.versions,!current);}
       // Retry a focused record table after focus moves. Advancing its revision
       // here would leave that table stale until another database write.
       if(applied){current=result.versions;etag=response.headers.get('ETag')||'';}
+      recovered();
       delay=15000;
     }catch(error){
-      if(error.name!=='AbortError'){delay=Math.min(120000,delay*2);message('Automatic updates are temporarily unavailable. Your edits remain on this page.');}
+      if(error.name!=='AbortError'){
+        delay=Math.min(120000,delay*2);
+        if(error.authentication)message('Your session changed. Sign in again before continuing.',true,true);
+        else message('Automatic updates are temporarily unavailable. Your edits remain on this page.',false,true);
+        const code=error.diagnostic||diagnostic;
+        console.warn('Automatic update unavailable',{stage,status:error.status||status,diagnostic:/^[A-Z0-9_]{1,64}$/.test(code)?code:''});
+      }
     }finally{running=false;controller=null;schedule();}
   }
   document.addEventListener('visibilitychange',()=>{

@@ -254,3 +254,54 @@ body:has(.aoq-reference-workspace) #mainContent > .dataset-pagination { display:
   .aoq-reference-workspace .aoq-record-tabs .btn { padding:8px 10px; font-size:12px; }
   .aoq-reference-workspace .aoq-record-tabs .icon { width:17px; height:17px; }
 }
+
+/* Compact administrative workspaces; existing actions and permissions remain. */
+.aoq-reference-workspace .procurement-workspace-hero {margin:0 0 16px;padding:0;background:none}
+.aoq-reference-workspace .procurement-workspace-title h2 {font-size:23px}
+.aoq-reference-workspace .procurement-workspace-mark,
+.aoq-reference-workspace .procurement-independence-note {display:none}
+.aoq-reference-workspace .card,.aoq-reference-workspace .aoq-records,
+.aoq-reference-workspace .aoq-upload-panel {background:#fff;border:1px solid #d9e1dc;border-radius:6px;box-shadow:none}
+.aoq-workspace-toolbar {display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}
+.aoq-reference-workspace .btn,.aoq-reference-workspace .btn.primary {background-image:none;border-radius:4px}
+.aoq-reference-workspace .aoq-records-heading {display:flex;flex-wrap:wrap;gap:12px}
+.aoq-reference-workspace .aoq-record-controls {position:static;width:auto;display:flex;flex-wrap:wrap;gap:8px;flex:1 1 360px}
+.aoq-reference-workspace .aoq-search {min-width:180px;flex:1}
+.aoq-reference-workspace .aoq-filter-panel>summary {font-size:13px;min-width:90px}
+.aoq-reference-workspace .aoq-filter-panel .icon {width:16px!important;height:16px!important}
+.aoq-reference-workspace .offer-table select {min-width:10rem!important;width:100%;height:auto;padding:8px 30px 8px 8px}
+.aoq-reference-workspace .offer-table input,.aoq-reference-workspace .offer-table textarea {min-width:110px}
+.technical-evidence pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:28rem;overflow:auto}
+@media(max-width:760px){.aoq-workspace-toolbar .btn{flex:1 1 auto}.aoq-reference-workspace .aoq-record-controls{flex-basis:100%}.aoq-reference-workspace .aoq-filter-panel>summary{font-size:13px}}
+
+.procurement-page .procurement-workspace-hero {background:#fff;border:1px solid #d9e1dc;box-shadow:none;border-radius:5px;padding:14px;margin-bottom:16px}
+.procurement-page .procurement-workspace-title h2 {font-size:22px}
+.procurement-page .procurement-workspace-mark {width:32px;height:32px;background:none;box-shadow:none}
+.procurement-page .procurement-workspace-mark .icon {width:22px;height:22px}
+body.reference-shell:has(.aoq-reference-workspace) .content {background:#f6f8f6}
+body.reference-shell:has(.aoq-reference-workspace) .sidebar {background:#00482f}
+
+/* AOQ records: labels and controls stay in flow, including expanded filters. */
+.aoq-reference-workspace .aoq-records .aoq-records-heading {margin:0 0 12px;min-height:0}
+.aoq-reference-workspace .aoq-records .aoq-records-heading h3 {font-size:18px;gap:8px;letter-spacing:normal}
+.aoq-reference-workspace .aoq-records .aoq-record-controls {position:static;display:flex;align-items:flex-start;flex-wrap:wrap;width:100%;gap:12px;margin:0 0 14px}
+.aoq-reference-workspace .aoq-records .aoq-search {display:block;flex:1 1 240px;min-width:0}
+.aoq-reference-workspace .aoq-records .aoq-search label {display:block;position:static;margin:0 0 5px;font-size:12px;line-height:17px}
+.aoq-reference-workspace .aoq-records .aoq-search-field {position:relative;min-width:0}
+.aoq-reference-workspace .aoq-records .aoq-search-field>span {position:absolute;left:12px;top:12px;display:flex;pointer-events:none;color:#51675c}
+.aoq-reference-workspace .aoq-records .aoq-search-field .icon {width:18px;height:18px}
+.aoq-reference-workspace .aoq-records .aoq-search input {box-sizing:border-box;width:100%;min-width:0;height:42px;min-height:42px;padding:9px 10px 9px 38px;border-radius:6px;background:#fff;box-shadow:none;font-size:13px}
+.aoq-reference-workspace .aoq-records .aoq-search-actions {display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.aoq-reference-workspace .aoq-records .aoq-filter-panel {position:static;flex:0 1 auto;margin-top:22px;max-width:100%}
+.aoq-reference-workspace .aoq-records .aoq-filter-panel>summary {height:42px;min-width:90px;display:flex;gap:6px;font-size:13px;padding:9px 12px;background:#fff;border-radius:6px}
+.aoq-reference-workspace .aoq-records .aoq-filter-panel>div {position:static;display:grid;gap:12px;box-sizing:border-box;width:280px;max-width:100%;margin-top:10px;padding:14px;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:none}
+.aoq-reference-workspace .aoq-records .aoq-filter-panel:not([open])>div {display:none}
+.aoq-reference-workspace .aoq-records .aoq-filter-panel select {width:100%;min-width:0}
+.aoq-reference-workspace .aoq-records .aoq-filter-panel .actions {display:flex;gap:8px;flex-wrap:wrap}
+.aoq-reference-workspace .aoq-records .aoq-record-tabs {gap:8px;flex-wrap:wrap}
+@media(max-width:600px){
+ .aoq-reference-workspace .aoq-records .aoq-search {flex-basis:100%}
+ .aoq-reference-workspace .aoq-records .aoq-search-actions,.aoq-reference-workspace .aoq-records .aoq-filter-panel {margin-top:0}
+ .aoq-reference-workspace .aoq-records .aoq-filter-panel[open] {flex-basis:100%;width:100%}
+ .aoq-reference-workspace .aoq-records .aoq-filter-panel>div {width:100%}
+}
