@@ -18,11 +18,11 @@
 {% if not independent_aoq %}<p class="warning-box" role="status">Independent AOQ upload is unavailable until the revised workflow is active. The retired PR-linked upload is not offered here.</p>{% endif %}
 <details class="card aoq-upload-panel" id="aoq-upload-panel"><summary>Choose an AOQ file and extract supplier quotations</summary>
   <div class="step-title"><div><h3>Upload an independent AOQ / bidding result</h3><p class="muted">Supported formats: {{ supported_aoq_formats }}. The layout may be different; the system normalizes detected data into the review form below.</p></div></div>
-  <form id="aoq-upload-form" method="post" enctype="multipart/form-data" class="compact-upload" data-document-processing action="{{url_for('aoq')}}" data-confirm="Extract the supplier quotations from this independent AOQ file?">{% if workflow_preview or not independent_aoq %}<fieldset disabled>{% endif %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <form id="aoq-upload-form" method="post" enctype="multipart/form-data" class="compact-upload" data-document-processing action="{{url_for('aoq')}}" data-confirm="Extract the supplier quotations from this independent AOQ file?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="extract_ocr">
     <div class="form-field full"><label for="aoq-file-input">AOQ / Bidding Result File</label><input id="aoq-file-input" name="ocr_file" type="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt" required></div>
-    <div class="form-actions full"><button class="btn primary" type="submit">Upload and Detect AOQ</button></div>
-  {% if workflow_preview or not independent_aoq %}</fieldset>{% endif %}</form>
+    <div class="form-actions full"><button class="btn primary" type="submit"{% if workflow_preview or not independent_aoq %} disabled{% endif %}>Upload and Detect AOQ</button></div>
+  </form>
   <p class="muted">No PR selection is required. Choose the approved PR later in PR–PO Review.</p>
 </details>
 {% include 'aoq_quotations.html' %}
