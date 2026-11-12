@@ -26,17 +26,20 @@ def suggest_category(row):
     evidence=confidence.get('_source_evidence') or {}
     candidates=[]
     cells=str(evidence.get('text') or '').split(' | ')
+    explicit_columns=False
     for index,label in enumerate(evidence.get('headers') or []):
         if re.sub(r'[^a-z]+',' ',str(label).lower()).strip() in ('category','ppmp category','source category'):
+            explicit_columns=True
             value=category(cells[index]) if index<len(cells) else None
-            if value:candidates.append((value,'item category column'))
+            if not value:return None,'source item category is missing or unsupported; manual assignment required'
+            candidates.append((value,'item category column'))
     # Explicit item columns take precedence over shared document context.
+    if not candidates and not explicit_columns:
+        value=category((confidence.get('_document_metadata') or {}).get('category'))
+        if value:candidates.append((value,'scoped source category'))
     if not candidates:
         value=category(evidence.get('worksheet'))
         if value:candidates.append((value,'worksheet category'))
-    if not candidates:
-        value=category((confidence.get('_document_metadata') or {}).get('category'))
-        if value:candidates.append((value,'scoped source category'))
     values={value for value,_ in candidates}
     return (next(iter(values)),candidates[0][1]) if len(values)==1 else (None,'manual category assignment required')
 
@@ -65,13 +68,17 @@ def catalog_categories(api,rows):
     if len(records)>500:return {}
     result={}
     for record in records:
-        values=set()
+        values=set();explicit=False
         for data in (api['_json_dict'](record.get('raw_data')),api['_json_dict'](record.get('normalized_data'))):
             for key in ('PPMP Category','ppmp_category','Source Category','category','Category'):
-                value=category(data.get(key))
-                if value:values.add(value)
-        sheet=category(record.get('sheet_name'))
-        if sheet:values.add(sheet)
+                if key in data:
+                    explicit=True
+                    # None deliberately preserves a missing/unsupported source
+                    # category; a worksheet title must not silently replace it.
+                    values.add(category(data[key]))
+        if not explicit:
+            sheet=category(record.get('sheet_name'))
+            if sheet:values.add(sheet)
         for name in (record.get('article'),record.get('description')):
             key=str(name or '').strip().lower()
             if key in names:result.setdefault(key,set()).update(values)
@@ -138,7 +145,8 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
                               if re.sub(r'[^a-z]+',' ',str(label).lower()).strip() in ('category','ppmp category','source category')]
             if not proposed and not explicit_headers:
                 matches=catalog.get(str(fields.get('Item Name') or '').strip().lower(),set())
-                if len(matches)==1:proposed,reason=next(iter(matches)),'exact existing procurement catalog evidence'
+                if len(matches)==1 and next(iter(matches)) in CATEGORIES:
+                    proposed,reason=next(iter(matches)),'exact existing procurement catalog evidence'
             confidence['_category_suggestion']=dict(category=proposed,evidence=reason)
             confidence['_category_confirmed']=False
             confidence['_category_assignment']=dict(category=proposed,method='automatic' if proposed else 'unresolved',evidence=reason,at=api['now']())
@@ -216,7 +224,7 @@ def review(api,sid):
     source=api['q']("select id,filename,created_at,owner_id,extraction from psms_documents.sources where id=? and owner_id=? and kind='ppmp'",(sid,durable._uid()),one=True)
     if not source:abort(404)
     page=durable.revision(request.args.get('page','1'))
-    if page>10000:abort(400)
+    if not 1<=page<=10000:abort(400)
     if request.method=='POST':
         if request.form.get('confirm_category')!='yes':abort(400,description='Confirm the item category before saving.')
         destination=category(request.form.get('category'))
@@ -253,12 +261,24 @@ def review(api,sid):
     extraction,run=processing.latest(api,sid,source['extraction'])
     source=dict(source,extraction=extraction)
     selected=request.args.get('category','ALL')
+    selected_sheet=request.args.get('sheet','').strip()
     search=request.args.get('q','').strip()
     sort=request.args.get('sort','source')
-    if selected not in (*CATEGORIES,'ALL','UNASSIGNED') or len(search)>160:abort(400)
+    if (selected not in (*CATEGORIES,'ALL','UNASSIGNED') or len(search)>160 or len(selected_sheet)>160
+        or any(len(request.args.getlist(key))>1 for key in ('sheet','category','q','sort','page'))):abort(400)
     sorts={'source':'id','name':"lower(fields_json::jsonb->>'Item Name'),id",'name_desc':"lower(fields_json::jsonb->>'Item Name') desc,id",'status':'status,id','newest':'id desc'}
     if sort not in sorts:abort(400)
-    where='source_id=? and owner_id=?';params=[sid,durable._uid()]
+    source_where='source_id=? and owner_id=?';source_params=[sid,durable._uid()]
+    # A historical malformed/absent evidence payload has no known worksheet;
+    # it must not prevent opening All worksheets or be rewritten here. PG17.
+    sheet_expression="(case when confidence_json IS JSON OBJECT then confidence_json::jsonb #>> '{_source_evidence,worksheet}' end)"
+    sheets=api['q']('select distinct '+sheet_expression+' as worksheet from ppmp_ocr_drafts where '+source_where+
+        ' and '+sheet_expression+' is not null order by worksheet',tuple(source_params))
+    sheets=[row['worksheet'] for row in sheets if row['worksheet']]
+    if selected_sheet and selected_sheet not in sheets:abort(400,description='Choose a saved source worksheet.')
+    if selected_sheet:
+        source_where+=' and '+sheet_expression+'=?';source_params.append(selected_sheet)
+    where=source_where;params=list(source_params)
     if selected=='UNASSIGNED':where+=" and status='CATEGORY_REVIEW'"
     elif selected in CATEGORIES:
         where+=" and ppmp_category=? and status<>'CATEGORY_REVIEW'";params.append(selected)
@@ -270,7 +290,7 @@ def review(api,sid):
         count(*) filter(where ppmp_category='LIB' and status<>'CATEGORY_REVIEW') lib,
         count(*) filter(where status='CATEGORY_REVIEW') unclassified,
         count(*) filter(where converted) official
-        from ppmp_ocr_drafts where source_id=? and owner_id=?''',(sid,durable._uid()),one=True)
+        from ppmp_ocr_drafts where '''+source_where,tuple(source_params),one=True)
     drafts=api['q']('select * from ppmp_ocr_drafts where '+where+' order by '+sorts[sort]+' limit 21 offset ?',(*params,(page-1)*20))
     has_next=len(drafts)>20;drafts=drafts[:20]
     items=[]
@@ -282,13 +302,13 @@ def review(api,sid):
         value['source_number']=(value['confidence'].get('_source_evidence') or {}).get('item_number','')
         items.append(value)
     def workspace_url(**changes):
-        values={key:request.args[key] for key in request.args if key in ('q','sort','category','page') or key.startswith('h_')}
+        values={key:request.args[key] for key in request.args if key in ('q','sort','category','page','sheet') or key.startswith('h_')}
         values.update(changes)
         return url_for('ppmp_intake_review',sid=sid,**values)
     import document_history
     return render_template('ppmp_intake.html',active='ppmp',title='PPMP Document Review',source=source,
         items=items,labels=api['ppmp_review_labels'](),categories=CATEGORIES,page=page,has_next=has_next,
-        summary=summary,run=run,selected=selected,search=search,sort=sort,workspace_url=workspace_url,
+        summary=summary,run=run,selected=selected,selected_sheet=selected_sheet,sheets=sheets,search=search,sort=sort,workspace_url=workspace_url,
         history=document_history.listing(api,'ppmp'))
 
 

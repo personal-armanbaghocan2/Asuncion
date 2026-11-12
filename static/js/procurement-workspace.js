@@ -33,4 +33,27 @@
     const link = event.target.closest?.('a');
     if (link?.closest('[data-record-navigation]') && !allowRecordNavigation()) event.preventDefault();
   });
+  document.querySelectorAll('form[data-auto-filters]').forEach(form => {
+    let timer = null, generation = 0;
+    const cancel = () => { clearTimeout(timer); timer = null; generation += 1; };
+    const apply = () => {
+      cancel();
+      // Submit a normal GET: browser navigation cancels superseded requests.
+      // Do not replace editable rows with asynchronous/stale HTML fragments.
+      if (form.reportValidity()) form.requestSubmit();
+    };
+    form.addEventListener('submit', cancel);
+    form.addEventListener('change', event => {
+      if (event.target.tagName === 'SELECT') apply();
+    });
+    form.addEventListener('input', event => {
+      if (!event.target.matches('input:not([type="hidden"])')) return;
+      cancel();
+      const expected = generation;
+      timer = setTimeout(() => { if (generation === expected) apply(); }, 400);
+    });
+    // Keep a usable Apply fallback when JavaScript is unavailable.
+    form.querySelector('[data-auto-filter-submit]')?.setAttribute('hidden', '');
+    window.addEventListener('pagehide', cancel);
+  });
 })();

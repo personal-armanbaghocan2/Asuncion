@@ -35,7 +35,14 @@ def _bind_actor(con):
     No row lock, write, commit, persistent connection state or client role claim.
     """
     if not has_request_context():return
-    if not (getattr(g,'workflow_preview',False) or getattr(g,'revised_procurement_enabled',False)):
+    # PPMP drafts/history and profile-backed source reads use the same actor
+    # bridge independently of procurement activation. Binding a validated actor
+    # grants no privilege; PostgreSQL still checks its session and owner RLS.
+    private_source_endpoint = request.endpoint in (
+        'ppmp_intake_review','ppmp_intake_source',
+        'document_history_detail','document_history_source')
+    if not (private_source_endpoint or getattr(g,'workflow_preview',False)
+            or getattr(g,'revised_procurement_enabled',False)):
         return
     account=getattr(g,'psms_account',None);uid=session.get('user_id')
     if (session.get('logged_in') is not True or type(uid) is not int or uid<=0
