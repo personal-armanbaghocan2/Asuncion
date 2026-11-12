@@ -196,3 +196,21 @@ dialog.ppmp-editor-modal .modal-footer{background:#fbfdfc;border-top:1px solid #
 .reference-shell .table select {min-width:10rem;max-width:100%;height:auto;padding-right:30px}
 .reference-shell .table input,.reference-shell .table textarea {max-width:100%}
 .reference-shell select:focus-visible,.reference-shell input:focus-visible {outline:2px solid #167044;outline-offset:2px}
+/* Inventory source controls stay aligned without changing the office shell. */
+.reference-shell .dataset-header{align-items:center;gap:12px;flex-wrap:wrap}
+.reference-shell .dataset-intake,.reference-shell .dataset-catalogue{margin-bottom:16px}
+.reference-shell .dataset-upload{display:flex;align-items:end;gap:12px;flex-wrap:wrap;min-width:0}
+.reference-shell .dataset-upload>label{flex:1 1 240px;min-width:0;display:grid;gap:6px}
+.reference-shell .dataset-upload input[type=file]{width:100%;min-width:0;max-width:100%}
+.reference-shell .dataset-intake>.actions{margin-top:12px}
+.reference-shell .dataset-catalogue>.actions{align-items:end;flex-wrap:wrap;gap:12px}
+.reference-shell .dataset-catalogue summary{font-weight:600;cursor:pointer}
+.reference-shell .dataset-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;align-items:end;gap:12px;margin:18px 0}
+.reference-shell .dataset-filters>label{display:grid;gap:6px;min-width:0}
+.reference-shell .dataset-filters input,.reference-shell .dataset-filters select{width:100%;min-width:0}
+.reference-shell .dataset-pagination{flex-wrap:wrap}
+@media(max-width:900px){.reference-shell .dataset-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.reference-shell .dataset-pagination{justify-content:flex-start}}
+@media(max-width:520px){.reference-shell .dataset-filters{grid-template-columns:minmax(0,1fr)}.reference-shell .dataset-upload>.btn{width:100%}}
+/* Keep extraction attention cues when using the common item editor layout. */
+.ocr-review-modal .editor-grid label.needs-attention input,.ocr-review-modal .editor-grid label.needs-attention textarea{border-color:#e7ad46;background:#fffdf6}
+.ocr-review-modal .editor-grid .field-confidence{align-self:flex-start;max-width:100%}

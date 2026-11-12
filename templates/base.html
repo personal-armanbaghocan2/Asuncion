@@ -30,9 +30,8 @@
     {% if not workflow_preview %}<button class="nav-parent {{'active-parent' if active=='ppmp'}}" id="ppmpToggle" aria-expanded="{{ 'true' if active=='ppmp' else 'false' }}" aria-controls="ppmpSub">{{icon('document')}}<span>PPMP Preparation</span>{{icon('chevron')}}</button>
     <div class="sub" id="ppmpSub" {% if active!='ppmp' %}hidden{% endif %}>
       <a href="{{url_for('ppmp_home')}}">PPMP Overview</a>
-      <a class="{{'active' if request.endpoint in ['ppmp_intake','ppmp_intake_review']}}" href="{{url_for('ppmp_intake')}}">Document Upload &amp; Review</a>
       {% for category in ['DBM','NON-DBM','LIB'] %}<a class="{{'active' if request.endpoint=='ppmp_type' and request.view_args.get('ptype')==category}}" href="{{url_for('ppmp_type',ptype=category)}}">{{category}}</a>{% endfor %}
-      <a class="{{'active' if request.endpoint=='ppmp_dataset'}}" href="{{url_for('ppmp_dataset')}}">Inventory Item Source</a>
+      <a class="{{'active' if request.endpoint in ['ppmp_dataset','ppmp_intake','ppmp_intake_review']}}" href="{{url_for('ppmp_dataset')}}">Inventory Item Source</a>
     </div>
     {% endif %}{% for key,label,endpoint,glyph in [('app','Annual Procurement Plan (APP)','app_plan','document'),('pr','Purchase Requests','pr','edit'),('aoq','Quotation Evaluation (AOQ)','aoq','document'),('po','Purchase Orders','po','cart'),('nlp','PR–PO Review','nlp','check')] %}{% if not workflow_preview or key in ['pr','aoq','po','nlp'] %}<a class="{{'active' if active==key}}" href="{{url_for(endpoint)}}">{{icon(glyph)}}{{workspace_names.get(key,label)}}{% if active==key %}<span class="active-dot"></span>{% endif %}</a>{% endif %}{% endfor %}
     {% if not workflow_preview %}<div class="nav-title">Receiving &amp; property</div>

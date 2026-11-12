@@ -2615,31 +2615,42 @@ def ppmp_dataset():
     status = get_inventory_dataset_status(DATABASE_URL)
     selected_sheet = (request.args.get('sheet') or '').strip()
     search_text = (request.args.get('q') or '').strip()
-    try:
-        page = max(int(request.args.get('page') or 1), 1)
-    except Exception:
-        page = 1
+    selected_unit = request.args.get('unit','').strip()
+    source_sort = request.args.get('sort','source')
+    source_orders = {'source':'lower(sheet_name),source_row,id',
+        'description':"lower(coalesce(nullif(description,''),article)),id",
+        'office':'lower(office),lower(sheet_name),source_row,id',
+        'unit':'lower(unit),lower(sheet_name),source_row,id',
+        'value':'unit_value desc nulls last,id'}
+    page_text=request.args.get('page','1')
+    if (any(len(request.args.getlist(key))>1 for key in ('sheet','q','unit','sort','page'))
+        or len(selected_sheet)>160 or len(search_text)>160 or len(selected_unit)>80
+        or source_sort not in source_orders or not re.fullmatch(r'[1-9][0-9]{0,3}',page_text)):
+        abort(400,description='Choose valid inventory source filters and page.')
+    page=int(page_text)
     per_page = 100
     where = ['active=1']
     params = []
     if selected_sheet:
         where.append('sheet_name=?')
         params.append(selected_sheet)
+    if selected_unit:
+        where.append('unit=?')
+        params.append(selected_unit)
     if search_text:
-        like = f'%{search_text.lower()}%'
         where.append('''(
-            lower(coalesce(article,'')) like ? or lower(coalesce(description,'')) like ? or
-            lower(coalesce(property_number,'')) like ? or lower(coalesce(unit,'')) like ? or
-            lower(coalesce(remarks,'')) like ? or lower(coalesce(office,'')) like ? or
-            lower(coalesce(accountable_person,'')) like ? or lower(coalesce(raw_data,'')) like ?
+            strpos(lower(coalesce(article,'')),lower(?))>0 or strpos(lower(coalesce(description,'')),lower(?))>0 or
+            strpos(lower(coalesce(property_number,'')),lower(?))>0 or strpos(lower(coalesce(unit,'')),lower(?))>0 or
+            strpos(lower(coalesce(remarks,'')),lower(?))>0 or strpos(lower(coalesce(office,'')),lower(?))>0 or
+            strpos(lower(coalesce(accountable_person,'')),lower(?))>0 or strpos(lower(coalesce(raw_data,'')),lower(?))>0
         )''')
-        params.extend([like] * 8)
+        params.extend([search_text] * 8)
     where_sql = ' and '.join(where)
     total = q(f'select count(*) c from dataset_records where {where_sql}', tuple(params), one=True)['c']
     offset = (page - 1) * per_page
     raw_rows = q(
         f'''select * from dataset_records where {where_sql}
-        order by lower(sheet_name), source_row
+        order by {source_orders[source_sort]}
         limit ? offset ?''',
         tuple(params + [per_page, offset])
     )
@@ -2648,11 +2659,15 @@ def ppmp_dataset():
         d = dict(row)
         d['reference_unit_cost'] = dataset_reference_unit_cost(d)
         d['source_id'] = source_item_identifier(d['id'])
+        d['source_comparison'] = [dict(label=key,value=review_public_value(value))
+            for key,value in _json_dict(d.get('raw_data')).items()
+            if not review_field_is_diagnostic(key) and review_public_value(value) not in (None,'',{},[])]
         records.append(d)
     page_count = max((total + per_page - 1) // per_page, 1)
     return render_template(
         'ppmp_dataset.html', active='ppmp', records=records, dataset_status=status,
         selected_sheet=selected_sheet, search_text=search_text,
+        selected_unit=selected_unit,source_sort=source_sort,
         page=page, page_count=page_count, total=total,
         auto_sync_message=auto_sync_message, title='Inventory Item Source'
     )

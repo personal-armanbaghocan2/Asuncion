@@ -42,3 +42,39 @@
 </div></fieldset>
 {% endif %}
 {% endmacro %}
+
+{% macro extracted_item_field(label, labels, caption, span) %}
+{% set position=labels.index(label) %}
+<label class="span-{{span}}"><span>{{caption}}</span><span class="field-confidence" id="ocrConfidence{{position}}"></span>{% if label=='Quantity' %}<input type="number" min="0" step="any" name="ocr_field_{{position}}" id="ocrField{{position}}" data-field-label="{{label}}" data-field-index="{{position}}">{% else %}<textarea rows="2" data-grow maxlength="5000" name="ocr_field_{{position}}" id="ocrField{{position}}" data-field-label="{{label}}" data-field-index="{{position}}"></textarea>{% endif %}</label>
+{% endmacro %}
+
+{% macro draft_review_label(status, reviewed=false, converted=false) -%}
+{% if converted or status=='CONVERTED_TO_PPMP' %}Official record created{% elif status=='CANCELLED' %}Cancelled draft{% elif status=='CATEGORY_REVIEW' %}Needs Classification{% elif status=='REVIEWED' and reviewed %}Reviewed draft{% elif status=='REVIEWED' %}Review confirmation not recorded{% elif status=='EXTRACTED' %}Extracted · Needs review{% elif status=='NEEDS_REVIEW' %}Draft · Needs review{% else %}Review status not recorded{% endif %}
+{%- endmacro %}
+
+{% macro extracted_item_fields(labels) %}
+{% set sections=[
+ ('Project details',[
+  ('General Description and Objective of the Project to be Procured','General Description and Objective',8),
+  ('Type of the Project to be Procured','Type of Project',4),
+  ('Quantity and Size of the Project to be Procured','Size / Technical Specifications',7),
+  ('Recommended Mode of Procurement','Recommended Mode',5)]),
+ ('Schedule',[
+  ('Pre-Procurement Conference Applicable (Yes/No)','Pre-Procurement',2),
+  ('Start of Procurement Activity','Start',3),
+  ('End of Procurement Activity','End',3),
+  ('Expected Delivery/Implementation Period','Delivery / Implementation',4)]),
+ ('Funding & notes',[
+  ('Source of Funds','Source of Funds',2),
+  ('Estimated Budget Allocation (Php)','Estimated Budget (PHP)',4),
+  ('Attached Supporting Documents','Documents',6),
+  ('Remarks','Remarks',12)]),
+ ('Structured item review',[
+  ('Item Name','Item Name',6),('Quantity','Quantity',2),('Unit','Unit',2),
+  ('Estimated Unit Cost','Unit Cost',2)])] %}
+{% set known=namespace(labels=[]) %}
+{% for heading, entries in sections %}<fieldset class="editor-section"><legend>{{heading}}</legend><div class="editor-grid">
+{% for label,caption,span in entries if label in labels %}{{extracted_item_field(label,labels,caption,span)}}{% set known.labels=known.labels+[label] %}{% endfor %}
+</div></fieldset>{% endfor %}
+{% for label in labels if label not in known.labels %}<fieldset class="editor-section"><legend>Additional item requirement</legend><div class="editor-grid">{{extracted_item_field(label,labels,label,12)}}</div></fieldset>{% endfor %}
+{% endmacro %}

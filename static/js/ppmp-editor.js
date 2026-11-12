@@ -18,10 +18,20 @@
   function load() {
     keys.forEach(k => { document.getElementById(prefix+k).value = value(items[index][k]); });
     select.value = String(index);
+    select.hidden = items.length < 2;
     document.getElementById('editorPosition').textContent = `${index+1} of ${items.length}`;
     document.getElementById('editorCount').textContent = saved ? 'Save changes to this item' : `${items.length} selected item${items.length===1?'':'s'}`;
     document.getElementById('editorPrev').disabled = index===0;
     document.getElementById('editorNext').disabled = index===items.length-1;
+    if (!saved) {
+      const recorded = items[index].sourceFields || {};
+      [['Item Name','Name'],['Quantity','Quantity'],['Unit','Unit'],['Estimated Unit Cost','Cost']].forEach(([label, suffix]) => {
+        const control = document.getElementById('sourceItem'+suffix);
+        if (control) control.value = value(recorded[label]);
+      });
+      const status = document.getElementById('sourceReviewStatus');
+      if (status) status.textContent = 'Review not recorded. Saving source changes does not confirm item verification or procurement approval.';
+    }
     if (saved) { document.getElementById('saved_item_index').value=index; original=JSON.stringify(fields()); }
     window.resizeEditorFields?.(dialog);
   }
@@ -54,9 +64,11 @@
     };
   } else {
     const table=document.getElementById('ppmpTable');
+    const sourceFields = row => Object.fromEntries(Array.from(row.querySelectorAll('[data-source-item-field]'), control => [control.dataset.sourceItemField, control.value]));
     table.querySelectorAll('[data-review-row]').forEach(button => button.addEventListener('click', () => {
       const row=button.closest('tr'), it={row:button.dataset.reviewRow};
       it.sourceSignature=row.querySelector(`[name="source_signature_${it.row}"]`)?.value || '';
+      it.sourceFields=sourceFields(row);
       keys.forEach(k => { it[k]=row.querySelector(`[name="${k}_${it.row}"]`)?.value || ''; });
       it.budget=cleanMoney(it.budget); items=[it]; open();
     }));
@@ -64,6 +76,7 @@
       items=Array.from(table.querySelectorAll('input[name=rows][type=checkbox]:checked')).map(cb => {
         const row=cb.closest('tr'), it={row:cb.value};
         it.sourceSignature=row.querySelector(`[name="source_signature_${it.row}"]`)?.value || '';
+        it.sourceFields=sourceFields(row);
         keys.forEach(k => { it[k]=row.querySelector(`[name="${k}_${cb.value}"]`)?.value || ''; }); it.budget=cleanMoney(it.budget); return it;
       }); open();
     });
