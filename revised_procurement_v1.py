@@ -529,8 +529,10 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
     explanation='Source documents changed after verification.' if stale else (first['detail'].capitalize()+': '+first['status']+'.') if first else 'No unresolved saved discrepancy.' if status=='Match' else 'Saved evidence requires review.'
     value=None if stale else incidence['value']
     if value is None:
-        status='Needs Review'
-        if not stale:explanation=incidence['reason']
+        confirmed=next((f for f in findings if f['status']=='Mismatch' and f['percentage']=='100.00%'),None) if not stale else None
+        status='Mismatch' if confirmed else 'Needs Review'
+        if confirmed:explanation=confirmed['detail'].capitalize()+': Mismatch. Overall percentage is not calculated.'
+        elif not stale:explanation=incidence['reason']
     elif value>0:status='Mismatch'
     elif status!='Match':
         value=None;status='Needs Review';explanation='Saved model and structured evidence require review.'
