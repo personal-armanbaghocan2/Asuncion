@@ -1,6 +1,16 @@
 {% extends 'base.html' %}{% from 'ui.html' import extracted_item_fields %}{% block content %}
 <div class="breadcrumb"><a href="{{url_for('dashboard')}}">Home</a><span>›</span><a href="{{url_for('ppmp_home')}}">PPMP</a><span>›</span>{{ptype}}</div>
 <div class="toolbar page-head"><div><h2>PPMP - {{ptype}}</h2><p class="muted">{{'Department of Budget and Management (DBM)' if ptype=='DBM' else ptype}} category</p></div><div class="actions"><a class="btn small" href="{{url_for('ppmp_home')}}">Back to PPMP</a><button class="btn primary" form="ppmpSourceForm" name="action" value="create_ppmp" data-ppmp-create>{{icon()}}Create Official PPMP</button></div></div>
+<section class="card ppmp-inline-upload" aria-labelledby="ppmpUploadHeading">
+<div><h3 id="ppmpUploadHeading">Upload OCR Document</h3><p class="muted">Extract {{ptype}} items, then review and confirm them below.</p></div>
+<form method="post" action="{{url_for('ppmp_ocr_upload',ptype=ptype)}}" enctype="multipart/form-data" class="ppmp-inline-upload-form">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="creation_token" value="{{creation_token}}"><input type="hidden" id="ocrReprocessConfirmed" name="reprocess_confirmed" value="">
+<label for="ocrFile">Choose File<input id="ocrFile" type="file" name="ocr_file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt" required aria-describedby="ocrUploadMessage"></label>
+<div><button id="ocrUploadButton" type="submit" class="btn primary" disabled>Upload &amp; Extract</button><div id="ocrUploadStatus" data-check-url="{{url_for('ppmp_ocr_duplicate_check',ptype=ptype)}}" role="status" aria-live="polite"><span id="ocrUploadMessage">No file selected.</span> <a id="ocrExistingUpload" class="btn small" hidden>Open saved extraction</a> <button id="ocrRetryCheck" class="btn small" type="button" hidden>Retry file check</button></div></div>
+</form>
+<p class="muted">{{draft_page.total if draft_page is defined else ocr_rows|length}} matching active extracted drafts. Supported: PDF, images, DOCX, XLSX/XLSM, CSV and TXT.</p>
+{% if ocr_state and ocr_state.get('item_count') == 0 and ocr_state.get('source_id') %}<p class="notice" role="status">No reliable items were extracted from {{ocr_state.filename}}. No item drafts were created. <a class="btn small" href="{{url_for('ppmp_intake_review',sid=ocr_state.source_id)}}">Review original / safe reprocess</a></p>{% endif %}
+</section>
 {% set item_filters=item_filters|default({'item_q':'','item_sort':'source','item_review':'','item_source':''}) %}
 {% set draft_page=draft_page|default({'page':1,'total':ocr_rows|length,'has_next':false}) %}
 <form method="get" class="filters" data-auto-filters data-record-navigation aria-label="PPMP source item filters">
@@ -11,7 +21,7 @@
 <label>Sort within source groups<select name="item_sort">{% for value,label in [('source','Recorded source order'),('name','Item name A–Z'),('name_desc','Item name Z–A')] %}<option value="{{value}}" {{'selected' if item_filters.item_sort==value}}>{{label}}</option>{% endfor %}</select></label>
 <button type="submit" class="btn" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('ppmp_type',ptype=ptype,ocr_source=request.args.get('ocr_source','all'))}}" data-record-navigation>Reset filters</a>
 </form>
-<form method="post" enctype="multipart/form-data" id="ppmpSourceForm"><input type="hidden" name="creation_token" value="{{creation_token}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" id="ocrReprocessConfirmed" name="reprocess_confirmed" value="">
+<form method="post" enctype="multipart/form-data" id="ppmpSourceForm"><input type="hidden" name="creation_token" value="{{creation_token}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <p id="ppmpCreationFeedback" class="notice" data-category="error" role="alert" tabindex="-1" {% if not creation_validation %}hidden{% endif %}>{{creation_validation.message if creation_validation else ''}}</p>
 <div class="actions"><a class="btn" href="{{url_for('ppmp_dataset')}}">Upload items in Inventory Item Source</a><a class="btn" href="{{url_for('ppmp_intake')}}">Saved uploads and Document History</a></div>
 {% set active_source = namespace(count=0) %}{% for item in ocr_rows if ocr_state and item.source_id|string==ocr_state.source_id|string %}{% set active_source.count=active_source.count+1 %}{% endfor %}
@@ -89,4 +99,7 @@
   </form>
 </dialog>
 {% endblock %}
+{% block head_extra %}<style>
+.ppmp-inline-upload{border:1px solid #80b6a1;background:#f2f8f5;margin-bottom:16px}.ppmp-inline-upload h3{margin-top:0}.ppmp-inline-upload-form{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;align-items:center}.ppmp-inline-upload-form input[type=file]{width:100%;box-sizing:border-box}.ppmp-inline-upload-form [role=status]{margin-top:8px;overflow-wrap:anywhere}@media(max-width:760px){.ppmp-inline-upload-form{grid-template-columns:1fr}}
+</style>{% endblock %}
 {% block scripts %}<script defer src="{{url_for('static',filename='js/ppmp-ocr-upload.js')}}"></script><script defer src="{{url_for('static',filename='js/ppmp-editor.js')}}"></script><script defer src="{{url_for('static',filename='js/ppmp-ocr-review.js')}}"></script>{% endblock %}
