@@ -61,8 +61,8 @@
         <div class="account-dropdown-head"><img class="avatar small-avatar profile-avatar" src="{{url_for('account_photo')}}" alt="Your profile picture" width="32" height="32"><span><b>{{acct_name}}</b><small>{{acct.get('role') or session.get('role','Staff')}}</small></span></div>
         <div class="account-dropdown-links">
           {% if not workflow_preview %}<a role="menuitem" href="{{url_for('account')}}">My Account</a>
-          <a role="menuitem" href="{{url_for('account')}}#change-password">Change Password</a>
-          <form method="post" action="{{url_for('logout')}}" data-confirm-category="logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" role="menuitem" class="danger-link">Sign Out</button></form>{% endif %}
+            {% if not otp_enabled %}<a role="menuitem" href="{{url_for('account')}}#change-password">Change Password</a>
+          <form method="post" action="{{url_for('logout')}}" data-confirm-category="logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" role="menuitem" class="danger-link">Sign Out</button></form>{% endif %}{% endif %}
         </div>
       </div>
     </div>

@@ -142,6 +142,8 @@ def protected_failure():
 
 @bp.route('/account/recovery-email',methods=['POST'])
 def manage():
+    from account_otp import enabled as otp_enabled
+    if otp_enabled():abort(409,description='Use the registered Gmail OTP workflow. No legacy change attempted.')
     if not enabled():abort(503,description='Verified email recovery is not enabled.')
     allowed={'csrf_token','target_id','action','email','current_password'}
     if (set(request.form)-allowed or request.files
@@ -213,6 +215,8 @@ def consume(token,purpose,password):
 
 @bp.route('/account-recovery',methods=['GET','POST'])
 def redeem():
+    from account_otp import enabled as otp_enabled
+    if otp_enabled():abort(409,description='Use the Gmail OTP workflow. No legacy reset attempted.')
     if not enabled():abort(503,description='Verified email recovery is not enabled.')
     if request.method=='POST':
         if (set(request.form)-{'csrf_token','token','purpose','new_password','confirm_password'}

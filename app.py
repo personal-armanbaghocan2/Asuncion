@@ -11,6 +11,7 @@ from runtime_configuration import configure as configure_runtime
 import server_sessions_v0_1_0 as server_sessions
 import account_management
 import account_recovery
+import account_otp
 from web_security_v0_1_0 import init_csrf
 from openpyxl import load_workbook
 from flask import session, g
@@ -88,6 +89,7 @@ def inject_layout_context():
         'password_short_guidance': account_management.PASSWORD_SHORT_GUIDANCE,
         'password_client_policy': account_management.password_client_policy,
         'email_recovery_enabled': account_recovery.enabled(),
+        'otp_enabled': account_otp.enabled(),
         'current_account': dict(account) if account else None,
         'sync_topics': live_updates.topics_for_page,
         'record_pagination': getattr(g,'psms_pagination',None),
@@ -99,6 +101,7 @@ import procurement_creation
 import ppmp_intake as item_intake
 import account_profiles
 account_recovery.init(app,globals())
+account_otp.init(app,globals())
 import ui_feedback
 ui_feedback.register(app)
 import live_updates
@@ -2155,7 +2158,7 @@ def ppmp_ocr_reprocess(ptype):
 @app.before_request
 def ensure():
     """Validate the current account without initialization or record repairs."""
-    if request.endpoint in ('static', 'runtime_liveness', 'account_recovery.redeem'):
+    if request.endpoint in ('static', 'runtime_liveness', 'account_recovery.redeem','account_otp.public'):
         return None
     if session.get('logged_in') is not True:
         if session.get('logged_in') is not None:
@@ -2242,6 +2245,12 @@ def login():
             session['username'] = authenticated['username']
             session['role'] = authenticated['role']
             session[server_sessions.COOKIE_KEY] = sid
+            if account_otp.enabled():
+                # Never trust a cached verification claim from a prior login.
+                try:
+                    fresh=account_otp.state(globals(),[authenticated['id']]).get(str(authenticated['id']),{})
+                    flash('Registered Gmail: '+('verified.' if fresh.get('verified') else 'not yet verified.'),'info')
+                except Exception:flash('Registered Gmail status could not be refreshed.','warning')
             try:
                 exec_db('update users set last_login=? where id=?', (now(), user['id']))
             except Exception:
@@ -4262,9 +4271,9 @@ def account():
         profile=dict(revision=0);profile_ready=False
         profile_diagnostic=account_profiles.storage_diagnostic(error)
     recovery={};recovery_ready=False
-    if account_recovery.enabled():
+    if account_recovery.enabled() or account_otp.enabled():
         try:
-            recovery=account_recovery.state(globals(),[user_id]).get(str(user_id),{});recovery_ready=True
+            recovery=(account_otp.state if account_otp.enabled() else account_recovery.state)(globals(),[user_id]).get(str(user_id),{});recovery_ready=True
         except Exception:app.logger.warning('Recovery state unavailable; existing profile/password controls preserved')
     response=app.make_response(render_template('account.html', active='account', account=dict(row),profile=profile,
                            recovery=recovery,recovery_ready=recovery_ready,
@@ -4288,6 +4297,7 @@ def sync_revisions():
 
 @app.route('/account/change-password', methods=['POST'])
 def change_password():
+    if account_otp.enabled():abort(409,description='Use the Gmail OTP form in My Account. No password changed.')
     if (set(request.form)-{'csrf_token','current_password','new_password','confirm_password'} or request.files
             or any(len(request.form.getlist(k))!=1 for k in request.form)):
         abort(400,description='Only password fields may be changed here.')
@@ -4363,8 +4373,11 @@ def users():
             password = request.form.get('password') or ''
             role = (request.form.get('role') or 'Staff').strip()
             email=request.form.get('email','').strip() or None
+            if account_otp.enabled():
+                if not email or 'password' in request.form:abort(400,description='Gmail is required; the employee sets the initial password.')
+                password='Unshared-!9'+secrets.token_urlsafe(48)
             if email is not None:
-                if not account_recovery.enabled():abort(400,description='Email recovery is not enabled.')
+                if not (account_recovery.enabled() or account_otp.enabled()):abort(400,description='Email recovery is not enabled.')
                 try:email=account_recovery.normalize_email(email)
                 except ValueError:abort(400,description='Use a valid optional Gmail address.')
             if role not in ('Staff', 'Inspector'):
@@ -4387,6 +4400,8 @@ def users():
                 except Exception as error:
                     return account_management.failure_response(error, 'create',api=globals(),username=username)
                 flash(f'User {username} created.')
+                if account_otp.enabled():
+                    flash('Account is inactive pending Gmail activation. The employee requests an activation code and creates their own password.','info')
         elif action == 'deactivate':
             target = request.form.get('user_id','')
             if not re.fullmatch(r'[1-9][0-9]{0,17}',target):
@@ -4402,6 +4417,7 @@ def users():
                 return account_management.failure_response(error, 'deactivate')
             flash('Employee account deactivated. Existing records were preserved and sessions revoked.','success')
         elif action == 'reset_password':
+            if account_otp.enabled():abort(403,description='Employees use the verified Gmail OTP process. Admin cannot set their passwords.')
             user_id = request.form.get('user_id','')
             if not re.fullmatch(r'[1-9][0-9]{0,17}',user_id):
                 abort(400,description='Select a valid employee account.')
@@ -4448,9 +4464,9 @@ def users():
            ' order by '+orders[filters['sort']]+' limit ? offset ?',(*values,size,(page-1)*size))
     g.psms_pagination=dict(page=page,has_next=page*size<total,size=size,total=total)
     recovery_accounts={};recovery_ready=False
-    if account_recovery.enabled():
+    if account_recovery.enabled() or account_otp.enabled():
         try:
-            recovery_accounts=account_recovery.state(globals(),[row['id'] for row in rows]);recovery_ready=True
+            recovery_accounts=(account_otp.state if account_otp.enabled() else account_recovery.state)(globals(),[row['id'] for row in rows]);recovery_ready=True
         except Exception:app.logger.warning('Employee recovery metadata unavailable; normal user management preserved')
     response=app.make_response(render_template('users.html', active='users', rows=rows, title='User Accounts & Roles',
                            recovery_accounts=recovery_accounts,recovery_ready=recovery_ready,user_filters=filters,user_count=total))

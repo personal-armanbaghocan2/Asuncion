@@ -116,12 +116,15 @@ def failure_response(error, operation, *, api=None, username=None):
 
 
 def create(api, username, password_hash, role, *, recovery_email=None):
+    import account_otp
+    otp_active=account_otp.enabled()
     if (role not in ('Staff', 'Inspector') or not 3 <= len(username) <= 80
             or any(ord(c) < 32 for c in username)):
         abort(400, description='Use a username of 3 to 80 characters and a Staff or Inspector role.')
+    if otp_active and recovery_email is None:abort(400,description='A registered Gmail is required for activation.')
     if recovery_email is not None:
         from account_recovery import enabled,normalize_email
-        if not enabled():abort(400,description='Email recovery is not enabled.')
+        if not otp_active and not enabled():abort(400,description='Email recovery is not enabled.')
         recovery_email=normalize_email(recovery_email)
     with connection(api, write=True) as (con, uid):
         actor = con.execute('select role from users where id=?', (uid,)).fetchone()
@@ -129,18 +132,21 @@ def create(api, username, password_hash, role, *, recovery_email=None):
             abort(403)
         if con.execute('select id from users where username=?', (username,)).fetchone():
             abort(409, description='This username already exists. Reopen User Accounts & Roles.')
-        result = con.execute('select psms_accounts.create_user_v1(?,?,?) as id',
-                             (username, password_hash, role)).fetchone()
+        result = (con.execute('select psms_accounts.otp_create_employee_v1(?,?,?,?) as id',
+                             (username,password_hash,role,recovery_email)) if otp_active else
+                  con.execute('select psms_accounts.create_user_v1(?,?,?) as id',
+                             (username,password_hash,role))).fetchone()
         if not result or type(result['id']) is not int or result['id'] <= 0:
             raise RuntimeError('Account insertion was not confirmed.')
         saved = con.execute('select id,username,role,status from users where id=?', (result['id'],)).fetchone()
-        if not saved or saved['username'] != username or saved['role'] != role or saved['status'] != 'Active':
+        if not saved or saved['username'] != username or saved['role'] != role or saved['status'] != ('Inactive' if otp_active else 'Active'):
             raise RuntimeError('Saved account could not be confirmed.')
-        if recovery_email is not None:
+        if recovery_email is not None and not otp_active:
             # Same account/audit transaction. Never claim a partially registered
             # email or send verification before this creation commits.
             con.execute('select psms_accounts.recovery_email_set_v1(?,?,?)',
                         (result['id'],recovery_email,None))
+        if otp_active:return result['id']
 
 
 def deactivate(api, target_id, reason):
