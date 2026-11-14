@@ -218,18 +218,18 @@ def ppmp_state(api,ptype=None):
     # An explicit owner-bound source may contain mixed/other categories. Show
     # its status without moving its drafts; ppmp_rows still enforces ptype.
     if ptype and requested in ('latest','all'):
-        where+=" and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and d.ppmp_category=? and d.status in ('NEEDS_REVIEW','REVIEWED','CONVERTED_TO_PPMP')))"
+        where+=" and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and ((d.ppmp_category=? and d.status in ('NEEDS_REVIEW','REVIEWED','CONVERTED_TO_PPMP')) or (d.ppmp_category='UNASSIGNED' and d.status='CATEGORY_REVIEW'))))"
         params.extend((ptype,_uid(),ptype))
     if requested not in ('latest','all'):
         try:requested=str(uuid.UUID(requested))
         except ValueError:abort(400)
         where+=' and id=?';params.append(requested)
-    row=api['q']('select extraction,id from psms_documents.sources where '+where+' order by created_at desc limit 1',params,one=True)
+    row=api['q']("select extraction,id,(select count(*) from ppmp_ocr_drafts pending where pending.source_id=psms_documents.sources.id and pending.owner_id=psms_documents.sources.owner_id and pending.status='CATEGORY_REVIEW') as classification_pending_count from psms_documents.sources where "+where+' order by created_at desc limit 1',params,one=True)
     if not row and requested not in ('latest','all'):abort(404)
     if not row:return None
     import document_processing
     state,_=document_processing.latest(api,str(row['id']),row['extraction'])
-    return dict(state,source_id=str(row['id']))
+    return dict(state,source_id=str(row['id']),classification_pending_count=int(row.get('classification_pending_count') or 0))
 
 _STATE_UNSET = object()
 
