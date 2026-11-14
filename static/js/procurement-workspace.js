@@ -1,5 +1,36 @@
 /* Presentation only. Uploads and approvals remain authenticated server actions. */
 (() => {
+  const policyNode = document.getElementById('employee-password-policy');
+  let policy = null;
+  if (policyNode) {
+    try { policy = JSON.parse(policyNode.textContent); } catch (_) { /* Backend validation remains mandatory. */ }
+  }
+  const inRanges = (point, ranges) => {
+    let low = 0, high = ranges.length - 1;
+    while (low <= high) {
+      const middle = (low + high) >> 1, [start, end] = ranges[middle];
+      if (point < start) high = middle - 1;
+      else if (point > end) low = middle + 1;
+      else return true;
+    }
+    return false;
+  };
+  const employeePasswordMeets = value => {
+    const chars = Array.from(value);
+    if (chars.length < 12 || chars.length > 1024 || /[\u0000-\u001f\u007f]/.test(value)) return false;
+    const has = (char, name) => inRanges(char.codePointAt(0), policy.ranges[name]);
+    const kinds = ['isupper', 'islower', 'isdigit'].filter(name => chars.some(char => has(char, name))).length +
+      Number(chars.some(char => !has(char, 'isalnum') && !has(char, 'isspace')));
+    const words = []; let word = '', start = 0, end = chars.length;
+    while (start < end && has(chars[start], 'isspace')) start++;
+    while (end > start && has(chars[end - 1], 'isspace')) end--;
+    for (const char of chars.slice(start, end)) {
+      if (has(char, 'isspace')) { if (word) words.push(word); word = ''; }
+      else word += Object.prototype.hasOwnProperty.call(policy.casefold, char) ? policy.casefold[char] : char;
+    }
+    if (word) words.push(word);
+    return kinds >= 3 || (end - start >= 16 && new Set(words).size >= 3 && chars.filter(char => has(char, 'isalnum')).length >= 12);
+  };
   document.querySelectorAll('input[data-password-policy]').forEach(input => {
     const feedback = input.parentElement.querySelector('[data-password-feedback]');
     if (!feedback) return;
@@ -7,9 +38,11 @@
       const value = input.value, length = Array.from(value).length;
       const kinds = [/[\p{Lu}]/u,/[\p{Ll}]/u,/[\p{Nd}]/u,/[^\p{L}\p{N}\s]/u].filter(pattern=>pattern.test(value)).length;
       const phrase = Array.from(value.trim()).length >= 16 && new Set(value.trim().toLocaleLowerCase().split(/\s+/u)).size >= 3 && (value.match(/[\p{L}\p{N}]/gu)||[]).length >= 12;
-      const meets = length >= 12 && length <= 1024 && !/[\u0000-\u001f\u007f]/.test(value) && (kinds>=3 || phrase);
-      feedback.textContent = !value ? '' : meets ? 'Length and character requirements met; the server will validate the password.' :
-        'Use at least 12 characters and three character types, or a 16-character passphrase with three distinct words and 12 letters or numbers. Outer spaces do not count toward passphrase length.';
+      const meets = policyNode ? (policy ? employeePasswordMeets(value) : null) :
+        length >= 12 && length <= 1024 && !/[\u0000-\u001f\u007f]/.test(value) && (kinds>=3 || phrase);
+      feedback.setAttribute?.('data-password-state', !value || meets === null ? 'neutral' : meets ? 'valid' : 'incomplete');
+      feedback.textContent = !value ? '' : meets === null ? 'The server will check password requirements.' :
+        meets ? 'Password requirements met.' : 'Not yet: add length, character types, or a longer passphrase.';
     };
     input.addEventListener('input',update);update();
   });

@@ -5,11 +5,35 @@ All changes and their audit entry share one transaction. No account is deleted.
 """
 import re
 import uuid
+from functools import lru_cache
 from flask import abort, current_app
 from account_profiles import connection
 
 
 PASSWORD_GUIDANCE='Use 12 to 1024 characters with at least three character types (uppercase, lowercase, numbers, symbols), or a passphrase of at least 16 characters excluding outer spaces, three distinct words and 12 letters or numbers.'
+PASSWORD_SHORT_GUIDANCE='12+ characters with 3 types, or a 16+ character passphrase (3 distinct words and 12 letters/numbers).'
+
+
+@lru_cache(maxsize=1)
+def password_client_policy():
+    """Public character rules from this Python runtime; never password values.
+
+    Browser Unicode categories, whitespace and lowercasing differ from Python's
+    isdigit/isalnum/split/casefold. Send compact ranges so employee forms agree
+    with the existing backend even for international characters/passphrases.
+    Computed only on first rendering of the employee password forms, then cached.
+    """
+    methods=('isupper','islower','isdigit','isalnum','isspace')
+    ranges={name:[] for name in methods};fold={}
+    for point in range(0x110000):
+        char=chr(point)
+        for name in methods:
+            if getattr(char,name)():
+                rows=ranges[name]
+                if rows and rows[-1][1]+1==point:rows[-1][1]=point
+                else:rows.append([point,point])
+        if char.casefold()!=char:fold[char]=char.casefold()
+    return dict(ranges=ranges,casefold=fold)
 
 
 def password_issue(value):
@@ -58,19 +82,27 @@ def failure_response(error, operation, *, api=None, username=None):
     diagnostic = {'42501': 'ACCOUNT_PERMISSION_UNAVAILABLE',
         '42883': 'ACCOUNT_CONTRACT_UNAVAILABLE', '42P01': 'ACCOUNT_CONTRACT_UNAVAILABLE',
         '3F000': 'ACCOUNT_CONTRACT_UNAVAILABLE',
-        '42703': 'ACCOUNT_CONTRACT_UNAVAILABLE', '23505': 'ACCOUNT_ALREADY_EXISTS',
+        '42703': 'ACCOUNT_CONTRACT_UNAVAILABLE', '23505': 'ACCOUNT_UNIQUE_CONFLICT',
         '23502': 'ACCOUNT_CONSTRAINT_REJECTED', '23514': 'ACCOUNT_CONSTRAINT_REJECTED',
         '40P01': 'ACCOUNT_RETRY_REQUIRED', '55P03': 'ACCOUNT_RETRY_REQUIRED'}.get(state,
         'ACCOUNT_WRITE_UNCONFIRMED')
     reference = uuid.uuid4().hex[:16]
-    current_app.logger.warning('Account operation unavailable operation=%s diagnostic=%s reference=%s',
-                               operation, diagnostic, reference)
+    # Log only catalog identifiers and SQLSTATE, never driver messages/details:
+    # those can include usernames, credential hashes or complete failed rows.
+    diag=getattr(cause,'diag',None)
+    def identifier(name):
+        value=getattr(diag,name,None)
+        return value if isinstance(value,str) and re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]{0,62}',value) else 'unavailable'
+    current_app.logger.warning('Account operation unavailable operation=%s diagnostic=%s sqlstate=%s schema=%s table=%s constraint=%s reference=%s',
+                               operation,diagnostic,state or 'unavailable',identifier('schema_name'),
+                               identifier('table_name'),identifier('constraint_name'),reference)
     status=409 if state == '23505' else 503
     receipt='UNAVAILABLE';message='Account change could not be confirmed.'
     if operation=='create' and api is not None and isinstance(username,str):
         try:receipt='RECORDED' if creation_receipt(api,username) else 'NOT_FOUND'
         except Exception:pass  # Original diagnostic remains visible; never auto-retry.
         message+=(' An account with this username is recorded; inspect it before any retry.' if receipt=='RECORDED' else
+                  ' A fresh read found no matching username. The database rejected a unique-value constraint; this does not identify a username conflict. Inspect the failure reference before retrying.' if receipt=='NOT_FOUND' and state=='23505' else
                   ' A fresh read found no matching username; an uncertain commit is not resolved by this response. Reopen the account list before retrying.' if receipt=='NOT_FOUND' else
                   ' The saved account state could not be read safely; do not repeat the submission until it is checked.')
     response = Response(render_template('operation_error.html',active='users',title='User Accounts & Roles',
