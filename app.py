@@ -84,6 +84,8 @@ def inject_layout_context():
         'header_date': datetime.datetime.now().strftime('%A, %B %-d, %Y') if os.name != 'nt' else datetime.datetime.now().strftime('%A, %B %d, %Y').replace(' 0', ' '),
         'offline_mode': True,
         'password_guidance': account_management.PASSWORD_GUIDANCE,
+        'password_short_guidance': account_management.PASSWORD_SHORT_GUIDANCE,
+        'password_client_policy': account_management.password_client_policy,
         'current_account': dict(account) if account else None,
         'sync_topics': live_updates.topics_for_page,
         'record_pagination': getattr(g,'psms_pagination',None),
