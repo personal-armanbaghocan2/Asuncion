@@ -1,0 +1,14 @@
+{% from 'procurement_ui.html' import display_value with context %}
+{% macro result_badge(d) -%}<span class="badge {{'ok' if d.status=='Match' else 'warn'}}">{{d.status}} ({{d.percentage}})</span>{%- endmacro %}
+{% macro item_value(item,keys) -%}{% set found=namespace(value=none) %}{% for key in keys if found.value is none %}{% if item.get(key) is not none and item.get(key)!='' %}{% set found.value=item.get(key) %}{% endif %}{% endfor %}{{display_value(found.value)}}{%- endmacro %}
+{% macro comparison_table(d) -%}
+<div class="table-scroll"><table class="table"><thead><tr><th>No.</th><th>PR Item Description</th><th>PO Item Description</th><th>PR Quantity</th><th>PO Quantity</th><th>PR Unit</th><th>PO Unit</th><th>Discrepancy</th></tr></thead><tbody>
+{% for pair in d.pairs %}<tr><td>{{loop.index}}</td><td>{{item_value(pair.pr,['Item Name','item','name','Item'])}}</td><td>{{item_value(pair.po,['Item Name','item','name','Item'])}}</td><td>{{item_value(pair.pr,['Quantity','quantity','qty','QTY','Requested Quantity'])}}</td><td>{{item_value(pair.po,['Quantity','quantity','qty','QTY','Awarded Quantity'])}}</td><td>{{item_value(pair.pr,['Unit','unit','Unit of Measure','unit_of_measure','uom'])}}</td><td>{{item_value(pair.po,['Unit','unit','Unit of Measure','unit_of_measure','uom'])}}</td><td>{{result_badge(pair)}}</td></tr>{% else %}<tr><td colspan="8">Saved item correspondence is not available.</td></tr>{% endfor %}
+</tbody></table></div>
+{%- endmacro %}
+{% macro findings_table(d) -%}<div class="table-scroll"><table class="table"><thead><tr><th>No.</th><th>Detail</th><th>PR (Requested)</th><th>PO (Ordered)</th><th>Finding</th></tr></thead><tbody>
+{% for finding in d.findings %}<tr><td>{{loop.index}}</td><td>{{finding.detail|capitalize}}</td><td>{{display_value(finding.requested)}}</td><td>{{display_value(finding.offered)}}</td><td>{{result_badge(finding)}}</td></tr>{% else %}<tr><td colspan="5">Saved discrepancy details are not available.</td></tr>{% endfor %}
+</tbody></table></div>{%- endmacro %}
+{% macro document_panel(title,items) -%}<section class="pr-po-document"><h3>{{title}}</h3><div class="pr-po-document-body">
+{% for item in items %}<h4>Item {{loop.index}}</h4><dl>{% for key,value in item.items() if not review_field_is_diagnostic(key) %}<div><dt>{{key|replace('_',' ')|capitalize}}</dt><dd>{{display_value(value)}}</dd></div>{% endfor %}</dl>{% else %}<p>No saved items.</p>{% endfor %}
+</div></section>{%- endmacro %}

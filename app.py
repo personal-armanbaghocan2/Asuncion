@@ -3603,7 +3603,8 @@ def nlp():
         left join pr r on r.id=coalesce((to_jsonb(n)->>'pr_id')::bigint,
             (to_jsonb(p)->>'pr_id')::bigint,aq.pr_id) order by n.id desc''')
     rows = request_queries.recorded_pr_references(q, rows)
-    return render_template('nlp.html', active='nlp', rows=rows, title='Comparison Records')
+    return render_template('nlp.html', active='nlp', rows=rows, title='Verification Records',
+                           record_displays={r['id']:revised_procurement.verification_display(dict(r)) for r in rows})
 
 def nlp_pricing_advisory(record_id):
     """Optional read-only diagnostics; unavailable diagnostics cannot change review."""
@@ -3630,49 +3631,7 @@ def nlp_review(id):
         return redirect(url_for('nlp'))
     if row.get('workflow_version') == 1:
         return revised_procurement.modern_review(globals(),dict(row))
-    d = dict(row)
-    try:
-        details = json.loads(d.get('details') or '{}')
-    except Exception:
-        details = {}
-    finding = nlp_short_finding(d.get('result'), details)
-    remarks = nlp_dynamic_remarks(d.get('result'), details)
-    source = details.get('final_decision_source') or 'AI-only FastText PR–PO verification'
-    return render_review_page(
-        active='nlp', title=f'Review Comparison {d.get("no") or id}', document_type='Purchase Request–Purchase Order Review',
-        document_no=d.get('no') or f'NLP-{id}', status=d.get('status') or 'For Review',
-        created_at=d.get('created_at'),
-        linked_records=[
-            {'label': 'Compared PR', 'value': d.get('pr_no') or 'No linked PR'},
-            {'label': 'Supporting AOQ', 'value': d.get('aoq_no') or 'No linked AOQ'},
-            {'label': 'Compared PO', 'value': d.get('po_no') or 'No linked PO'},
-        ],
-        summary=[
-            {'label': 'Supplier', 'value': d.get('supplier') or '—'},
-            {'label': 'Saved model result', 'value': d.get('result') or '—'},
-            {'label': 'Saved model confidence', 'value': f'{to_float(d.get("confidence")):.2f}%'},
-            {'label': 'Decision Source', 'value': source, 'diagnostic': True},
-        ],
-        item_sections=[
-            review_section('Approved PR Requirements', parse_items(d.get('pr_items')), d.get('pr_no') or 'PR',
-                           'Original approved item requirements.'),
-            review_section('Approved PO Items', parse_items(d.get('po_items')), d.get('po_no') or 'PO',
-                           'Recorded purchase-order items used in this comparison.'),
-        ],
-        text_blocks=[
-            {'title': 'Historical comparison', 'content': 'This saved result is preserved. Its retired approval path is unavailable. Current PR–PO relationship review and final PO approval remain separate authorized operations.'},
-            {'title': 'Saved Comparison Finding', 'content': finding},
-            {'title': 'Recommended Staff Action', 'content': remarks},
-            {'title': 'Complete Comparison Evidence', 'content': json.dumps(details, indent=2, ensure_ascii=False, default=str), 'diagnostic': True},
-        ],
-        approve_url=None,
-        approve_label=None,
-        approval_effect=None,
-        back_url=url_for('nlp'), print_url=None,
-        can_approve=False,
-        pricing_diagnostics=nlp_pricing_advisory(id),
-        item_comparison=nlp_item_comparison(d.get('pr_items'), d.get('po_items')),
-    )
+    return revised_procurement.historical_review(globals(),dict(row))
 
 @app.route('/nlp/<int:id>/approve', methods=['POST'])
 def nlp_approve(id):
