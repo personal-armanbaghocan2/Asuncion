@@ -140,7 +140,7 @@ def ppmp_upload(api,ptype,reprocess=False):
         if not reprocess:
             prior=con.execute("select id from psms_documents.sources where owner_id=? and kind='ppmp' and sha256=? order by created_at limit 1",(uid,digest)).fetchone()
             if prior:
-                return redirect(url_for('ppmp_intake_review',sid=str(prior['id'])))
+                return _existing_response(ptype,prior)
     with extraction_path(content,ext) as path:
         g.document_stage='extraction'
         extracted=api['extract_aoq_document'](path)
@@ -172,8 +172,8 @@ def ppmp_upload(api,ptype,reprocess=False):
         else:
             message = 'This source contains conflicting PPMP categories. Separate DBM and NON-DBM worksheets and upload each in its matching PPMP category. '
         from ppmp_intake import save_extraction
-        flash('The selected category differs from the extracted source. Review and assign each item below.','info')
-        return save_extraction(api,name,ext,content,extracted,structured)
+        flash(message+'Saved category assignments were preserved; only this page\'s items appear below. Use Source Document Review separately for classification.','info')
+        return save_extraction(api,name,ext,content,extracted,structured,return_category=ptype)
     if len(rows)>200:abort(400,description='Review at most 200 extracted rows per upload.')
     state=dict(text=str(extracted.get('raw_text') or ''),method=extracted.get('extraction_method') or 'document extraction',
         warnings=structured.get('warnings') or [],filename=name,structured=structured,item_count=len(rows),extraction_timestamp=api['now']())
@@ -184,7 +184,7 @@ def ppmp_upload(api,ptype,reprocess=False):
         existing=_existing_upload(con,uid,ptype,digest)
         if not reprocess and not existing:
             prior=con.execute("select id from psms_documents.sources where owner_id=? and kind='ppmp' and sha256=? order by created_at limit 1",(uid,digest)).fetchone()
-            if prior:return redirect(url_for('ppmp_intake_review',sid=str(prior['id'])))
+            if prior:return _existing_response(ptype,prior)
         if reprocess:
             _reprocess_nonce(api,con,uid,ptype)
             con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',('ppmp-reprocess:'+nonce,))
@@ -214,10 +214,12 @@ def ppmp_upload(api,ptype,reprocess=False):
 
 def ppmp_state(api,ptype=None):
     params=[_uid()];where='owner_id=? and kind=\'ppmp\''
-    if ptype:
+    requested=request.args.get('ocr_source','latest')
+    # An explicit owner-bound source may contain mixed/other categories. Show
+    # its status without moving its drafts; ppmp_rows still enforces ptype.
+    if ptype and requested in ('latest','all'):
         where+=" and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and d.ppmp_category=? and d.status in ('NEEDS_REVIEW','REVIEWED','CONVERTED_TO_PPMP')))"
         params.extend((ptype,_uid(),ptype))
-    requested=request.args.get('ocr_source','latest')
     if requested not in ('latest','all'):
         try:requested=str(uuid.UUID(requested))
         except ValueError:abort(400)
