@@ -15,7 +15,7 @@ ALIASES = {
     'item_no': ('item no', 'itemno', 'item number', 'no', 'item code'),
     'name': ('general description and objective of the project to be procured', 'item', 'item name', 'item particulars', 'description', 'item description', 'material description',
              'product description', 'description of goods', 'particulars', 'general description', 'general description and objective',
-             'description specifications', 'description specification'),
+             'description specifications', 'description specification', 'item description technical specifications'),
     'specification': ('specification', 'specifications', 'technical specifications', 'technical specs', 'technical requirement', 'size'),
     'quantity': ('quantity', 'qty', 'requested quantity', 'quantity required', 'number of units',
                  'required volume', 'required units', 'required units technical specs', 'units needed'),
@@ -23,7 +23,7 @@ ALIASES = {
     'category': ('ppmp category', 'source category'),
     'unit': ('unit', 'uom', 'unit of measure', 'measurement unit', 'unit of measurement'),
     'unit_cost': ('unit cost', 'unit price', 'estimated unit cost', 'price per unit', 'rate'),
-    'amount': ('amount', 'estimated amount', 'estimated total cost', 'total amount'),
+    'amount': ('amount', 'estimated amount', 'estimated total cost', 'total amount', 'estimated total'),
     'supplier': ('supplier', 'supplier name', 'bidder', 'vendor', 'company'),
     'remarks': ('remarks', 'notes', 'comments'),
     'project_type': ('type of the project to be procured', 'type of project', 'project type', 'classification', 'category', 'procurement type'),
@@ -178,7 +178,7 @@ def recover_native_table_header(rows, cells, words):
 
 
 def is_summary_label(value):
-    return bool(re.fullmatch(r'(?:grand total(?: amount)?|subtotal|sub total|overall total|total(?: amount| cost| budget)?)(?: php)?', norm(value)))
+    return bool(re.fullmatch(r'(?:grand total(?: amount)?|subtotal|sub total|overall total|total estimated budget|total(?: amount| cost| budget)?)(?: php)?', norm(value)))
 
 
 def register_schema(fields):
