@@ -4,8 +4,9 @@ from hashlib import sha256
 from io import BytesIO
 import json
 import re
+import uuid
 
-from flask import Response, abort, flash, redirect, request, session, url_for
+from flask import Response, abort, flash, redirect, request, session, url_for, current_app
 from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.exceptions import HTTPException, ServiceUnavailable
 import server_sessions_v0_1_0 as sessions
@@ -13,6 +14,21 @@ import server_sessions_v0_1_0 as sessions
 MAX_UPLOAD=2*1024*1024
 MAX_PHOTO=262144
 DEFAULT_AVATAR=b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" rx="40" fill="#e7f1eb"/><circle cx="40" cy="29" r="15" fill="#176147"/><path d="M12 76v-8a28 28 0 0 1 56 0v8" fill="#176147"/></svg>'
+
+
+def storage_diagnostic(error):
+    cause=error;state=''
+    for _ in range(8):
+        value=getattr(cause,'sqlstate',None)
+        if isinstance(value,str) and re.fullmatch(r'[0-9A-Z]{5}',value):
+            state=value;break
+        cause=getattr(cause,'__context__',None)
+        if cause is None:break
+    code=('PROFILE_CONTRACT_UNAVAILABLE' if state in ('42P01','3F000','42703','42883') else
+          'PROFILE_PERMISSION_UNAVAILABLE' if state=='42501' else 'PROFILE_STORAGE_UNAVAILABLE')
+    reference=uuid.uuid4().hex[:16]
+    current_app.logger.warning('Profile storage unavailable diagnostic=%s reference=%s',code,reference)
+    return dict(code=code,reference=reference)
 
 
 def image_bytes(upload):

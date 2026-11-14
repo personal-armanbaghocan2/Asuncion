@@ -106,19 +106,21 @@
       const freshNames=[...fresh.querySelectorAll('.user-copy b,.account-dropdown-head b')];
       if(names.length===freshNames.length)names.forEach((node,index)=>{node.textContent=freshNames[index].textContent;});
     }
-    if(!initial||dirty())message(dirty()?'Shared records changed. Your unsaved edits were retained. Save or cancel them before reloading editable item lists.':!applied?'Shared records changed. The focused table will refresh after you leave it.':'Records and workflow status updated from the shared database.');
+    const sourceRowsRetained=!initial && versions.dataset!==current?.dataset && document.getElementById('datasetRecordsForm');
+    if(!initial||dirty())message(dirty()?'Shared records changed. Your unsaved edits were retained. Save or cancel them before reloading editable item lists.':sourceRowsRetained?'Inventory source records changed. Your item rows were retained. Refresh this page or change a filter to load the latest source.':!applied?'Shared records changed. The focused table will refresh after you leave it.':'Records and workflow status updated from the shared database.');
     return applied;
   }
   function schedule(){clearTimeout(timer);if(!document.hidden)timer=setTimeout(poll,delay+Math.floor(Math.random()*2000));}
   async function poll(){
     if(document.hidden||running)return;
     running=true;controller=new AbortController();
-    let stage='revisions',status=0,diagnostic='';
+    let stage='revisions',status=0,diagnostic='',reference='';
     try{
       const url=new URL(root.dataset.syncUrl,window.location.origin);url.searchParams.set('topics',topics.join(','));
       const headers={'Accept':'application/json'};if(etag)headers['If-None-Match']=etag;
       const response=await fetch(url,{credentials:'same-origin',cache:'no-store',headers,signal:controller.signal});
       status=response.status;diagnostic=response.headers.get('X-PSMS-Diagnostic')||'';
+      reference=response.headers.get('X-PSMS-Reference')||'';
       if(response.redirected||response.status===401||response.status===403){message('Your session changed. Sign in again before continuing.',true,true);delay=120000;return;}
       const csrf=response.headers.get('X-CSRFToken');
       if(csrf&&csrf.length<512){
@@ -128,8 +130,15 @@
       if(response.status===304){recovered();delay=15000;return;}
       if(!response.ok||!response.headers.get('content-type')?.includes('application/json'))throw new Error('SYNC_UNAVAILABLE');
       const result=await response.json();
+      if(!result.versions || Array.isArray(result.versions) || typeof result.versions!=='object' ||
+        Object.keys(result.versions).length!==topics.length ||
+        !topics.every(topic=>{const value=result.versions[topic];return (
+          typeof value==='string' && /^[0-9]{1,19}$/.test(value)) ||
+          (typeof value==='number' && Number.isSafeInteger(value) && value>=0);})) {
+        diagnostic='SYNC_RESPONSE_INVALID';throw new Error('SYNC_RESPONSE_INVALID');
+      }
       let applied=true;
-      if(!current||JSON.stringify(current)!==JSON.stringify(result.versions)){stage='view';status=0;diagnostic='';applied=await updateView(result.versions,!current);}
+      if(!current||JSON.stringify(current)!==JSON.stringify(result.versions)){stage='view';status=0;diagnostic='';reference='';applied=await updateView(result.versions,!current);}
       // Retry a focused record table after focus moves. Advancing its revision
       // here would leave that table stale until another database write.
       if(applied){current=result.versions;etag=response.headers.get('ETag')||'';}
@@ -139,7 +148,8 @@
       if(error.name!=='AbortError'){
         delay=Math.min(120000,delay*2);
         if(error.authentication)message('Your session changed. Sign in again before continuing.',true,true);
-        else message('Automatic updates are temporarily unavailable. Your edits remain on this page.',false,true);
+        else message('Automatic updates are temporarily unavailable. Your edits remain on this page.'+
+          (/^[a-f0-9]{16}$/.test(reference)?' Reference: '+reference+'.':''),false,true);
         const code=error.diagnostic||diagnostic;
         console.warn('Automatic update unavailable',{stage,status:error.status||status,diagnostic:/^[A-Z0-9_]{1,64}$/.test(code)?code:''});
       }

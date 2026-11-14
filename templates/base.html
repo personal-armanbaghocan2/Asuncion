@@ -14,7 +14,7 @@
 <script defer src="{{url_for('static',filename='js/confirm-actions.js')}}"></script>
 <script defer src="{{url_for('static',filename='js/ui.js')}}"></script>
 <script defer src="{{url_for('static',filename='js/live-updates.js')}}"></script>
-{% if active in ['ppmp','app','pr','aoq','po','nlp','iar','ris'] and not workflow_preview %}<script defer src="{{url_for('static',filename='js/procurement-workspace.js')}}"></script>{% endif %}
+{% if active in ['ppmp','app','pr','aoq','po','nlp','iar','ris','inventory','users','account','audit','reports'] and not workflow_preview %}<script defer src="{{url_for('static',filename='js/procurement-workspace.js')}}"></script>{% endif %}
 <script defer src="{{url_for('static',filename='js/source-preview.js')}}"></script>
 <script defer src="{{url_for('static',filename='js/record-selectors.js')}}"></script>
 {% block head_extra %}{% endblock %}

@@ -289,14 +289,32 @@ def _confirmed_password(con,user_id,new_hash):
         raise Unavailable('Credential revocation could not be confirmed.')
 
 
-def reset_password(factory,user_id,new_hash,audit=None):
-    """Caller retains the existing Admin guard; reset, revocation and audit atomic."""
-    if type(user_id) is not int or user_id<=0:raise Rejected('Invalid account.')
+def reset_password(factory,user_id,new_hash,audit=None,*,actor_id=None,token=None):
+    """Recheck the Admin and employee inside the credential transaction.
+
+    Lock order matches existing account writes: actor, actor session, employee,
+    then the employee sessions through the existing revocation trigger.
+    This is the retained Admin reset, not verified-email password recovery.
+    """
+    digest=token_hash(token)
+    if (type(user_id) is not int or user_id<=0 or type(actor_id) is not int
+            or actor_id<=0 or user_id==actor_id or digest is None):
+        raise Rejected('An active administrator session and employee are required.')
     con=None
     try:
         con=factory();_ready(con)
-        account=con.execute('select id,username from users where id=? for update',(user_id,)).fetchone()
-        if not account:raise Rejected('Account no longer exists.')
+        actor=con.execute('select id,username,role,status from users where id=? for update',(actor_id,)).fetchone()
+        if not actor or actor['role']!='Admin' or actor['status']!='Active':
+            raise Rejected('Administrator authorization changed.')
+        active=con.execute('''select user_id from public.auth_sessions where token_hash=?
+            and user_id=? and revoked_at is null and expires_at>clock_timestamp() for share''',(digest,actor_id)).fetchone()
+        if not active:raise Rejected('Administrator session changed.')
+        # The predicate prevents locking another Admin as a reset target and
+        # is rechecked by PostgreSQL after any concurrent target modification.
+        account=con.execute('''select id,username,role,status from users where id=?
+            and role in ('Staff','Inspector') and status='Active' for update''',(user_id,)).fetchone()
+        if not account or account['role'] not in ('Staff','Inspector') or account['status']!='Active':
+            raise Rejected('An active employee account is required.')
         if con.execute('update users set password=? where id=?',(new_hash,user_id)).rowcount!=1:
             raise Unavailable('Password reset could not be confirmed.')
         _confirmed_password(con,user_id,new_hash)

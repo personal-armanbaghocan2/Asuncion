@@ -12,7 +12,9 @@ from flask import abort, session
 import durable_ocr_v0_1_0 as durable
 import server_sessions_v0_1_0 as sessions
 
-PARSER_VERSION='ppmp-source-evidence-v4'
+# v6 also preserves explicit unknown/missing catalog categories over sheet names. Existing runs
+# and drafts stay unchanged; only a separately requested reprocess uses this.
+PARSER_VERSION='ppmp-source-evidence-v6'
 
 
 @contextmanager

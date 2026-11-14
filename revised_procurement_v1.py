@@ -378,12 +378,15 @@ def modern_review(api,row):
     technical=comparison(api,pr,po,manual_mapping=recorded_mapping if isinstance(recorded_mapping,list) else None)
     try:details=json.loads(row.get('details') or '{}')
     except (ValueError,TypeError):details={}
+    if not isinstance(details,dict):details={}
+    saved_comparison=details.get('technical_comparison')
+    if not isinstance(saved_comparison,dict):saved_comparison=None
     stale=evidence.fingerprint(pr['items'])!=row['pr_items_hash'] or evidence.fingerprint(po['items'])!=row['po_items_hash']
     current_mapping=[item.get('po_position') for item in technical.get('rows',[])]
     review_evidence_current=stored_review_matches(row,current_mapping,technical)
     return render_template('revised_nlp_review.html',active='nlp',title='Review Comparison',row=row,pr=pr,po=po,
         pr_items=api['parse_items'](pr['items']),po_items=api['parse_items'](po['items']),comparison=technical,
-        details=details,stale=stale,review_evidence_current=review_evidence_current,
+        details=details,saved_comparison=saved_comparison,stale=stale,review_evidence_current=review_evidence_current,
         can_review_relationship=relationship_review_allowed(api,po))
 
 def stored_review_matches(row,mapping,current):

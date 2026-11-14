@@ -16,6 +16,13 @@ WORKFLOW_UNAVAILABLE = {
 }
 
 
+def active_workspace():
+    """Retain procurement navigation on errors using the matched endpoint only."""
+    endpoint = (request.endpoint or '').split('.')[-1]
+    workspace = endpoint.split('_', 1)[0]
+    return workspace if workspace in ('aoq', 'po', 'nlp', 'iar') else ''
+
+
 def database_failure(error):
     """Report an unconfirmed database operation without driver text or retries."""
     reference = secrets.token_hex(8)
@@ -28,7 +35,7 @@ def database_failure(error):
         response = jsonify(saved=None, message=message, reference=reference, status=503)
         response.status_code = 503
     else:
-        response = current_app.make_response((render_template('operation_error.html', active='',
+        response = current_app.make_response((render_template('operation_error.html', active=active_workspace(),
             title='Operation needs attention', message=message, status=503), 503))
     response.headers['Cache-Control'] = 'private, no-store'
     return response
@@ -75,7 +82,7 @@ def register(app):
         if request.is_json or request.accept_mimetypes.best=='application/json':
             response=jsonify(saved=False,message=message,status=code);response.status_code=code
         else:
-            response=app.make_response((render_template('operation_error.html',active='',title='Operation needs attention',
+            response=app.make_response((render_template('operation_error.html',active=active_workspace(),title='Operation needs attention',
                 message=message,status=code),code))
         response.headers['Cache-Control']='private, no-store'
         if code==503 and diagnostic in WORKFLOW_UNAVAILABLE:

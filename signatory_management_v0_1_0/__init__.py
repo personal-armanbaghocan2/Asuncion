@@ -101,9 +101,12 @@ def integer(value, zero=False):
     return number
 
 
-def person_fields(form):
+def person_fields(form, *, start_default=None):
     try:
-        start = date.fromisoformat(form.get('effective_from', ''))
+        supplied=(form.get('effective_from') or '').strip()
+        start = date.fromisoformat(supplied) if supplied else start_default
+        if isinstance(start,str):start=date.fromisoformat(start)
+        if not isinstance(start,date):raise ValueError('An effective start date is required by storage.')
         end = date.fromisoformat(form['effective_to']) if form.get('effective_to') else None
     except (ValueError, TypeError):
         raise Invalid('Use valid effective dates.') from None
@@ -255,23 +258,44 @@ def register(app, factory, audit):
         return Response('Active Administrator account required.', status=403, mimetype='text/plain')
 
     def unavailable():
-        return Response('Signatory configuration could not be confirmed. No change was saved.', status=503, mimetype='text/plain')
+        return Response('Signatory configuration could not be confirmed. Reopen Authorized Signatories and inspect the saved state before retrying. Do not repeat an uncertain submission.', status=503, mimetype='text/plain')
 
     @bp.get('')
     def index():
         page = integer(request.args.get('page', '1'))
-        if page > 100000:
-            raise Invalid('Invalid page.')
+        filters={key:request.args.get(key,'').strip() for key in ('q','status','sort')}
+        filters['sort']=filters['sort'] or 'source'
+        orders={'source':'created_at,id','name':'lower(full_name),id',
+                'newest':'created_at desc,id','effective':'effective_from desc,id'}
+        if (page>100000 or any(len(request.args.getlist(key))>1 for key in ('page',*filters))
+                or len(filters['q'])>160 or filters['status'] not in ('','Active','Inactive')
+                or filters['sort'] not in orders):
+            raise Invalid('Choose valid signatory filters, sort and page.')
+        conditions=[];params=[]
+        if filters['q']:
+            conditions.append("strpos(lower(concat_ws(' ',full_name,position,office)),lower(?))>0")
+            params.append(filters['q'])
+        if filters['status']:conditions.append('active IS '+('TRUE' if filters['status']=='Active' else 'FALSE'))
+        where=' where '+' and '.join(conditions) if conditions else ''
+        def list_url(number=1):
+            return url_for('signatories.index',page=number,**filters)
         con = factory()
         try:
             con.execute('SET TRANSACTION READ ONLY')
+            con.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
             state = con.execute('select revision from psms_signatories.config_state where id=1').fetchone()
-            people = con.execute('select * from psms_signatories.people order by created_at,id limit 50 offset ?', ((page - 1) * 50,)).fetchall()
+            count=con.execute('select count(*) total from psms_signatories.people'+where,params).fetchone()
+            if not state or not count or type(count['total']) is not int or count['total']<0:
+                return unavailable()
+            total=count['total']
+            people = con.execute('select * from psms_signatories.people'+where+' order by '+orders[filters['sort']]+' limit 50 offset ?',
+                                 (*params,(page-1)*50)).fetchall()
             assignments = con.execute('''select a.slot,a.person_id,p.full_name,p.position,p.active
                 from psms_signatories.assignments a join psms_signatories.people p on p.id=a.person_id
                 order by a.slot''').fetchall()
             return render_template('admin_signatories.html', active='users', title='Authorized Signatories',
-                                   people=people, assignments=assignments, slots=SLOTS, config_revision=state['revision'], today=date.today().isoformat(), page=page)
+                                   people=people, assignments=assignments, slots=SLOTS, config_revision=state['revision'], today=date.today().isoformat(),
+                                   page=page,signatory_filters=filters,signatory_total=total,list_url=list_url,has_next=page*50<total)
         except Exception:
             return unavailable()
         finally:
@@ -280,7 +304,9 @@ def register(app, factory, audit):
 
     @bp.post('/add')
     def add():
-        fields = person_fields(request.form)
+        # Same server-date default the existing form already prefilled. Blank
+        # is not an unbounded historical authorization or a nullable DB value.
+        fields = person_fields(request.form,start_default=date.today())
         person_id = str(uuid.uuid4())
         try:
             with mutation(factory, request.form) as (con, uid):
@@ -296,10 +322,11 @@ def register(app, factory, audit):
 
     @bp.post('/<uuid:person_id>/edit')
     def edit(person_id):
-        fields = person_fields(request.form)
         try:
             with mutation(factory, request.form) as (con, uid):
                 before = locked_person(con, person_id, request.form)
+                # Omission must never reset an existing authorization date.
+                fields = person_fields(request.form,start_default=before['effective_from'])
                 con.execute('''update psms_signatories.people set full_name=?,position=?,office=?,effective_from=?,effective_to=?,
                     revision=revision+1,updated_by=?,updated_at=clock_timestamp() where id=?''', (*fields, uid, person_id))
                 after = con.execute('select * from psms_signatories.people where id=?', (person_id,)).fetchone()
