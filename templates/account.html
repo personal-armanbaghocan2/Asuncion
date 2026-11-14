@@ -1,4 +1,5 @@
-{% extends 'base.html' %}{% from 'ui.html' import icon %}{% block content %}
+{% extends 'base.html' %}{% from 'ui.html' import icon %}{% from 'recovery_email_controls.html' import email_controls with context %}{% block content %}
+<script type="application/json" id="employee-password-policy">{{password_client_policy()|tojson}}</script>
 <div class="page-head approved-page-heading"><span class="approved-page-icon">{{icon('users')}}</span><div><h2>My Account</h2><p class="muted">Manage your profile and account security.</p></div></div>
 <div class="account-grid approved-account-grid">
   <section class="card account-card">
@@ -13,6 +14,7 @@
     </form>
     <form method="post" enctype="multipart/form-data" class="stack account-form"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="photo"><input type="hidden" name="revision" value="{{profile.revision}}"><label>Profile photo<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required></label><p class="muted">JPEG, PNG or WebP; maximum 2 MB. Images are normalized and stored privately.</p><button class="btn" type="submit" {{'disabled' if not profile_ready}}>Upload or replace photo</button></form>
     <form method="post"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="remove_photo"><input type="hidden" name="revision" value="{{profile.revision}}"><button class="btn danger" type="submit" {{'disabled' if not profile_ready}}>Remove photo</button></form>
+    {% if email_recovery_enabled %}<details><summary>Recovery email</summary>{{email_controls(account.id,recovery,true,recovery_ready)}}</details>{% endif %}
   </section>
   <section class="card account-card" id="change-password">
     <h3 class="approved-card-heading">{{icon('check')}} Security &amp; Password</h3>
@@ -21,8 +23,8 @@
       <label>Current Password<input id="currentPassword" type="password" name="current_password" required autocomplete="current-password"><button type="button" class="password-inline" data-password="currentPassword">Show</button></label>
       <label>New Password<input id="newPassword" type="password" name="new_password" minlength="12" maxlength="1024" data-password-policy required autocomplete="new-password"><button type="button" class="password-inline" data-password="newPassword">Show</button><small data-password-feedback role="status" aria-live="polite"></small></label>
       <label>Confirm New Password<input id="confirmPassword" type="password" name="confirm_password" minlength="12" maxlength="1024" required autocomplete="new-password"><button type="button" class="password-inline" data-password="confirmPassword">Show</button></label>
-      <div class="account-security-note"><strong>Password requirements</strong><p>{{password_guidance}}</p><p>Password feedback describes policy requirements, not resistance to every attack.</p></div>
-      <p class="notice">Verified email recovery is not available. For a forgotten password, contact your Administrator. A typed email address is not a verified recovery address.</p>
+      <div class="account-security-note"><p>{{password_short_guidance}}</p></div>
+      <p class="notice">{% if email_recovery_enabled %}For a forgotten password, contact the Administrator. Reset links require your verified recovery mailbox.{% else %}Email recovery is not enabled. Contact the Administrator for a forgotten password.{% endif %}</p>
       <div class="actions"><button class="btn primary" type="submit">Change Password</button></div>
     </form>
   </section>

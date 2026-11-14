@@ -10,6 +10,7 @@ import ppmp_creation
 from runtime_configuration import configure as configure_runtime
 import server_sessions_v0_1_0 as server_sessions
 import account_management
+import account_recovery
 from web_security_v0_1_0 import init_csrf
 from openpyxl import load_workbook
 from flask import session, g
@@ -86,6 +87,7 @@ def inject_layout_context():
         'password_guidance': account_management.PASSWORD_GUIDANCE,
         'password_short_guidance': account_management.PASSWORD_SHORT_GUIDANCE,
         'password_client_policy': account_management.password_client_policy,
+        'email_recovery_enabled': account_recovery.enabled(),
         'current_account': dict(account) if account else None,
         'sync_topics': live_updates.topics_for_page,
         'record_pagination': getattr(g,'psms_pagination',None),
@@ -96,6 +98,7 @@ import signatory_management_v0_1_0 as managed_signatories
 import procurement_creation
 import ppmp_intake as item_intake
 import account_profiles
+account_recovery.init(app,globals())
 import ui_feedback
 ui_feedback.register(app)
 import live_updates
@@ -2152,7 +2155,7 @@ def ppmp_ocr_reprocess(ptype):
 @app.before_request
 def ensure():
     """Validate the current account without initialization or record repairs."""
-    if request.endpoint in ('static', 'runtime_liveness'):
+    if request.endpoint in ('static', 'runtime_liveness', 'account_recovery.redeem'):
         return None
     if session.get('logged_in') is not True:
         if session.get('logged_in') is not None:
@@ -4258,8 +4261,15 @@ def account():
     except ServiceUnavailable as error:
         profile=dict(revision=0);profile_ready=False
         profile_diagnostic=account_profiles.storage_diagnostic(error)
+    recovery={};recovery_ready=False
+    if account_recovery.enabled():
+        try:
+            recovery=account_recovery.state(globals(),[user_id]).get(str(user_id),{});recovery_ready=True
+        except Exception:app.logger.warning('Recovery state unavailable; existing profile/password controls preserved')
     response=app.make_response(render_template('account.html', active='account', account=dict(row),profile=profile,
+                           recovery=recovery,recovery_ready=recovery_ready,
                            profile_ready=profile_ready,profile_diagnostic=profile_diagnostic,title='My Account'))
+    response.headers['Cache-Control']='private, no-store'
     if profile_diagnostic:
         response.headers['X-PSMS-Diagnostic']=profile_diagnostic['code']
         response.headers['X-PSMS-Reference']=profile_diagnostic['reference']
@@ -4278,7 +4288,8 @@ def sync_revisions():
 
 @app.route('/account/change-password', methods=['POST'])
 def change_password():
-    if set(request.form)-{'csrf_token','current_password','new_password','confirm_password'}:
+    if (set(request.form)-{'csrf_token','current_password','new_password','confirm_password'} or request.files
+            or any(len(request.form.getlist(k))!=1 for k in request.form)):
         abort(400,description='Only password fields may be changed here.')
     if any(len(request.form.get(key,''))>1024 for key in ('current_password','new_password','confirm_password')):
         abort(400,description='Password input is too long.')
@@ -4295,36 +4306,44 @@ def change_password():
     except Exception:
         valid = False
     if not valid:
-        flash('Current password is incorrect.')
+        flash('Current password is incorrect. No change was made.','error')
     elif account_management.password_issue(new_password):
         flash(account_management.password_issue(new_password),'error')
     elif new_password != confirm:
-        flash('New password and confirmation do not match.')
+        flash('New password and confirmation do not match.','error')
     elif new_password == current:
-        flash('Choose a new password that is different from the current password.')
+        flash('Choose a new password that is different from the current password.','error')
     else:
         try:
-            server_sessions.replace_password(
-                conn, session.get(server_sessions.COOKIE_KEY), user_id, str(user['password']),
-                generate_password_hash(new_password),
-                audit=lambda con: log('Password Changed', 'Account', user['username'],
-                                      'User changed own password', connection=con))
+            if os.environ.get('PSMS_ACCOUNT_PASSWORD_RPC')=='1':
+                account_recovery.change_own_password(globals(),str(user['password']),generate_password_hash(new_password))
+            else:
+                server_sessions.replace_password(
+                    conn, session.get(server_sessions.COOKIE_KEY), user_id, str(user['password']),
+                    generate_password_hash(new_password),
+                    audit=lambda con: log('Password Changed', 'Account', user['username'],
+                                          'User changed own password', connection=con))
         except server_sessions.Rejected:
             session.clear()
             flash('Authentication changed. Please sign in again.')
             return redirect(url_for('login'))
-        except server_sessions.Unavailable:
-            return Response('Password change could not be confirmed. Please try again.',
-                            status=503, mimetype='text/plain')
+        except server_sessions.Unavailable as error:
+            reference=secrets.token_hex(8)
+            app.logger.warning('Password change unavailable diagnostic=%s reference=%s',
+                               server_sessions.failure_reason(error),reference)
+            session.clear()
+            return Response('Password change could not be confirmed. Do not repeat the submission. '
+                            'Sign in to check your account or contact the Administrator. Reference: '+reference,
+                            status=503,mimetype='text/plain',headers={'Cache-Control':'no-store'})
         session.clear()
         flash('Password changed successfully. Please sign in again; existing sessions were revoked.')
         return redirect(url_for('login'))
     return redirect(url_for('account') + '#change-password')
 
 
-def create_user_account(username, password_hash, role):
+def create_user_account(username, password_hash, role, *, email=None):
     """Commit an authorized account creation and its audit as one operation."""
-    return account_management.create(globals(), username, password_hash, role)
+    return account_management.create(globals(), username, password_hash, role,recovery_email=email)
 
 
 @app.route('/users', methods=['GET','POST'])
@@ -4334,7 +4353,7 @@ def users():
         return guard
     if request.method == 'POST':
         action = request.form.get('action') or 'create'
-        allowed = {'create': {'username','password','role'},
+        allowed = {'create': {'username','password','role','email'},
                    'reset_password': {'user_id','password'}, 'deactivate': {'user_id','reason'}}
         if (action not in allowed or set(request.form) - allowed[action] - {'action','csrf_token'}
                 or request.files or any(len(request.form.getlist(key)) != 1 for key in request.form)):
@@ -4343,6 +4362,11 @@ def users():
             username = (request.form.get('username') or '').strip()
             password = request.form.get('password') or ''
             role = (request.form.get('role') or 'Staff').strip()
+            email=request.form.get('email','').strip() or None
+            if email is not None:
+                if not account_recovery.enabled():abort(400,description='Email recovery is not enabled.')
+                try:email=account_recovery.normalize_email(email)
+                except ValueError:abort(400,description='Use a valid optional Gmail address.')
             if role not in ('Staff', 'Inspector'):
                 abort(400,description='Only Staff and Inspector accounts may be created.')
             if (not 3 <= len(username) <= 80 or any(ord(c) < 32 for c in username)):
@@ -4354,7 +4378,8 @@ def users():
             else:
                 from werkzeug.exceptions import HTTPException
                 try:
-                    create_user_account(username, generate_password_hash(password), role)
+                    if email is None:create_user_account(username, generate_password_hash(password), role)
+                    else:create_user_account(username, generate_password_hash(password), role,email=email)
                 except HTTPException as error:
                     if error.code == 503:
                         return account_management.failure_response(error, 'create',api=globals(),username=username)
@@ -4422,7 +4447,15 @@ def users():
     rows=q('select id,username,role,status,full_name,display_name,created_at,last_login from users'+where+
            ' order by '+orders[filters['sort']]+' limit ? offset ?',(*values,size,(page-1)*size))
     g.psms_pagination=dict(page=page,has_next=page*size<total,size=size,total=total)
-    return render_template('users.html', active='users', rows=rows, title='User Accounts & Roles',user_filters=filters,user_count=total)
+    recovery_accounts={};recovery_ready=False
+    if account_recovery.enabled():
+        try:
+            recovery_accounts=account_recovery.state(globals(),[row['id'] for row in rows]);recovery_ready=True
+        except Exception:app.logger.warning('Employee recovery metadata unavailable; normal user management preserved')
+    response=app.make_response(render_template('users.html', active='users', rows=rows, title='User Accounts & Roles',
+                           recovery_accounts=recovery_accounts,recovery_ready=recovery_ready,user_filters=filters,user_count=total))
+    response.headers['Cache-Control']='private, no-store'
+    return response
 
 
 @app.route('/audit')

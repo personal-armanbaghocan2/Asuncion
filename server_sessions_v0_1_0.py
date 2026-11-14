@@ -14,7 +14,8 @@ COOKIE_KEY='_auth_sid'
 TRIGGER='psms_revoke_auth_sessions_on_account_change'
 
 _STAGES = ('connect', 'read_only', 'readiness', 'account_read', 'account_lookup',
-           'account_lock', 'session_insert', 'commit', 'diagnostics')
+           'account_lock', 'session_insert', 'commit', 'diagnostics',
+           'session_lookup','password_update','revocation_check','audit')
 _ERROR_CODES = {'42883': 'missing_function', '42P01': 'missing_table',
                 '42703': 'incompatible_columns', '42501': 'permission_denied',
                 '25006': 'read_only_transaction', '23502': 'constraint_failure',
@@ -258,27 +259,39 @@ def revoke_current(factory,token,user_id,audit=None):
 def replace_password(factory,token,user_id,expected_password,new_hash,audit=None):
     digest=token_hash(token)
     if digest is None or type(user_id) is not int or user_id<=0:raise Rejected('Invalid session.')
-    con=None
+    con=None;stage='connect';primary_failure=None
     try:
-        con=factory();_ready(con)
+        con=factory();stage='readiness';_ready(con)
         # Serialize with login and every password/status update. After acquiring
         # this row lock, recheck both the verified credential and current SID.
+        stage='account_lock'
         account=con.execute('select id,password,role,status from users where id=? for update',(user_id,)).fetchone()
+        stage='session_lookup'
         active=con.execute("""select user_id from public.auth_sessions where token_hash=?
              and user_id=? and revoked_at is null and expires_at>clock_timestamp() for update""",(digest,user_id)).fetchone()
         if (not active or not _authorized(account)
                 or not hmac.compare_digest(str(account['password']),expected_password)):
             raise Rejected('Authentication changed; sign in again.')
+        stage='password_update'
         if con.execute('update users set password=? where id=?',(new_hash,user_id)).rowcount!=1:
             raise Unavailable('Password update could not be confirmed.')
-        _confirmed_password(con,user_id,new_hash)
+        stage='revocation_check';_confirmed_password(con,user_id,new_hash)
         # Reviewed migration trigger revokes ALL sessions atomically with this
         # password change, including this request and other browsers/processes.
+        stage='audit'
         if audit:audit(con)
-        con.commit()
-    except (Rejected,Unavailable):raise
-    except Exception:raise Unavailable('Password update is unavailable.') from None
-    finally:_clean(con)
+        stage='commit';con.commit()
+    except Rejected:raise
+    except Unavailable as error:
+        primary_failure=error;raise
+    except Exception as error:
+        primary_failure=_failure(stage,error)
+        raise primary_failure from None
+    finally:
+        try:_clean(con)
+        except Unavailable:
+            if primary_failure is None:raise
+            primary_failure.cleanup_failed=True
 
 
 def _confirmed_password(con,user_id,new_hash):

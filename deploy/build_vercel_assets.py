@@ -39,6 +39,7 @@ ASSETS = (
     'js/live-updates.js',
     'js/document-workspace.js',
     'js/procurement-workspace.js',
+    'js/account-recovery.js',
     'images/asuncion_municipal.jpg',
     'images/asuncion-seal.png',
     'images/asuncion_hall.jpg',
