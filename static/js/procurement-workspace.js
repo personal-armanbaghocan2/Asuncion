@@ -1,11 +1,46 @@
 /* Presentation only. Uploads and approvals remain authenticated server actions. */
 (() => {
+  document.querySelectorAll('input[data-password-policy]').forEach(input => {
+    const feedback = input.parentElement.querySelector('[data-password-feedback]');
+    if (!feedback) return;
+    const update = () => {
+      const value = input.value, length = Array.from(value).length;
+      const kinds = [/[\p{Lu}]/u,/[\p{Ll}]/u,/[\p{Nd}]/u,/[^\p{L}\p{N}\s]/u].filter(pattern=>pattern.test(value)).length;
+      const phrase = Array.from(value.trim()).length >= 16 && new Set(value.trim().toLocaleLowerCase().split(/\s+/u)).size >= 3 && (value.match(/[\p{L}\p{N}]/gu)||[]).length >= 12;
+      const meets = length >= 12 && length <= 1024 && !/[\u0000-\u001f\u007f]/.test(value) && (kinds>=3 || phrase);
+      feedback.textContent = !value ? '' : meets ? 'Length and character requirements met; the server will validate the password.' :
+        'Use at least 12 characters and three character types, or a 16-character passphrase with three distinct words and 12 letters or numbers. Outer spaces do not count toward passphrase length.';
+    };
+    input.addEventListener('input',update);update();
+  });
   const panel = document.getElementById('aoq-upload-panel');
+  const fileInput = document.getElementById('aoq-file-input');
+  const chooseFile = document.getElementById('aoq-choose-file');
+  const selectedFile = document.getElementById('aoq-selected-file');
+  if (fileInput && chooseFile && selectedFile) {
+    // Keep the actual multipart file input and browser validation. Opening the
+    // picker is synchronous with a mouse/keyboard click, never an upload request.
+    chooseFile.addEventListener('click', () => {
+      if (!fileInput.matches(':disabled')) fileInput.click();
+    });
+    fileInput.addEventListener('change', () => {
+      selectedFile.textContent = fileInput.files?.[0]?.name || 'No file selected';
+    });
+    fileInput.addEventListener('invalid', event => {
+      event.preventDefault();
+      selectedFile.textContent = 'Choose an AOQ or bidding result file first.';
+      chooseFile.focus();
+    });
+    // Progressive enhancement: the native picker remains visible without JS.
+    fileInput.hidden = true;
+    chooseFile.hidden = false;
+    selectedFile.hidden = false;
+  }
   document.querySelectorAll('[data-open-upload]').forEach(link => {
     link.addEventListener('click', () => {
       if (!panel) return;
       panel.open = true;
-      requestAnimationFrame(() => panel.querySelector('input[type="file"]')?.focus({preventScroll: true}));
+      requestAnimationFrame(() => (chooseFile || panel.querySelector('input[type="file"]'))?.focus({preventScroll: true}));
     });
   });
   const params = new URLSearchParams(window.location.search);
@@ -44,7 +79,11 @@
     };
     form.addEventListener('submit', cancel);
     form.addEventListener('change', event => {
-      if (event.target.tagName === 'SELECT') apply();
+      const control = event.target;
+      // Date/number/status filters commit immediately on change. Search fields
+      // keep the short typing debounce, including existing q/h_q text inputs.
+      if (control.tagName === 'SELECT' || (control.tagName === 'INPUT' &&
+          control.type !== 'hidden' && control.type !== 'search' && !/(?:^|_)q$/.test(control.name || ''))) apply();
     });
     form.addEventListener('input', event => {
       if (!event.target.matches('input:not([type="hidden"])')) return;

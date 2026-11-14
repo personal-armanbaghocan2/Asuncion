@@ -232,16 +232,49 @@ def ppmp_state(api,ptype=None):
 _STATE_UNSET = object()
 
 
+def ppmp_item_filters():
+    """Read-only category-list filters; never submitted review/approval evidence."""
+    names=('item_q','item_review','item_sort','item_source')
+    if any(len(request.args.getlist(name))>1 for name in (*names,'ocr_page')):abort(400)
+    values={name:request.args.get(name,'').strip() for name in names}
+    values['item_sort']=values['item_sort'] or 'source'
+    if (len(values['item_q'])>160 or values['item_review'] not in ('','NEEDS_REVIEW','REVIEWED')
+            or values['item_sort'] not in ('source','name','name_desc')
+            or values['item_source'] not in ('','extracted','workbook')):
+        abort(400,description='Choose valid PPMP item filters and sort.')
+    return values
+
+
 def ppmp_rows(api,ptype,state=_STATE_UNSET):
+    filters=ppmp_item_filters()
     page=revision(request.args.get('ocr_page','1'))
     if page>100000:abort(400)
+    if filters['item_source']=='workbook':
+        g.psms_draft_pagination=dict(page=page,total=0,has_next=False)
+        return []
     if state is _STATE_UNSET:state=ppmp_state(api,ptype)
     where="owner_id=? and ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')"
     params=[_uid(),ptype]
     selected=request.args.get('ocr_source','all')!='all' and state
     if selected:where+=' and source_id=?';params.append(state['source_id'])
-    params.append((page-1)*200)
-    rows=api['q']('select * from ppmp_ocr_drafts where '+where+' order by id '+('asc' if selected else 'desc')+' limit 200 offset ?',params)
+    fields="(CASE WHEN fields_json IS JSON OBJECT THEN fields_json::jsonb ELSE '{}'::jsonb END)"
+    if filters['item_review']=='REVIEWED':
+        where+=' and status=? and reviewed IS TRUE';params.append('REVIEWED')
+    elif filters['item_review']=='NEEDS_REVIEW':
+        where+=' and (status=? or reviewed IS NOT TRUE)';params.append('NEEDS_REVIEW')
+    if filters['item_q']:
+        visible=('Item Name','General Description and Objective of the Project to be Procured',
+                 'Quantity and Size of the Project to be Procured','Quantity','Unit','Estimated Unit Cost','Item Number')
+        where+=" and strpos(lower(concat_ws(' ',temp_code,"+','.join(fields+"->>'"+key+"'" for key in visible)+")),lower(?))>0"
+        params.append(filters['item_q'])
+    count=api['q']('select count(*) total from ppmp_ocr_drafts where '+where,params,one=True)
+    if not count or type(count.get('total')) is not int or count['total']<0:
+        abort(503,description='The matching draft count could not be confirmed. No items were changed.')
+    order='id '+('asc' if selected else 'desc')
+    if filters['item_sort']!='source':
+        order="lower(coalesce(nullif("+fields+"->>'Item Name',''),"+fields+"->>'General Description and Objective of the Project to be Procured','')) "+('desc' if filters['item_sort']=='name_desc' else 'asc')+',id'
+    g.psms_draft_pagination=dict(page=page,total=count['total'],has_next=page*200<count['total'])
+    rows=api['q']('select * from ppmp_ocr_drafts where '+where+' order by '+order+' limit 200 offset ?',(*params,(page-1)*200))
     return [api['_ocr_draft_to_ui'](row) for row in rows]
 
 def _ppmp_locked(con,uid,ptype,temp_id):

@@ -214,3 +214,63 @@ dialog.ppmp-editor-modal .modal-footer{background:#fbfdfc;border-top:1px solid #
 /* Keep extraction attention cues when using the common item editor layout. */
 .ocr-review-modal .editor-grid label.needs-attention input,.ocr-review-modal .editor-grid label.needs-attention textarea{border-color:#e7ad46;background:#fffdf6}
 .ocr-review-modal .editor-grid .field-confidence{align-self:flex-start;max-width:100%}
+.reference-shell .content .table-scroll{max-height:min(60vh,36rem);overflow:auto}
+.verification-source-panels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:16px}
+.verification-source-panels>.source-panel-expanded{max-height:32rem;overflow:auto;min-width:0}
+@media(max-width:720px){.verification-source-panels{grid-template-columns:1fr}.verification-source-panels>.source-panel-expanded{max-height:28rem}}
+@media print{.verification-source-panels>.source-panel-expanded{max-height:none;overflow:visible}}
+@media print{.reference-shell .content .table-scroll{max-height:none;overflow:visible}.reference-shell .content .table th{position:static}}
+
+/* Approved municipal account, signatory and discrepancy-review references.
+   Keep the existing shell and real workflow forms; no demonstration values. */
+.approved-page-heading{display:flex;align-items:center;gap:16px;margin-bottom:24px}
+.approved-page-icon{display:grid;place-items:center;width:54px;height:54px;border-radius:10px;background:#deeee5;color:#075b38;flex:none}
+.approved-page-icon .icon{width:30px;height:30px}
+.approved-account-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:20px;align-items:start}
+.approved-account-grid>.account-card,.approved-signatory-grid>.card{min-width:0;padding:20px;border:1px solid #d7e0e7;border-radius:9px;background:#fff}
+.approved-card-heading{display:flex;align-items:center;gap:10px;margin:-20px -20px 18px;padding:14px 20px;border-bottom:1px solid #e2e8ed;background:#f5f7f8;border-radius:9px 9px 0 0;font-size:18px}
+.approved-card-heading .icon{color:#08703f;flex:none}
+.account-photo-preview{display:flex;justify-content:center;padding:4px 0 10px}
+.account-photo-preview .profile-photo{width:144px;height:144px;border:5px solid #edf1f4;margin:0;object-fit:cover}
+.approved-account-grid .account-form{display:grid;gap:14px;min-width:0}
+.approved-account-grid .account-form label{display:grid;gap:5px;min-width:0;position:relative}
+.approved-account-grid input{width:100%;min-width:0}
+.approved-account-grid input[type=password],.approved-account-grid input[data-password-policy]{padding-right:65px}
+.approved-account-grid .password-inline{position:absolute;right:9px;top:30px;border:0;background:transparent;color:#075b38;font-weight:600;padding:4px;min-height:24px}
+.approved-account-grid .account-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.approved-account-grid .account-meta span{display:block;font-size:12px;margin-bottom:4px}
+.approved-account-grid .account-meta strong{display:block;background:#f3f6f8;border:1px solid #d7e0e7;padding:9px;border-radius:6px;font-size:12px}
+.account-security-note{padding:14px;background:#edf7f0;border:1px solid #d6ebdd;border-radius:7px;color:#184e33}
+.account-security-note p{font-size:12px;margin:6px 0 0}
+.approved-signatory-grid{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.4fr);gap:18px;align-items:start}
+.signatory-configured{grid-column:2;grid-row:1}
+.signatory-fields,.signatory-assign{align-self:stretch}
+.signatory-add .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.signatory-add .form-field:nth-of-type(-n+3){grid-column:1/-1}
+.signatory-configured .filters{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.signatory-configured .filters label{display:grid;gap:5px;flex:1 1 120px;min-width:0}
+.signatory-configured .filters input,.signatory-configured .filters select{width:100%;min-width:0}
+.signatory-person{border:1px solid #d5e1dc;border-radius:6px;margin:12px 0;overflow:hidden}
+.signatory-person>summary{padding:12px;background:#e4f1e9;color:#143f2b;cursor:pointer}
+.signatory-person>form,.signatory-person>.signature-image-section{margin:14px}
+.signature-image-section{padding-top:12px;border-top:1px solid #e0e6ed}
+.signature-image-section .form-grid{grid-template-columns:minmax(0,1fr)}
+.signatory-person input[type=file]{width:100%;min-width:0}
+.signatory-fields .table{min-width:440px}
+.signatory-assign .form-grid{margin-bottom:0}
+.approved-verification-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto auto;align-items:end;gap:12px}
+.approved-verification-controls>label{max-width:none}
+.approved-verification-controls>.btn{margin-left:0;white-space:normal}
+.approved-verification-results{margin-top:16px}
+.approved-verification-results>.review-summary-grid{margin-top:0;gap:12px;background:transparent}
+.approved-verification-results>.review-summary-grid{grid-template-columns:minmax(0,1.7fr) repeat(3,minmax(0,1fr))}
+.approved-verification-results .review-summary-card{border:1px solid #d8e5dd;border-radius:7px;background:#f0f7f3;padding:14px}
+.verification-source-panels>.source-panel-expanded{height:21rem;max-height:21rem}
+.verification-source-panels>.source-panel-expanded>summary{position:sticky;top:-1px;background:#edf5ef;z-index:1;padding:10px;border-bottom:1px solid #d6e5da}
+.verification-source-panels>.source-panel-expanded:nth-child(2)>summary{background:#edf4fc;border-color:#d4e1f1}
+@media(max-width:1100px){.approved-verification-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.approved-account-grid,.approved-signatory-grid{grid-template-columns:minmax(0,1fr)}.signatory-configured{grid-column:auto;grid-row:auto}}
+@media(max-width:900px){.approved-verification-results>.review-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.approved-verification-controls{grid-template-columns:minmax(0,1fr)}.approved-account-grid>.account-card,.approved-signatory-grid>.card{padding:16px}.approved-card-heading{margin:-16px -16px 16px;padding:12px 16px}.approved-account-grid .account-meta,.signatory-add .form-grid{grid-template-columns:minmax(0,1fr)}.approved-page-heading{gap:10px}}
+@media print{.verification-source-panels>.source-panel-expanded{height:auto;max-height:none}.verification-source-panels>.source-panel-expanded>summary{position:static}}
+@media(max-width:520px){.approved-verification-results>.review-summary-grid{grid-template-columns:minmax(0,1fr)}}

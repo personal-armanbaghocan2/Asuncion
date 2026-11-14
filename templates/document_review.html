@@ -126,7 +126,7 @@
 {% endif %}
 {% endfor %}
 
-{% if session.get('role')=='Admin' %}
+{% if session.get('role')=='Admin' and active not in ['aoq','po','nlp'] %}
 <details class="card advanced-box"><summary>Technical evidence (authorized review)</summary>
 {% for section in item_sections %}{% for item in section['items'] %}
 <details><summary>{{ section.title }} · {{ item.line_id }}</summary>
@@ -204,7 +204,7 @@
     {% if active in ['aoq','po'] %}<noscript><label class="review-confirm-check"><input type="checkbox" name="final_confirm" value="yes" required> I explicitly confirm final approval of {{ document_no }} and the details above.</label></noscript>{% endif %}
     <div class="approval-action-row">
       <a class="btn" href="{{url_for(active) if workflow_preview else back_url}}">Back</a>
-      <button class="btn primary" type="submit" id="finalApproveButton" {% if active not in ['aoq','po'] %}disabled{% endif %}>{{ approve_label }}</button>
+      <button class="btn primary" type="submit" id="finalApproveButton" {% if active not in ['aoq','po','nlp'] %}disabled{% endif %}>{{ approve_label }}</button>
     </div>
   </form>
   {% elif status == 'Approved' %}

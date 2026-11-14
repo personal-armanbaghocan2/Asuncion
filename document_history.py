@@ -16,7 +16,7 @@ import document_processing as processing
 
 PAGE_SIZE = 20
 CATEGORIES = ('DBM', 'NON-DBM', 'LIB', 'MIXED', 'UNASSIGNED')
-STATUSES = ('PROCESSING', 'COMPLETE', 'INCOMPLETE', 'FAILED', 'NEEDS_REVIEW', 'REVIEWED', 'CONFIRMED')
+STATUSES = ('PROCESSING', 'COMPLETE', 'INCOMPLETE', 'FAILED', 'NEEDS_REVIEW', 'REVIEWED', 'CONFIRMED', 'CANCELLED')
 TYPES = ('.pdf', '.docx', '.xlsx', '.xlsm', '.csv', '.txt', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp')
 SORTS = {
     'newest': 'created_at DESC,id DESC', 'oldest': 'created_at ASC,id ASC',
@@ -134,6 +134,7 @@ def _ppmp_catalog_sql():
           coalesce(to_char(coalesce(r.completed_at,r.started_at),'YYYY-MM-DD HH24:MI:SS'),'')) AS modified_sort
       FROM owned s LEFT JOIN LATERAL (
         SELECT count(*) FILTER(WHERE d.status<>'CANCELLED') AS total,
+          count(*) FILTER(WHERE d.status='CANCELLED') AS cancelled,
           count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='DBM') AS dbm,
           count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='NON-DBM') AS non_dbm,
           count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='LIB') AS lib,
@@ -153,7 +154,8 @@ def _ppmp_catalog_sql():
         CASE WHEN lib>0 THEN 1 ELSE 0 END+CASE WHEN unclassified>0 THEN 1 ELSE 0 END)>1 THEN 'MIXED'
         WHEN dbm>0 THEN 'DBM' WHEN non_dbm>0 THEN 'NON-DBM' WHEN lib>0 THEN 'LIB' ELSE 'UNASSIGNED' END AS category,
         coalesce(run_status,CASE WHEN total>0 THEN 'COMPLETE' ELSE 'INCOMPLETE' END) AS processing_status,
-        CASE WHEN total>0 AND converted=total THEN 'CONFIRMED'
+        CASE WHEN total=0 AND cancelled>0 THEN 'CANCELLED'
+          WHEN total>0 AND converted=total THEN 'CONFIRMED'
           WHEN total>0 AND reviewed=total THEN 'REVIEWED' ELSE 'NEEDS_REVIEW' END AS review_status
       FROM catalog c
     ) SELECT * FROM labeled"""
@@ -178,7 +180,7 @@ def _catalog_sql(kind=None):
         CASE WHEN s.kind='aoq' THEN coalesce(source_groups.lib,0) ELSE coalesce(p.lib,0) END AS lib,
         CASE WHEN s.kind='aoq' THEN CASE WHEN source_groups.total>0 THEN source_groups.unclassified ELSE {fallback_total} END
           ELSE coalesce(p.unclassified,0) END AS unclassified,coalesce(p.reviewed,0) AS reviewed,
-        coalesce(p.converted,0) AS converted,a.id AS draft_id,a.status AS aoq_status,
+        coalesce(p.converted,0) AS converted,coalesce(p.cancelled,0) AS cancelled,a.id AS draft_id,a.status AS aoq_status,
         a.official_aoq_id,official.no AS official_no,official.status AS official_status,
         coalesce(official.no,'') AS search_references,
         CASE WHEN source_groups.total>0 THEN source_groups.total ELSE {fallback_total} END AS aoq_total,
@@ -190,6 +192,7 @@ def _catalog_sql(kind=None):
       FROM owned s
       LEFT JOIN LATERAL (
         SELECT count(*) FILTER(WHERE d.status<>'CANCELLED') AS total,
+          count(*) FILTER(WHERE d.status='CANCELLED') AS cancelled,
           count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='DBM') AS dbm,
           count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='NON-DBM') AS non_dbm,
           count(*) FILTER(WHERE d.status NOT IN ('CANCELLED','CATEGORY_REVIEW') AND d.ppmp_category='LIB') AS lib,
@@ -243,7 +246,8 @@ def _catalog_sql(kind=None):
           WHEN dbm>0 THEN 'DBM' WHEN non_dbm>0 THEN 'NON-DBM' WHEN lib>0 THEN 'LIB' ELSE 'UNASSIGNED' END AS category,
         coalesce(run_status,CASE WHEN (kind='ppmp' AND ppmp_total>0) OR (kind='aoq' AND aoq_total>0)
           THEN 'COMPLETE' ELSE 'INCOMPLETE' END) AS processing_status,
-        CASE WHEN kind='aoq' THEN CASE WHEN aoq_status='CONFIRMED' THEN 'CONFIRMED' ELSE 'NEEDS_REVIEW' END
+        CASE WHEN kind='aoq' THEN CASE WHEN aoq_status='CONFIRMED' THEN 'CONFIRMED' WHEN aoq_status='CANCELLED' THEN 'CANCELLED' ELSE 'NEEDS_REVIEW' END
+          WHEN ppmp_total=0 AND cancelled>0 THEN 'CANCELLED'
           WHEN ppmp_total>0 AND converted=ppmp_total THEN 'CONFIRMED'
           WHEN ppmp_total>0 AND reviewed=ppmp_total THEN 'REVIEWED' ELSE 'NEEDS_REVIEW' END AS review_status
       FROM catalog c
@@ -311,7 +315,7 @@ def _decorate(row, group):
     row['detail_url'] = url_for('document_history_detail', sid=row['id'])
     row['download_url'] = url_for('document_history_source', sid=row['id'])
     row['reopen_url'] = row['detail_url']
-    if row['kind'] == 'ppmp':
+    if row['kind'] == 'ppmp' and row['review_status']!='CANCELLED':
         row['reopen_url'] = url_for('ppmp_intake_review', sid=row['id'])
     elif row.get('draft_id') and row.get('aoq_status') == 'REVIEW':
         row['reopen_url'] = url_for('aoq', draft_id=str(row['draft_id']))
@@ -322,7 +326,8 @@ def _decorate(row, group):
         row['official_links'].append(dict(label=row['official_no'],
             status=row.get('official_status') or 'Not recorded',
             url=url_for('aoq_review', id=row['official_aoq_id'])))
-    row['workflow_stage'] = ('Official document created' if row['review_status'] == 'CONFIRMED'
+    row['workflow_stage'] = ('Cancelled drafts; original retained' if row['review_status']=='CANCELLED'
+                             else 'Official document created' if row['review_status'] == 'CONFIRMED'
                              else 'Item review completed' if row['review_status'] == 'REVIEWED'
                              else 'Extraction ' + row['processing_status'].lower() if row['processing_status'] != 'COMPLETE'
                              else 'Human review required')
@@ -451,6 +456,19 @@ def _event_key(event):
             return datetime.fromisoformat(text.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S.%f')
         except ValueError:
             return ''
+
+
+def public_event(event):
+    """Presentation copy only; retain original references/codes in backend evidence."""
+    value=dict(event)
+    try:uuid.UUID(str(value.get('reference') or ''));value['internal_reference']=True
+    except ValueError:value['internal_reference']=False
+    code=value.get('error_code')
+    reasons={'INTERRUPTED':'Processing was interrupted before completion. The original file remains available.',
+             'EXTRACTION_FAILED':'Extraction could not be completed. Inspect the original and any recorded warnings before retrying.',
+             'DOCUMENT_UNREADABLE':'No readable item text or table was detected in this attempt.'}
+    value['failure_reason']=reasons.get(code,'A specific failure reason was not recorded.') if code else None
+    return value
 
 
 def detail(api, sid):
@@ -588,7 +606,7 @@ def detail(api, sid):
                     module=entry['module'], reference=entry['ref']))
     result['events_truncated'] = len(result['events']) > 300
     newest = sorted(result['events'], key=_event_key, reverse=True)[:300]
-    result['events'] = sorted(newest, key=_event_key)
+    result['events'] = [public_event(event) for event in sorted(newest, key=_event_key)]
     for event in result['events']:
         event.setdefault('actor', None)
     return result

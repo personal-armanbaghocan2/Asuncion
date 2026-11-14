@@ -30,9 +30,17 @@ def revisions(api):
     topics=sorted(set(raw.split(',')))
     if not set(topics)<=TOPICS or len(topics)>14:abort(400)
     if 'users' in topics and session.get('role')!='Admin':abort(403)
+    invalid_response=False
     try:
         with connection(api) as (con,uid):
             row=con.execute('select psms_sync.read_versions(?::text[]) as versions',(topics,)).fetchone()
+            values=row['versions'] if row else None
+            if (not isinstance(values,dict) or set(values)!=set(topics)
+                    or any(not ((isinstance(value,str) and re.fullmatch(r'[0-9]{1,19}',value))
+                                or (type(value) is int and 0<=value<=9007199254740991))
+                           for value in values.values())):
+                invalid_response=True
+                raise ServiceUnavailable('Invalid revision contract response.')
     except ServiceUnavailable as error:
         cause=error;sqlstate='unavailable'
         for _ in range(8):
@@ -40,7 +48,8 @@ def revisions(api):
             if isinstance(value,str) and re.fullmatch(r'[0-9A-Z]{5}',value):sqlstate=value;break
             cause=getattr(cause,'__context__',None)
             if cause is None:break
-        diagnostic=('SYNC_CONTRACT_UNAVAILABLE' if sqlstate in ('42883','3F000','42P01') else
+        diagnostic=('SYNC_RESPONSE_INVALID' if invalid_response else
+                    'SYNC_CONTRACT_UNAVAILABLE' if sqlstate in ('42883','3F000','42P01') else
                     'SYNC_PERMISSION_UNAVAILABLE' if sqlstate=='42501' else 'SYNC_REVISIONS_UNAVAILABLE')
         reference=uuid.uuid4().hex[:16]
         current_app.logger.warning('Revision polling unavailable sqlstate=%s diagnostic=%s reference=%s',sqlstate,diagnostic,reference)
@@ -50,7 +59,6 @@ def revisions(api):
         response.headers.update({'Cache-Control':'private, no-store','Vary':'Cookie',
                                  'X-PSMS-Diagnostic':diagnostic,'X-PSMS-Reference':reference})
         return response
-    values=row['versions'] if row else {}
     response=jsonify(versions=values)
     response.set_etag(hashlib.sha256(json.dumps(values,sort_keys=True).encode()).hexdigest())
     response.headers.update({'Cache-Control':'private, no-store','Vary':'Cookie'})

@@ -1,26 +1,28 @@
-{% extends 'base.html' %}{% block content %}
-<div class="page-head"><div><h2>My Account</h2><p class="muted">Manage your profile and password. Role and permissions are controlled by User Management.</p></div></div>
-<div class="account-grid">
+{% extends 'base.html' %}{% from 'ui.html' import icon %}{% block content %}
+<div class="page-head approved-page-heading"><span class="approved-page-icon">{{icon('users')}}</span><div><h2>My Account</h2><p class="muted">Manage your profile and account security.</p></div></div>
+<div class="account-grid approved-account-grid">
   <section class="card account-card">
-    <h3>Profile</h3>
-    {% if not profile_ready %}<p class="notice" data-category="error">Profile changes require the reviewed account migration. Your login and password-change workflow remain available.</p>{% endif %}
-    <img class="profile-photo" src="{{url_for('account_photo')}}" alt="Your profile picture" width="96" height="96">
+    <h3 class="approved-card-heading">{{icon('users')}} Profile Information</h3>
+    {% if not profile_ready %}<p class="notice" data-category="error" role="alert">Profile storage is unavailable. Reopen this page before editing; contact the administrator if it remains unavailable.{% if profile_diagnostic %} Reference: {{profile_diagnostic.reference}}{% if session.get('role')=='Admin' %} ({{profile_diagnostic.code}}){% endif %}.{% endif %} Your password-change workflow remains available.</p>{% endif %}
+    <div class="account-photo-preview"><img class="profile-photo" src="{{url_for('account_photo')}}" alt="Your profile picture" width="144" height="144"></div>
     <form method="post" class="stack account-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="profile"><input type="hidden" name="revision" value="{{profile.revision}}">
       <label>Username<input value="{{account.username}}" disabled></label>
       <label>Full name<input name="full_name" value="{{account.full_name or ''}}" maxlength="160"></label>
-      <div class="account-meta"><div><span>Role</span><strong>{{account.role}}</strong></div><div><span>Status</span><strong>{{account.status or 'Active'}}</strong></div><div><span>Created</span><strong>{{account.created_at or 'Not recorded'}}</strong></div><div><span>Last login</span><strong>{{account.last_login or 'Not recorded'}}</strong></div></div>
+      <div class="account-meta"><div><span>Role</span><strong>{{account.role}}</strong></div><div><span>Status</span><strong>{{account.status or 'Not recorded'}}</strong></div><div><span>Created</span><strong>{{account.created_at|philippine_time if account.created_at else 'Not recorded'}}</strong></div><div><span>Last sign-in</span><strong>{{account.last_login|philippine_time if account.last_login else 'Not recorded'}}</strong></div></div>
       <div class="actions"><button class="btn primary" type="submit" {{'disabled' if not profile_ready}}>Save profile</button></div>
     </form>
     <form method="post" enctype="multipart/form-data" class="stack account-form"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="photo"><input type="hidden" name="revision" value="{{profile.revision}}"><label>Profile photo<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required></label><p class="muted">JPEG, PNG or WebP; maximum 2 MB. Images are normalized and stored privately.</p><button class="btn" type="submit" {{'disabled' if not profile_ready}}>Upload or replace photo</button></form>
     <form method="post"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="remove_photo"><input type="hidden" name="revision" value="{{profile.revision}}"><button class="btn danger" type="submit" {{'disabled' if not profile_ready}}>Remove photo</button></form>
   </section>
   <section class="card account-card" id="change-password">
-    <h3>Change Password</h3>
-    <p class="muted">Use at least 8 characters. Your current password is required.</p>
+    <h3 class="approved-card-heading">{{icon('check')}} Security &amp; Password</h3>
+    <h4>Change Password</h4><p class="muted">Your current password is required.</p>
     <form method="post" action="{{url_for('change_password')}}" class="stack account-form" autocomplete="off"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Current Password<input id="currentPassword" type="password" name="current_password" required autocomplete="current-password"><button type="button" class="password-inline" data-password="currentPassword">Show</button></label>
-      <label>New Password<input id="newPassword" type="password" name="new_password" minlength="8" required autocomplete="new-password"><button type="button" class="password-inline" data-password="newPassword">Show</button></label>
-      <label>Confirm New Password<input id="confirmPassword" type="password" name="confirm_password" minlength="8" required autocomplete="new-password"><button type="button" class="password-inline" data-password="confirmPassword">Show</button></label>
+      <label>New Password<input id="newPassword" type="password" name="new_password" minlength="12" maxlength="1024" data-password-policy required autocomplete="new-password"><button type="button" class="password-inline" data-password="newPassword">Show</button><small data-password-feedback role="status" aria-live="polite"></small></label>
+      <label>Confirm New Password<input id="confirmPassword" type="password" name="confirm_password" minlength="12" maxlength="1024" required autocomplete="new-password"><button type="button" class="password-inline" data-password="confirmPassword">Show</button></label>
+      <div class="account-security-note"><strong>Password requirements</strong><p>{{password_guidance}}</p><p>Password feedback describes policy requirements, not resistance to every attack.</p></div>
+      <p class="notice">Verified email recovery is not available. For a forgotten password, contact your Administrator. A typed email address is not a verified recovery address.</p>
       <div class="actions"><button class="btn primary" type="submit">Change Password</button></div>
     </form>
   </section>

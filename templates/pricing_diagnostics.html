@@ -5,7 +5,7 @@
   {% if pricing_diagnostics['values'] %}
   <div class="linked-record-grid">
     {% for field in pricing_diagnostics['values'] %}
-    <div class="linked-record"><span>{{ field.label }}</span><b>{{ field.value }}</b>{% if session.get('role')=='Admin' %}<small style="display:block;overflow-wrap:anywhere">{{ field.source }}</small>{% endif %}</div>
+    <div class="linked-record"><span>{{ field.label }}</span><b>{{ field.value }}</b></div>
     {% endfor %}
   </div>
   {% endif %}
@@ -15,7 +15,7 @@
       <caption>Stored pricing evidence and unrounded calculations</caption>
       <thead><tr><th>Document / source row</th><th>Quantity</th><th>Unit</th><th>Stored unit price</th><th>Quantity × price (unrounded)</th><th>Stored amount</th></tr></thead>
       <tbody>{% for line in pricing_diagnostics['lines'] %}
-        <tr><td>{{ line.side }} · {{ line.identity }}{% if session.get('role')=='Admin' %}<br><small>{{ line.source }}</small>{% endif %}</td><td>{{ line.quantity }}</td><td>{{ line.unit }}</td><td>{{ line.unit_price }}</td><td>{{ line.calculated }}</td><td>{{ line.amount }}</td></tr>
+        <tr><td>{{ line.side }} · {{ line.identity }}</td><td>{{ line.quantity }}</td><td>{{ line.unit }}</td><td>{{ line.unit_price }}</td><td>{{ line.calculated }}</td><td>{{ line.amount }}</td></tr>
       {% endfor %}</tbody>
     </table>
   </div>
@@ -26,7 +26,7 @@
       <thead><tr><th>Check</th><th>Finding</th><th>Explanation</th></tr></thead>
       <tbody>{% for row in pricing_diagnostics['rows'] %}
         <tr><td>{{ row.check }}</td><td><span class="badge {{ 'ok' if row.state == 'Check Passed' else ('bad' if row.state == 'Discrepancy Found' else ('info' if row.state == 'Check Not Applicable' else 'warn')) }}">{{ row.state }}</span></td>
-        <td>{{ row.message }}{% if row.sources and session.get('role')=='Admin' %}<details><summary>Technical source references</summary><ul>{% for source in row.sources %}<li><code>{{ source }}</code></li>{% endfor %}</ul></details>{% endif %}</td></tr>
+        <td>{{ row.message }}</td></tr>
       {% endfor %}</tbody>
     </table>
   </div>

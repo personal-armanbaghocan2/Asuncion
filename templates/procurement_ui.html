@@ -32,8 +32,8 @@
 {% elif value is boolean %}{{'Yes' if value else 'No'}}{% else %}{{value if value is not none and value!='' else 'Not recorded'}}{% endif %}
 {%- endmacro %}
 
-{% macro source_items(label,document,items) -%}
-<details class="card procurement-source-panel"><summary>View Document Details — {{label}} {{document.no}}</summary>
+{% macro source_items(label,document,items,expanded=false) -%}
+<details class="card procurement-source-panel {{'source-panel-expanded' if expanded}}" {{'open' if expanded}}><summary>View Document Details — {{label}} {{document.no}}</summary>
   <div class="section-heading-row"><div><span class="review-kicker">{{label}} SOURCE</span><h3>{{document.no}}</h3></div><span class="badge {{'ok' if document.status=='Approved' else 'warn'}}">{{document.status}}</span></div>
   {% for item in items %}
   <article class="procurement-source-item"><h4>{{label}} item {{loop.index}}</h4><dl>

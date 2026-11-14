@@ -5,7 +5,7 @@
   <p class="notice" role="status" data-category="info">Document history is temporarily unavailable. Existing documents remain preserved. Please report reference {{history.reference or 'unavailable'}} to the administrator.</p>
   {% else %}
   {% if history.kind=='aoq' %}<details class="history-filter-panel"><summary class="btn">Search and filter saved uploads</summary>{% endif %}
-  <form method="get" class="history-filters" aria-label="Document history filters" action="#document-history">
+  <form method="get" class="history-filters" data-auto-filters data-record-navigation aria-label="Document history filters" action="#document-history">
     <input type="hidden" name="_nav" value="{{navigation_token()}}">
     {% for name,value in history.preserved_args %}<input type="hidden" name="{{name}}" value="{{value}}">{% endfor %}
     <label>Search filename or document reference<input name="h_q" value="{{history.filters.h_q}}" maxlength="200" type="search"></label>
@@ -17,7 +17,7 @@
     <label>Uploaded through<input type="date" name="h_to" value="{{history.filters.h_to}}"></label>
     <label>Uploader<select name="h_uploader"><option value="{{history.filters.h_uploader}}">{{history.uploader}} (my uploads)</option></select></label>
     <label>Group this page<select name="h_group"><option value="">No grouping</option>{% for value,label in [('category','Category'),('month','Upload month'),('type','File type'),('status','Status')] %}<option value="{{value}}" {{'selected' if history.filters.h_group==value}}>{{label}}</option>{% endfor %}</select></label>
-    <div class="actions"><button class="btn" type="submit">Apply filters</button><a class="btn" href="{{history.reset_url}}">Reset</a></div>
+    <div class="actions"><button class="btn" type="submit" data-auto-filter-submit>Apply filters</button><a class="btn" href="{{history.reset_url}}" data-record-navigation>Reset</a></div>
   </form>
   {% if history.kind=='aoq' %}</details>{% endif %}
   <div data-live-region="document-history-results">
@@ -27,13 +27,13 @@
     <div class="table-scroll"><table class="table history-table"><caption class="sr-only">{{group.label}} document history</caption>
       <thead><tr><th scope="col">Document</th><th scope="col">Uploaded / modified</th><th scope="col">Uploader</th><th scope="col">Extracted items</th><th scope="col">Categories</th><th scope="col">Processing / review</th><th scope="col">Workflow stage</th><th scope="col">Actions</th></tr></thead>
       <tbody>{% for row in group.rows %}<tr data-history-source="{{row.id}}">
-        <td><a href="{{row.detail_url}}"><strong>{{row.filename}}</strong></a><br><small>{{row.extension|upper}} · {{row.id}}</small></td>
+        <td><a class="btn small" href="{{row.detail_url}}"><strong>{{row.filename}}</strong></a><br><small>{{row.extension|upper}}</small></td>
         <td><span>{{row.created_at|philippine_time}}</span><br><small>Modified {{row.modified_at|philippine_time}}</small></td><td>{{row.uploader}}</td>
         <td><strong>{{row.total}}</strong>{% if history.kind=='aoq' %}<br><small>{{row.quotation_count or 0}} quotations · {{row.supplier_count or 0}} supplier rows</small>{% endif %}</td>
         <td>DBM {{row.DBM}}<br>NON-DBM {{row['NON-DBM']}}<br>LIB {{row.LIB}}<br>Needs classification {{row.needs_classification}}</td>
         <td><span class="badge {{'ok' if row.processing_status=='COMPLETE' else 'warn'}}">{{row.processing_status|replace('_',' ')|title}}</span><br><span>{{row.review_status|replace('_',' ')|title}}</span></td>
         <td>{{row.workflow_stage}}{% for link in row.official_links %}<br><a href="{{link.url}}">{{link.label}}</a> <small>{{link.status}}</small>{% endfor %}</td>
-        <td class="actions"><a class="btn small" href="{{row.reopen_url}}">Reopen</a><a class="btn small" href="{{row.detail_url}}">History</a><a class="btn small" href="{{row.download_url}}">Download original</a></td>
+        <td class="actions"><a class="btn small" href="{{row.reopen_url}}">{{'View retained history' if row.review_status=='CANCELLED' else 'Reopen'}}</a><a class="btn small" href="{{row.detail_url}}">History</a><a class="btn small" href="{{row.download_url}}">Download original</a></td>
       </tr>{% endfor %}</tbody>
     </table></div>
   {% else %}<p class="empty-state">No saved documents match these filters.</p>{% endfor %}

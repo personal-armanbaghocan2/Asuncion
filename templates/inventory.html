@@ -9,21 +9,34 @@
 </div>
 <div class="card">
   
-  <form method="get" class="filters" aria-label="Inventory filters"><input type="hidden" name="_nav" value="{{navigation_token()}}">
-    <input name="q" value="{{search_text}}" placeholder="Search item, description, ID, or source PO">
-    <select name="category"><option value="">All categories</option>{% for category in categories %}<option value="{{category}}" {{'selected' if category_filter==category}}>{{category}}</option>{% endfor %}</select>
+  <form method="get" class="filters" data-auto-filters data-record-navigation aria-label="Inventory filters"><input type="hidden" name="_nav" value="{{navigation_token()}}">
+    <input name="q" type="search" maxlength="160" value="{{search_text}}" aria-label="Search inventory" placeholder="Search item, description, ID, or source PO">
+    <select name="category" aria-label="Inventory category"><option value="">All categories</option>{% if category_filter and category_filter not in categories %}<option value="{{category_filter}}" selected>{{category_filter}} (no recorded items)</option>{% endif %}{% for category in categories %}<option value="{{category}}" {{'selected' if category_filter==category}}>{{category}}</option>{% endfor %}</select>
     <select name="stock"><option value="">All stock levels</option><option value="in stock" {{'selected' if stock_filter=='in stock'}}>In stock</option><option value="low stock" {{'selected' if stock_filter=='low stock'}}>Low stock (5 or fewer)</option><option value="out of stock" {{'selected' if stock_filter=='out of stock'}}>Out of stock</option></select>
-    <button class="btn" type="submit">Search</button><a class="btn" href="{{url_for('inventory')}}">Reset</a>
+    <label>Sort<select name="sort">{% for value,label in [('newest','Newest records'),('oldest','Oldest records'),('item','Item A–Z'),('category','Category / item'),('qty_asc','Quantity, lowest first'),('qty_desc','Quantity, highest first'),('cost_desc','Unit cost, highest first')] %}<option value="{{value}}" {{'selected' if inventory_sort==value}}>{{label}}</option>{% endfor %}</select></label>
+    {% for key,value in request.args.items() if key in ['t_q','t_type','t_sort','t_page'] %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}
+    <button class="btn" type="submit" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('inventory')}}" data-record-navigation>Reset</a>
   </form>
-  <p class="muted">{{rows|length}} item(s) shown. Low stock means 5 or fewer available units.</p>
+  <p class="muted">{{rows|length}} of {{filtered_count}} matching item(s) shown. Low stock means 5 or fewer available units.</p>
+  {% if not stock_summary.total %}<p class="notice">No received stock is recorded. Categories will appear from actual inventory records after an authorized IAR receipt; planning classifications are not stock categories.</p>{% endif %}
   <div class="table-scroll"><table class="table"><tr><th>Inventory ID</th><th>Item / Description</th><th>Category</th><th>Available Quantity</th><th>Stock Alert</th><th>Unit Cost</th><th>Source PO</th><th>Status</th></tr>
-  {% for r in rows %}<tr><td><span class="id-chip">{{r.item_code or ('INV-' ~ r.id)}}</span></td><td><b>{{r.item}}</b><br><span class="muted">{{r.description or 'No additional description'}}</span></td><td>{{r.category}}</td><td><b>{{r.qty}}</b> {{r.unit}}</td><td><span class="badge {{'ok' if r.stock_state=='In stock' else ('warn' if r.stock_state=='Low stock' else 'bad')}}">{{r.stock_state}}</span></td><td>{{r.unit_cost|money if r.unit_cost else '—'}}</td><td>{{r.source_po or '—'}}</td><td><span class="badge {{'ok' if r.qty and r.qty > 0 else 'warn'}}">{{r.status}}</span></td></tr>{% else %}<tr><td colspan="8" class="center muted">No inventory items match the selected filters. Approve an IAR to add inventory.</td></tr>{% endfor %}
+  {% for r in rows %}<tr><td><span class="id-chip">{{r.item_code or ('INV-' ~ r.id)}}</span></td><td><b>{{r.item}}</b><br><span class="muted">{{r.description or 'No additional description'}}</span></td><td>{{r.category or 'Not recorded'}}</td><td><b>{{r.qty}}</b> {{r.unit}}</td><td><span class="badge {{'ok' if r.stock_state=='In stock' else ('warn' if r.stock_state=='Low stock' else 'bad')}}">{{r.stock_state}}</span></td><td>{{r.unit_cost|money if r.unit_cost is not none else '—'}}</td><td>{{r.source_po or '—'}}</td><td><span class="badge {{'ok' if r.qty and r.qty > 0 else 'warn'}}">{{r.status}}</span></td></tr>{% else %}<tr><td colspan="8" class="center muted">{% if filtered_count %}No inventory items on this page. <a class="btn small" href="{{pagination_url(1)}}">First matching page</a>{% else %}No inventory items match the selected filters. Only approved IAR receipts add stock.{% endif %}</td></tr>{% endfor %}
   </table></div>
 </div>
-<div class="card" style="margin-top:16px">
+<div class="card" id="inventory-transactions" style="margin-top:16px">
   <h3>Recent Inventory Transactions</h3>
+  <form method="get" class="filters" data-auto-filters data-record-navigation action="#inventory-transactions" aria-label="Inventory transaction filters">
+    <input type="hidden" name="_nav" value="{{navigation_token()}}">
+    {% for key,value in request.args.items() if key in ['q','category','stock','sort','page'] %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}
+    <input type="search" name="t_q" value="{{transaction_filters.t_q}}" maxlength="160" aria-label="Search inventory transactions" placeholder="Document, item, office or user">
+    <label>Transaction type<select name="t_type"><option value="">All recorded types</option>{% if transaction_filters.t_type and transaction_filters.t_type not in transaction_types %}<option value="{{transaction_filters.t_type}}" selected>{{transaction_filters.t_type}} (no recorded transactions)</option>{% endif %}{% for value in transaction_types %}<option {{'selected' if transaction_filters.t_type==value}}>{{value}}</option>{% endfor %}</select></label>
+    <label>Sort<select name="t_sort">{% for value,label in [('newest','Newest records'),('oldest','Oldest records'),('document','Document A–Z'),('quantity','Quantity, highest first')] %}<option value="{{value}}" {{'selected' if transaction_filters.t_sort==value}}>{{label}}</option>{% endfor %}</select></label>
+    <button class="btn" type="submit" data-auto-filter-submit>Search</button><a class="btn" href="{{transaction_url(t_q='',t_type='',t_sort='newest',t_page=1)}}" data-record-navigation>Reset transaction filters</a>
+  </form>
+  <p class="muted">{{transactions|length}} of {{transaction_total}} matching transactions · Page {{transaction_page}}</p>
   <div class="table-scroll"><table class="table compact-table"><tr><th>Date</th><th>Document</th><th>Type</th><th>Inventory Item</th><th>Quantity</th><th>Office / Custodian</th><th>User</th></tr>
-  {% for t in transactions %}<tr><td>{{t.created_at}}</td><td>{{t.document_no}}</td><td>{{t.transaction_type}}</td><td>{{t.item_code}} — {{t.item}}</td><td>{{t.qty}} {{t.unit}}</td><td>{{t.office}}</td><td>{{t.created_by}}</td></tr>{% else %}<tr><td colspan="7" class="center muted">No approved RIS/ICS transactions yet.</td></tr>{% endfor %}
+  {% for t in transactions %}<tr><td>{{t.created_at|philippine_time}}</td><td>{{t.document_no}}</td><td>{{t.transaction_type}}</td><td>{{t.item_code}} — {{t.item}}</td><td>{{t.qty}} {{t.unit}}</td><td>{{t.office}}</td><td>{{t.created_by}}</td></tr>{% else %}<tr><td colspan="7" class="center muted">{% if transaction_total %}No matching transactions on this page. <a class="btn small" href="{{transaction_url(t_page=1)}}">First matching transaction page</a>{% else %}No inventory transactions match these filters.{% endif %}</td></tr>{% endfor %}
   </table></div>
+  <nav class="dataset-pagination" aria-label="Inventory transaction pages" data-record-navigation>{% if transaction_page>1 %}<a class="btn" href="{{transaction_url(t_page=transaction_page-1)}}">Previous transactions</a>{% endif %}{% if transaction_has_next %}<a class="btn" href="{{transaction_url(t_page=transaction_page+1)}}">Next transactions</a>{% endif %}</nav>
 </div>
 {% endblock %}
