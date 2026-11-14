@@ -286,7 +286,7 @@ def nlp_page(api):
                     and existing[0].get('pr_id')==pr_id
                     and existing[0].get('pr_items_hash')==evidence.fingerprint(pr['items'])
                     and existing[0].get('po_items_hash')==evidence.fingerprint(po['items'])):
-                return redirect(url_for('nlp_review',id=existing[0]['id']))
+                return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=existing[0]['id']))
             abort(409,description='The saved verification uses different or changed sources. '
                   'Open the existing evidence for review; no result was overwritten or rerun.')
         from nlp_runtime_selection import require_available
@@ -324,21 +324,29 @@ def nlp_page(api):
             evidence.fingerprint(po['items']),result,float(confidence),json.dumps(details,ensure_ascii=False),model_version,technical['technical_status']))
         if not isinstance(receipt,dict):return receipt
         flash('Verification saved. Review the original sources and authorize their relationship before final PO approval.')
-        return redirect(url_for('nlp_review',id=receipt['nlp_id']))
+        return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=receipt['nlp_id']))
     prs=api['q']("select id,no,office,items from pr where status='Approved' order by id desc")
     pos=api['q']("""select p.id,p.no,p.supplier,p.items,a.no aoq_no,exists(select 1 from nlp n where n.po_id=p.id) has_verification
        from po p join aoq a on a.id=p.aoq_id where p.status='For Review' and a.status='Approved' order by p.id desc""")
-    rows=api['paged_q']("""select n.id,n.no,n.result,n.status,n.technical_status,n.workflow_version,
+    rows=api['paged_q']("""select n.id,n.no,n.result,n.status,n.technical_status,n.workflow_version,n.details,n.created_at,n.reviewed_at,n.reviewed_by,
        p.no po_no,p.items po_items,p.supplier,r.no pr_no,r.items pr_items,r.office,a.no aoq_no from nlp n join po p on p.id=n.po_id
        left join aoq a on a.id=p.aoq_id left join pr r on r.id=coalesce(n.pr_id,p.pr_id,a.pr_id) order by n.id desc""")
     pr=po=None;technical=None
     if request.args.get('pr_id') or request.args.get('po_id'):
         pr,po=source_pair(api,request.args.get('pr_id'),request.args.get('po_id'))
         technical=comparison(api,pr,po)
-    return render_template('revised_nlp.html',active='nlp',title='Purchase Request-Purchase Order Review',prs=prs,pos=pos,rows=rows,
+    selected={}
+    if request.args.get('verification_id'):
+        saved=api['q']('select * from nlp where id=?',(identifier(request.args.get('verification_id')),),one=True)
+        if not saved or not pr or not po or saved.get('pr_id')!=pr['id'] or saved.get('po_id')!=po['id']:
+            abort(404)
+        if saved.get('workflow_version')!=1:abort(409)
+        selected=verification_context(api,dict(saved))
+    return render_template('revised_nlp.html',active='nlp',title='PR-PO Verification',prs=prs,pos=pos,rows=rows,
         selected_pr=pr,selected_po=po,comparison=technical,
         pr_items=api['parse_items'](pr['items']) if pr else [],po_items=api['parse_items'](po['items']) if po else [],
-        model_state=api['trained_nlp_model_status']())
+        model_state=api['trained_nlp_model_status'](),verification=selected,
+        record_displays={r['id']:verification_display(dict(r)) for r in rows})
 
 def relationship_review_allowed(api,po):
     """Display existing SQL-authorized review actions; SQL remains authoritative."""
@@ -372,7 +380,52 @@ def relationship_review_allowed(api,po):
             or authority=='EXISTING_REVIEWERS_DOCUMENTED')
 
 
-def modern_review(api,row):
+def verification_display(row,pr_items=(),po_items=(),stale=False):
+    """Presentation of saved facts only; never derive a score from confidence."""
+    details=row.get('details') or {}
+    if isinstance(details,str):
+        try:details=json.loads(details)
+        except (ValueError,TypeError):details={}
+    if not isinstance(details,dict):details={}
+    saved=details.get('technical_comparison')
+    saved=saved if isinstance(saved,dict) else {}
+    def percentage(value):
+        if isinstance(value,bool) or value is None:return 'Not calculated'
+        try:value=float(value)
+        except (ValueError,TypeError,OverflowError):return 'Not calculated'
+        return f'{value:.2f}%' if math.isfinite(value) and 0<=value<=100 else 'Not calculated'
+    labels={'MATCH':'Match','MISMATCH':'Mismatch'}
+    findings=[];pairs=[]
+    def item(items,position):
+        return items[position-1] if type(position) is int and 1<=position<=len(items) else {}
+    for line in saved.get('rows',[]) if isinstance(saved.get('rows'),list) else []:
+        if not isinstance(line,dict):continue
+        left=item(pr_items,line.get('pr_position'));right=item(po_items,line.get('po_position'))
+        checks=line.get('checks',[])
+        valid_checks=[c for c in checks if isinstance(c,dict)] if isinstance(checks,list) else []
+        pair_status='Mismatch' if any(c.get('state')=='MISMATCH' for c in valid_checks) else 'Match' if valid_checks and all(c.get('state')=='MATCH' for c in valid_checks) and line.get('identity') not in ('UNRESOLVED','CANDIDATE') else 'Needs Review'
+        pairs.append(dict(pr=left,po=right,pr_position=line.get('pr_position'),po_position=line.get('po_position'),
+            status=pair_status,percentage=percentage(line.get('discrepancy_percentage'))))
+        for check in checks if isinstance(checks,list) else []:
+            if not isinstance(check,dict):continue
+            findings.append(dict(detail=str(check.get('attribute') or 'Item correspondence').replace('source specification field ',''),
+                requested=check.get('requested'),offered=check.get('offered'),
+                status=labels.get(check.get('state'),'Needs Review'),
+                percentage=percentage(check.get('discrepancy_percentage'))))
+        if not checks:
+            findings.append(dict(detail='Item correspondence',requested=line.get('pr_reference'),offered=line.get('po_reference'),status='Needs Review',percentage='Not calculated'))
+    mismatch=any(f['status']=='Mismatch' for f in findings)
+    clean=(row.get('technical_status')=='MATCH' and saved.get('technical_status')=='MATCH'
+           and bool(findings) and all(f['status']=='Match' for f in findings)
+           and bool(pairs) and all(p['status']=='Match' for p in pairs)
+           and not saved.get('missing_or_unresolved_pr_items') and not saved.get('extra_or_unallocated_items'))
+    status='Needs Review' if stale else 'Mismatch' if mismatch or row.get('result') in ('Reject','Needs Recanvass') else 'Match' if clean and row.get('result')=='Acceptable' else 'Needs Review'
+    first=next((f for f in findings if f['status']!='Match'),None)
+    explanation='Source documents changed after verification.' if stale else (first['detail'].capitalize()+': '+first['status']+'.') if first else 'No unresolved saved discrepancy.' if status=='Match' else 'Saved evidence requires review.'
+    return dict(status=status,percentage=percentage(details.get('discrepancy_percentage',saved.get('discrepancy_percentage'))),
+        findings=findings,pairs=pairs,explanation=explanation)
+
+def verification_context(api,row):
     pr,po=source_pair(api,row['pr_id'],row['po_id'])
     recorded_mapping=row.get('review_mapping')
     technical=comparison(api,pr,po,manual_mapping=recorded_mapping if isinstance(recorded_mapping,list) else None)
@@ -384,10 +437,28 @@ def modern_review(api,row):
     stale=evidence.fingerprint(pr['items'])!=row['pr_items_hash'] or evidence.fingerprint(po['items'])!=row['po_items_hash']
     current_mapping=[item.get('po_position') for item in technical.get('rows',[])]
     review_evidence_current=stored_review_matches(row,current_mapping,technical)
-    return render_template('revised_nlp_review.html',active='nlp',title='Review Comparison',row=row,pr=pr,po=po,
+    display=verification_display(row,api['parse_items'](pr['items']),api['parse_items'](po['items']),stale)
+    inspection_ready=False
+    if (not stale and review_evidence_current and display['status']=='Match' and row.get('status')=='Approved'
+            and po.get('status')=='Approved' and (row.get('result') in ('Acceptable','Needs Review'))):
+        inspection_ready=any(p['id']==po['id'] for p in api['next_available_records']('iar')[5])
+    return dict(row=row,pr=pr,po=po,
         pr_items=api['parse_items'](pr['items']),po_items=api['parse_items'](po['items']),comparison=technical,
         details=details,saved_comparison=saved_comparison,stale=stale,review_evidence_current=review_evidence_current,
-        can_review_relationship=relationship_review_allowed(api,po))
+        can_review_relationship=relationship_review_allowed(api,po),score_ready=(row.get('result') in ('Acceptable','Needs Review')),
+        display=display,inspection_ready=inspection_ready)
+
+def historical_review(api,row):
+    """Read-only historical presentation; no new inference or eligibility."""
+    left=api['parse_items'](row.get('pr_items') or '[]')
+    right=api['parse_items'](row.get('po_items') or '[]')
+    return render_template('revised_nlp_review.html',active='nlp',title='View Result',row=row,
+        pr={'no':row.get('pr_no') or 'Not recorded'},po={'no':row.get('po_no') or 'Not recorded'},
+        pr_items=left,po_items=right,display=verification_display(row,left,right),historical=True)
+
+
+def modern_review(api,row):
+    return render_template('revised_nlp_review.html',active='nlp',title='View Result',**verification_context(api,row))
 
 def stored_review_matches(row,mapping,current):
     """Confirmation cannot replace saved server compliance or correspondence."""

@@ -1,47 +1,10 @@
 {% extends 'base.html' %}
-{% from 'ui.html' import icon %}
-{% from 'procurement_ui.html' import source_items with context %}
+{% from 'pr_po_verification_ui.html' import result_badge,document_panel,findings_table with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
-{% block content %}
-{% set technical_ready = row.technical_status=='MATCH' and comparison.technical_status=='MATCH' %}
-{% set model_allows_review = row.result in ['Acceptable','Needs Review'] %}
-{% set can_authorize = row.status=='For Review' and not stale and technical_ready and model_allows_review and can_review_relationship and review_evidence_current %}
-{% if not review_evidence_current and row.status=='For Review' %}<p class="warning-box">The saved evidence does not establish the current item checks. It remains unchanged. An administrator must arrange an authorized source-bound re-evaluation; this screen cannot replace the saved result or approve it.</p>{% endif %}
-<div class="procurement-workspace-hero"><div class="procurement-workspace-title"><span class="procurement-workspace-mark">{{icon('check')}}</span><div><h2>Purchase Request&#8211;Purchase Order Review</h2><p class="muted">{{row.no}} · Saved results support authorized human review; final PO approval remains separate.</p></div></div><a class="btn" href="{{url_for('nlp')}}">Discrepancy Records</a></div>
-<section class="card"><div class="linked-record-grid"><div class="linked-record"><span>Approved PR</span><b>{{pr.no}}</b></div><div class="linked-record"><span>Created PO</span><b>{{po.no}}</b></div><div class="linked-record"><span>Source AOQ</span><b>{{po.aoq_no}}</b></div></div></section>
-{% if row.result=='Acceptable' and not technical_ready %}<p class="warning-box" role="alert">The model predicted Acceptable, but mandatory discrepancy checks remain unresolved. This record cannot authorize the PR–PO relationship or final PO approval.</p>{% endif %}
-<div class="procurement-source-grid verification-source-panels">{{source_items('PR',pr,pr_items,expanded=true)}}{{source_items('PO',po,po_items,expanded=true)}}</div>
-<section class="card approved-verification-results" aria-label="Saved verification results"><h3>Natural Language Processing Verification Results</h3>
-{% set findings = namespace(seen=[], unresolved=0, missing=0) %}
-{% if saved_comparison %}{% for line in saved_comparison.rows %}{% for check in line.checks %}{% set key = (line.pr_position,line.po_position,check.attribute,check.state) %}{% if key not in findings.seen %}{% set findings.seen = findings.seen + [key] %}{% if check.state!='MATCH' %}{% set findings.unresolved = findings.unresolved + 1 %}{% endif %}{% if check.state=='MISSING_SPECIFICATION' %}{% set findings.missing = findings.missing + 1 %}{% endif %}{% endif %}{% endfor %}{% endfor %}{% endif %}
-<div class="review-summary-grid">
-  <div class="card review-summary-card"><div class="muted">Saved specification finding</div><div class="review-summary-value"><span class="badge {{'ok' if row.technical_status=='MATCH' else 'warn'}}">{{'Matches' if row.technical_status=='MATCH' else 'Review required' if row.technical_status else 'Not recorded'}}</span></div><p>Saved model result: {{row.result}}</p><small>Confidence: {{row.confidence|round(2) if row.confidence is number else 'Not recorded'}}{{'%' if row.confidence is number}}</small></div>
-  <div class="card review-summary-card"><div class="muted">Unresolved saved checks</div><div class="review-summary-value" data-saved-unresolved>{{findings.unresolved if saved_comparison else 'Not recorded'}}</div><small>Includes differing or ambiguous requirements.</small></div>
-  <div class="card review-summary-card"><div class="muted">Missing required details</div><div class="review-summary-value" data-saved-missing>{{findings.missing if saved_comparison else 'Not recorded'}}</div></div>
-  <div class="card review-summary-card"><div class="muted">Relationship review</div><div class="review-summary-value"><span class="badge {{'ok' if row.status=='Approved' else 'warn'}}">{{row.status}}</span></div><small>Final PO approval is separate.</small></div>
-</div>
-</section>
-<p class="notice">The model classification is its saved prediction, not an approval. Its confidence is an uncalibrated prediction probability, not semantic similarity or measured accuracy. A semantic-similarity score is not recorded by this model.</p>
-{% if row.reviewed_at %}<section class="card"><h3>Recorded human authorization</h3><p><b>Reviewed:</b> {{row.reviewed_at|philippine_time}}</p><p><b>Relationship justification:</b> {{row.relationship_reason}}</p><p><b>Supporting reference:</b> {{row.evidence_reference}}</p></section>{% endif %}
-{% if stale %}<p class="warning-box">A source changed after inference. This comparison cannot authorize the relationship. Original records have not been overwritten.</p>{% endif %}
-
-{% if saved_comparison %}{% with comparison=saved_comparison %}{% include 'revised_technical_findings.html' %}{% endwith %}{% else %}<p class="warning-box">Saved structured discrepancy findings are unavailable for this historical record. No findings have been invented or replaced. Its existing model result and review history remain unchanged.</p>{% endif %}
-{% if comparison.missing_or_unresolved_pr_items %}<p class="warning-box">Item correspondence is unresolved. No item has been selected automatically. Changing a dropdown or confirming the page cannot replace saved evidence; an authorized source-bound re-comparison is required before relationship approval.</p>{% endif %}
-{% if can_authorize and not workflow_preview %}
-<section class="card procurement-section"><h3>Authorize the official PR–PO relationship</h3>
-<p>Item correspondence does not confirm specification compliance. Unresolved wording, missing specifications and contradictory attributes block authorization; the confirmation below cannot override those findings.</p>
-<p>Document why the original PR and created PO belong to the same authorized procurement. The source-bound item correspondence below is read-only. The server rechecks all saved evidence, source versions and reviewer authority before saving.</p>
-<form method="post" class="procurement-evidence-form" action="{{url_for('nlp_approve',id=row.id)}}" data-confirm="Record this reviewed official PR–PO relationship? Final PO approval remains separate.">
-<input type="hidden" name="csrf_token" value="{{csrf_token()}}">
-<ul>{% for line in comparison.rows %}<li>PR item {{line.pr_position}} → PO item {{line.po_position}}<input type="hidden" name="match_po_position" value="{{line.po_position}}"></li>{% endfor %}</ul>
-<label>Relationship and procurement-scope justification<textarea name="relationship_reason" minlength="10" maxlength="2000" required></textarea></label>
-<label>Supporting authorization/document reference<input name="evidence_reference" minlength="3" maxlength="500" required></label>
-<label class="review-confirm-check"><input type="checkbox" name="review_confirm" value="yes" required> I reviewed all original PR and PO items, specifications, quantities, units and authorized procurement scope.</label>
-<label class="review-confirm-check"><input type="checkbox" name="final_confirm" value="yes" required> I explicitly authorize recording this PR–PO relationship using the supporting evidence above.</label>
-<div class="form-actions"><button class="btn primary" type="submit">Record authorized relationship</button></div>
-</form></section>
-{% elif row.status=='Approved' %}<p class="notice" role="status">This comparison is approved. The PO is not approved automatically.</p>
-{% elif not workflow_preview %}<div class="warning-box" role="status"><b>Relationship authorization is blocked.</b><p>{% if stale %}The source documents changed after inference.{% elif not technical_ready %}Saved or current technical checks remain unresolved. Item mapping and blanket confirmation cannot clear these findings.{% elif not model_allows_review %}The model result requires corrective procurement action.{% elif not can_review_relationship %}Relationship review is unavailable for the current account or workflow policy.{% else %}This comparison is not awaiting relationship review.{% endif %}</p><p>No relationship or final PO approval has been recorded by this page.</p></div>{% endif %}
-<div class="actions procurement-section"><a class="btn blue" href="{{url_for('po_review',id=po.id)}}">{{'Open separate final PO approval' if row.status=='Approved' and po.status=='For Review' and not stale and technical_ready and model_allows_review and not workflow_preview else 'View PO details'}}</a><a class="btn" href="{{url_for('nlp')}}">Discrepancy Records</a></div>
-
-{% endblock %}
+{% block content %}{% if display is not defined %}{% set display={'status':'Needs Review','percentage':'Not calculated','explanation':'Saved result details are unavailable in this read-only preview.','findings':[]} %}{% endif %}<div class="pr-po-simple"><section class="card"><h2>PR–PO Verification Result</h2>
+<div class="pr-po-metadata"><div>NLP Record No.<strong>{{row.no}}</strong></div><div>PR No.<strong>{{pr.no}}</strong></div><div>PO No.<strong>{{po.no}}</strong></div><div>Reviewed By<strong>{{row.reviewed_by or 'Not reviewed'}}</strong></div><div>Review Date<strong>{{row.reviewed_at|philippine_time if row.reviewed_at else 'Not reviewed'}}</strong></div></div>
+<div class="pr-po-result {{'pr-po-match' if display.status=='Match' else 'pr-po-attention'}}"><h3>Verification Result: {{result_badge(display)}}</h3><p>{{display.explanation}}</p></div>
+<div class="pr-po-documents">{{document_panel('Purchase Request (PR)',pr_items)}}{{document_panel('Purchase Order (PO)',po_items)}}</div>
+<h3>Discrepancy Details</h3>{{findings_table(display)}}
+<div class="actions"><a class="btn" href="{{url_for('nlp') if historical|default(false) else url_for('nlp',pr_id=pr.id,po_id=po.id,verification_id=row.id)}}">Back to PR–PO Review</a></div>
+</section></div>{% endblock %}
