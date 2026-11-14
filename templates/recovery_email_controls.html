@@ -1,0 +1,17 @@
+{% macro email_controls(target,record,is_self,ready) %}
+<div class="stack"><p><strong>{{record.email or 'No recovery email registered'}}</strong><br>
+<span class="badge {{'success' if record.verified else 'warning'}}">{{'Verified mailbox' if record.verified else 'Not verified'}}</span></p>
+<form method="post" action="{{url_for('account_recovery.manage')}}" class="stack" data-confirm="Update this recovery email? Ownership must be verified again.">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="target_id" value="{{target}}"><input type="hidden" name="action" value="save">
+<label>Recovery Gmail (optional)<input name="email" type="email" maxlength="254" autocomplete="email" value="{{record.email or ''}}" required {{'disabled' if not ready}}></label>
+{% if is_self %}<label>Current password<input type="password" name="current_password" maxlength="1024" autocomplete="current-password" required {{'disabled' if not ready}}></label>{% endif %}
+<button class="btn" type="submit" {{'disabled' if not ready}}>Save unverified email</button></form>
+{% if record.email %}<form method="post" action="{{url_for('account_recovery.manage')}}">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="target_id" value="{{target}}"><input type="hidden" name="action" value="verify">
+<button class="btn" type="submit" {{'disabled' if not ready}}>Send verification link</button></form>{% endif %}
+{% if not is_self and record.verified %}<form method="post" action="{{url_for('account_recovery.manage')}}" data-confirm="Send a password reset link to this employee's verified mailbox? Their current password stays unchanged until they finish the reset.">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="target_id" value="{{target}}"><input type="hidden" name="action" value="reset">
+<button class="btn primary" type="submit" {{'disabled' if not ready}}>Send Password Reset</button></form>{% endif %}
+<small class="muted">{% if record.last_status=='accepted' %}Provider accepted the email; delivery is not confirmed.{% elif record.last_status=='failed' %}Provider rejected the last request.{% elif record.last_status=='unknown' %}Email acceptance is uncertain. Do not repeat immediately.{% elif record.last_status=='pending' %}Last email request is pending; delivery is not confirmed.{% endif %}</small>
+{% if not ready %}<p role="alert">Email storage is unavailable. Existing account and password controls remain available.</p>{% endif %}</div>
+{% endmacro %}

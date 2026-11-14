@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Account Recovery — Municipality of Asuncion</title><link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}">
+<link rel="stylesheet" href="{{url_for('static',filename='css/reference-layout.css')}}"></head><body>
+<main class="content"><section class="card"><h1>Account recovery</h1>
+<p id="recovery-message">Confirm this request to continue. Opening the link does not change your account.</p>
+<form id="recovery-form" method="post" class="stack" autocomplete="off">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="token"><input type="hidden" name="purpose">
+<div id="recovery-passwords"><label>New password<input type="password" name="new_password" minlength="12" maxlength="1024" autocomplete="new-password" data-password-policy><small>{{password_short_guidance}}</small><small data-password-feedback role="status" aria-live="polite"></small></label>
+<label>Confirm new password<input type="password" name="confirm_password" minlength="12" maxlength="1024" autocomplete="new-password"></label></div>
+<button class="btn primary" id="recovery-submit" type="submit">Continue</button></form>
+<noscript><p>JavaScript is required to read the private email link safely. Contact the Administrator if unavailable.</p></noscript>
+<p><a class="btn" href="{{url_for('login')}}">Back to sign in</a></p></section></main>
+<script type="application/json" id="employee-password-policy">{{password_client_policy()|tojson}}</script>
+<script src="{{url_for('static',filename='js/account-recovery.js')}}" defer></script>
+<script src="{{url_for('static',filename='js/procurement-workspace.js')}}" defer></script></body></html>

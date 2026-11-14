@@ -115,10 +115,14 @@ def failure_response(error, operation, *, api=None, username=None):
     return response
 
 
-def create(api, username, password_hash, role):
+def create(api, username, password_hash, role, *, recovery_email=None):
     if (role not in ('Staff', 'Inspector') or not 3 <= len(username) <= 80
             or any(ord(c) < 32 for c in username)):
         abort(400, description='Use a username of 3 to 80 characters and a Staff or Inspector role.')
+    if recovery_email is not None:
+        from account_recovery import enabled,normalize_email
+        if not enabled():abort(400,description='Email recovery is not enabled.')
+        recovery_email=normalize_email(recovery_email)
     with connection(api, write=True) as (con, uid):
         actor = con.execute('select role from users where id=?', (uid,)).fetchone()
         if not actor or actor['role'] != 'Admin':
@@ -132,6 +136,11 @@ def create(api, username, password_hash, role):
         saved = con.execute('select id,username,role,status from users where id=?', (result['id'],)).fetchone()
         if not saved or saved['username'] != username or saved['role'] != role or saved['status'] != 'Active':
             raise RuntimeError('Saved account could not be confirmed.')
+        if recovery_email is not None:
+            # Same account/audit transaction. Never claim a partially registered
+            # email or send verification before this creation commits.
+            con.execute('select psms_accounts.recovery_email_set_v1(?,?,?)',
+                        (result['id'],recovery_email,None))
 
 
 def deactivate(api, target_id, reason):
