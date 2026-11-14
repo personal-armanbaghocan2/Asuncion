@@ -1,5 +1,5 @@
 {% from 'procurement_ui.html' import display_value with context %}
-{% macro result_badge(d) -%}<span class="badge {{'ok' if d.status=='Match' else 'warn'}}">{{d.status}} ({{d.percentage}})</span>{%- endmacro %}
+{% macro result_badge(d) -%}<span class="badge {{'ok' if d.status=='Match' else 'warn'}}" title="{{d.percentage_basis|default('No defined discrepancy calculation is available.')}}">{{d.status}} ({{d.percentage}})</span>{%- endmacro %}
 {% macro item_value(item,keys) -%}{% set found=namespace(value=none) %}{% for key in keys if found.value is none %}{% if item.get(key) is not none and item.get(key)!='' %}{% set found.value=item.get(key) %}{% endif %}{% endfor %}{{display_value(found.value)}}{%- endmacro %}
 {% macro comparison_table(d) -%}
 <div class="table-scroll"><table class="table"><thead><tr><th>No.</th><th>PR Item Description</th><th>PO Item Description</th><th>PR Quantity</th><th>PO Quantity</th><th>PR Unit</th><th>PO Unit</th><th>Discrepancy</th></tr></thead><tbody>
