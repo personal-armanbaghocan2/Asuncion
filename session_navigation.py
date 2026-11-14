@@ -18,7 +18,7 @@ from werkzeug.routing import BuildError
 import server_sessions_v0_1_0 as sessions
 
 PARAMETER = '_nav'
-PUBLIC_ENDPOINTS = frozenset(('static', 'login', 'runtime_liveness', 'account_recovery.redeem'))
+PUBLIC_ENDPOINTS = frozenset(('static', 'login', 'runtime_liveness', 'account_recovery.redeem','account_otp.public'))
 _SIGNATURE = re.compile(r'[A-Za-z0-9_-]{43}\Z')
 _PURPOSE = b'psms-session-navigation-v1\0'
 

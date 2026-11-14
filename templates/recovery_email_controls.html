@@ -15,3 +15,11 @@
 <small class="muted">{% if record.last_status=='accepted' %}Provider accepted the email; delivery is not confirmed.{% elif record.last_status=='failed' %}Provider rejected the last request.{% elif record.last_status=='unknown' %}Email acceptance is uncertain. Do not repeat immediately.{% elif record.last_status=='pending' %}Last email request is pending; delivery is not confirmed.{% endif %}</small>
 {% if not ready %}<p role="alert">Email storage is unavailable. Existing account and password controls remain available.</p>{% endif %}</div>
 {% endmacro %}
+{% macro otp_admin_email_controls(target,record,ready) %}
+<p>{{record.email or 'No registered Gmail'}} · {{'Verified' if record.verified else 'Not verified'}}</p>
+<form method="post" action="{{url_for('account_otp.admin_email')}}" class="stack"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="target_id" value="{{target}}">
+<label>Replacement registered Gmail<input name="email" type="email" maxlength="254" value="{{record.email or ''}}" required></label>
+<label>Your current Administrator password<input name="current_password" type="password" maxlength="1024" autocomplete="current-password" required></label>
+<label>Documented reason<textarea name="reason" minlength="10" maxlength="500" required></textarea></label><button class="btn" type="submit" {{'disabled' if not ready}}>Replace registered Gmail</button></form>
+<p>Replacement removes verification and invalidates previous codes and links. It does not change the password.</p>
+{% endmacro %}
