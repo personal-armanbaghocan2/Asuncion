@@ -9,7 +9,7 @@
 <div><button id="ocrUploadButton" type="submit" class="btn primary" disabled>Upload &amp; Extract</button><div id="ocrUploadStatus" data-check-url="{{url_for('ppmp_ocr_duplicate_check',ptype=ptype)}}" role="status" aria-live="polite"><span id="ocrUploadMessage">No file selected.</span> <a id="ocrExistingUpload" class="btn small" hidden>Open saved extraction</a> <button id="ocrRetryCheck" class="btn small" type="button" hidden>Retry file check</button></div></div>
 </form>
 <p class="muted">{{draft_page.total if draft_page is defined else ocr_rows|length}} matching active extracted drafts. Supported: PDF, images, DOCX, XLSX/XLSM, CSV and TXT.</p>
-{% if ocr_state and ocr_state.get('item_count') == 0 and ocr_state.get('source_id') %}<p class="notice" role="status">No reliable items were extracted from {{ocr_state.filename}}. No item drafts were created. <a class="btn small" href="{{url_for('ppmp_intake_review',sid=ocr_state.source_id)}}">Review original / safe reprocess</a></p>{% endif %}
+{% if ocr_state and ocr_state.get('item_count') == 0 and ocr_state.get('source_id') %}<p class="notice" role="status">No items extracted from {{ocr_state.filename}}. No item drafts were created. <a class="btn small" href="{{url_for('document_history_source',sid=ocr_state.source_id)}}">Saved original</a> <a class="btn small" href="{{url_for('ppmp_intake_review',sid=ocr_state.source_id)}}">Review original / safe reprocess</a></p>{% endif %}
 </section>
 {% set item_filters=item_filters|default({'item_q':'','item_sort':'source','item_review':'','item_source':''}) %}
 {% set draft_page=draft_page|default({'page':1,'total':ocr_rows|length,'has_next':false}) %}

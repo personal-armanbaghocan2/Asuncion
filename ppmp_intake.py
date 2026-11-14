@@ -85,16 +85,19 @@ def catalog_categories(api,rows):
     return result
 
 
-def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,run_id=None,timings=None):
+def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,run_id=None,timings=None,return_category=None):
     """Persist atomically after extraction; repeated source bytes reuse existing drafts."""
     rows=structured.get('rows') or []
+    if return_category is not None and return_category not in CATEGORIES:abort(404)
+    def destination(sid):
+        return url_for('ppmp_type',ptype=return_category,ocr_source=str(sid)) if return_category else url_for('ppmp_intake_review',sid=str(sid))
     if len(rows)>200:abort(400,description='Review at most 200 items per upload.')
     if not (structured.get('model') or {}).get('active'):
         abort(503,description='The semantic mapper is unavailable. No extraction was saved.')
     digest=hashlib.sha256(content).hexdigest()
     if source_id is None:
         source_id,run_id=processing.capture(api,name,ext,content)
-        if run_id is None:return redirect(url_for('ppmp_intake_review',sid=source_id))
+        if run_id is None:return redirect(destination(source_id))
     state=dict(text=str(extracted.get('raw_text') or ''),method=extracted.get('extraction_method') or 'native extraction',
         warnings=structured.get('warnings') or [],filename=name,structured=structured,item_count=len(rows),
         extraction_timestamp=api['now'](),intake='automatic-item-routing-v2',
@@ -180,7 +183,7 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
         if summary['unclassified']:flash(f"{summary['unclassified']} item(s) need classification. Other categorized drafts are already available.",'info')
         if result_status=='INCOMPLETE':flash('Extraction is incomplete. Review the retained uncertain source regions.','info')
     else:flash('Document saved. Extraction incomplete: no reliable procurement items were identified. Reprocess or review the original source.','info')
-    return redirect(url_for('ppmp_intake_review',sid=str(source_id)))
+    return redirect(destination(source_id))
 
 
 def upload(api):
