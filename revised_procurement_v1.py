@@ -380,6 +380,103 @@ def relationship_review_allowed(api,po):
             or authority=='EXISTING_REVIEWERS_DOCUMENTED')
 
 
+def discrepancy_incidence(saved):
+    """Affected saved item lines / assessed lines; no field weights or writes.
+
+    Unknown correspondence is not proof of absence. Per-check 0/100 values are
+    binary findings, never quantity deviation or model confidence.
+    """
+    def unavailable():
+        return dict(value=None,affected=None,total=None,pairs={},checks={},extras=[],
+                    reason='Complete source-bound structured evidence is unavailable.')
+    result=unavailable()
+    if not isinstance(saved,dict) or saved.get('version')!='PR_PO_REVIEW_V1':return unavailable()
+    fields=saved.get('source_fields');rows=saved.get('rows')
+    if not isinstance(fields,dict) or not isinstance(rows,list):return unavailable()
+    refs={}
+    for side in ('PR','PO'):
+        source=fields.get(side)
+        if not isinstance(source,list) or not 1<=len(source)<=200:return unavailable()
+        refs[side]=[]
+        for entry in source:
+            if (not isinstance(entry,dict) or not isinstance(entry.get('reference'),str)
+                    or not entry['reference'] or not isinstance(entry.get('fields'),list)
+                    or not entry['fields'] or any(not isinstance(f,str) or not f for f in entry['fields'])):return unavailable()
+            refs[side].append(entry['reference'])
+        if len(set(refs[side]))!=len(refs[side]):return unavailable()
+    if len(rows)!=len(refs['PR']):return unavailable()
+    missing=saved.get('missing_or_unresolved_pr_items');extra=saved.get('extra_or_unallocated_items')
+    if not isinstance(missing,list) or not isinstance(extra,list):return unavailable()
+    if (any(type(p) is not int or not 1<=p<=len(refs['PR']) for p in missing)
+            or len(set(missing))!=len(missing)
+            or any(type(p) is not int or not 1<=p<=len(refs['PO']) for p in extra)
+            or len(set(extra))!=len(extra)):return unavailable()
+    positions=set();mapped=set();unresolved=set();affected=0;unknown=False
+    for line in rows:
+        if not isinstance(line,dict):return unavailable()
+        p,q=line.get('pr_position'),line.get('po_position');identity=line.get('identity')
+        if (type(p) is not int or not 1<=p<=len(refs['PR']) or p in positions
+                or line.get('pr_reference')!=refs['PR'][p-1]):return unavailable()
+        positions.add(p)
+        if q is not None and (type(q) is not int or not 1<=q<=len(refs['PO'])
+                or line.get('po_reference')!=refs['PO'][q-1]):return unavailable()
+        checks=line.get('checks')
+        if not isinstance(checks,list):return unavailable()
+        bound=identity in ('EXACT_NAME','HUMAN_CONFIRMED') and q is not None
+        if identity not in ('EXACT_NAME','HUMAN_CONFIRMED','CANDIDATE','UNRESOLVED'):return unavailable()
+        if not bound:
+            if identity in ('CANDIDATE','UNRESOLVED'):unresolved.add(p)
+            result['pairs'][p]=None;unknown=True
+            continue
+        if q in mapped:return unavailable()
+        mapped.add(q)
+        units=[c for c in checks if isinstance(c,dict) and c.get('attribute')=='unit']
+        quantities=[c for c in checks if isinstance(c,dict) and c.get('attribute')=='quantity']
+        mandatory=len(units)==len(quantities)==1
+        unit_ok=False
+        if mandatory:
+            u=units[0];a=evidence.norm(u.get('requested'));b=evidence.norm(u.get('offered'))
+            unit_ok=(u.get('conditional_on_identity') is False and u.get('state')=='MATCH'
+                     and bool(a) and bool(b) and evidence.UNITS.get(a,a)==evidence.UNITS.get(b,b))
+        values=[]
+        for index,check in enumerate(checks):
+            value=None
+            if isinstance(check,dict) and check.get('conditional_on_identity') is False:
+                attribute=check.get('attribute');state=check.get('state')
+                requested=check.get('requested');offered=check.get('offered')
+                present=lambda v:v is not None and v!='' and v!=[] and v!={} and not isinstance(v,bool)
+                if isinstance(attribute,str) and attribute and present(requested):
+                    if state in ('MATCH','MISMATCH') and present(offered):value=int(state=='MISMATCH')
+                    elif state=='MISSING_SPECIFICATION' and not present(offered):value=1
+                if attribute=='quantity':
+                    a=evidence.number(requested);b=evidence.number(offered)
+                    if identity!='EXACT_NAME' or not unit_ok or a is None or b is None or a<=0 or b<=0:value=None
+                    elif state!=('MATCH' if a==b else 'MISMATCH'):value=None
+                if attribute=='unit' and state=='MATCH' and not unit_ok:value=None
+                if attribute=='unit' and state=='MISMATCH':
+                    a=evidence.norm(requested);b=evidence.norm(offered)
+                    if not a or not b or evidence.UNITS.get(a,a)==evidence.UNITS.get(b,b):value=None
+            result['checks'][(p,index)]=None if value is None else 100*value
+            values.append(value)
+        if any(v==1 for v in values):line_value=1
+        elif mandatory and unit_ok and values and all(v==0 for v in values) and identity=='EXACT_NAME':line_value=0
+        else:line_value=None
+        result['pairs'][p]=None if line_value is None else 100*line_value
+        if line_value is None:unknown=True
+        else:affected+=line_value
+    if positions!=set(range(1,len(refs['PR'])+1)) or set(missing)!=unresolved:return unavailable()
+    # A PO candidate may be an unmatched PR counterpart, not a proven extra.
+    if unresolved or unknown:
+        result['reason']='Unresolved identity or checks prevent an exact item-line rate.'
+        return result
+    expected_extra=set(range(1,len(refs['PO'])+1))-mapped
+    if set(extra)!=expected_extra:return unavailable()
+    result['extras']=sorted(expected_extra)
+    total=len(refs['PR'])+len(expected_extra);affected+=len(expected_extra)
+    result.update(value=100*affected/total,affected=affected,total=total,reason='')
+    return result
+
+
 def verification_display(row,pr_items=(),po_items=(),stale=False):
     """Presentation of saved facts only; never derive a score from confidence."""
     details=row.get('details') or {}
@@ -389,13 +486,14 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
     if not isinstance(details,dict):details={}
     saved=details.get('technical_comparison')
     saved=saved if isinstance(saved,dict) else {}
+    incidence=discrepancy_incidence(saved)
     def percentage(value):
         if isinstance(value,bool) or value is None:return 'Not calculated'
         try:value=float(value)
         except (ValueError,TypeError,OverflowError):return 'Not calculated'
         return f'{value:.2f}%' if math.isfinite(value) and 0<=value<=100 else 'Not calculated'
     labels={'MATCH':'Match','MISMATCH':'Mismatch'}
-    findings=[];pairs=[]
+    findings=[];pairs=[];legacy_states=[];legacy_pairs_match=True
     def item(items,position):
         return items[position-1] if type(position) is int and 1<=position<=len(items) else {}
     for line in saved.get('rows',[]) if isinstance(saved.get('rows'),list) else []:
@@ -404,25 +502,46 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
         checks=line.get('checks',[])
         valid_checks=[c for c in checks if isinstance(c,dict)] if isinstance(checks,list) else []
         pair_status='Mismatch' if any(c.get('state')=='MISMATCH' for c in valid_checks) else 'Match' if valid_checks and all(c.get('state')=='MATCH' for c in valid_checks) and line.get('identity') not in ('UNRESOLVED','CANDIDATE') else 'Needs Review'
+        legacy_pairs_match=legacy_pairs_match and pair_status=='Match'
+        pair_value=None if stale else incidence['pairs'].get(line.get('pr_position'))
         pairs.append(dict(pr=left,po=right,pr_position=line.get('pr_position'),po_position=line.get('po_position'),
-            status=pair_status,percentage=percentage(line.get('discrepancy_percentage'))))
-        for check in checks if isinstance(checks,list) else []:
+            status='Needs Review' if pair_value is None else 'Mismatch' if pair_value else 'Match',percentage=percentage(pair_value),
+            percentage_basis='Item-line incidence: this confirmed line is affected (100%) or fully checked (0%).'))
+        for index,check in enumerate(checks if isinstance(checks,list) else []):
             if not isinstance(check,dict):continue
+            legacy_states.append(check.get('state'))
+            check_value=None if stale else incidence['checks'].get((line.get('pr_position'),index))
             findings.append(dict(detail=str(check.get('attribute') or 'Item correspondence').replace('source specification field ',''),
                 requested=check.get('requested'),offered=check.get('offered'),
-                status=labels.get(check.get('state'),'Needs Review'),
-                percentage=percentage(check.get('discrepancy_percentage'))))
+                status='Needs Review' if check_value is None else 'Mismatch' if check_value else 'Match',
+                percentage=percentage(check_value),percentage_basis='Binary saved-check indicator: 100% confirmed violation, 0% passed; not quantity deviation.'))
         if not checks:
+            legacy_states.append(None)
             findings.append(dict(detail='Item correspondence',requested=line.get('pr_reference'),offered=line.get('po_reference'),status='Needs Review',percentage='Not calculated'))
-    mismatch=any(f['status']=='Mismatch' for f in findings)
+    mismatch=any(s=='MISMATCH' for s in legacy_states)
     clean=(row.get('technical_status')=='MATCH' and saved.get('technical_status')=='MATCH'
-           and bool(findings) and all(f['status']=='Match' for f in findings)
-           and bool(pairs) and all(p['status']=='Match' for p in pairs)
+           and bool(legacy_states) and all(s=='MATCH' for s in legacy_states)
+           and bool(pairs) and legacy_pairs_match
            and not saved.get('missing_or_unresolved_pr_items') and not saved.get('extra_or_unallocated_items'))
     status='Needs Review' if stale else 'Mismatch' if mismatch or row.get('result') in ('Reject','Needs Recanvass') else 'Match' if clean and row.get('result')=='Acceptable' else 'Needs Review'
+    eligibility_status=status  # Preserve the pre-existing IAR gate independently.
     first=next((f for f in findings if f['status']!='Match'),None)
     explanation='Source documents changed after verification.' if stale else (first['detail'].capitalize()+': '+first['status']+'.') if first else 'No unresolved saved discrepancy.' if status=='Match' else 'Saved evidence requires review.'
-    return dict(status=status,percentage=percentage(details.get('discrepancy_percentage',saved.get('discrepancy_percentage'))),
+    value=None if stale else incidence['value']
+    if value is None:
+        status='Needs Review'
+        if not stale:explanation=incidence['reason']
+    elif value>0:status='Mismatch'
+    elif status!='Match':
+        value=None;status='Needs Review';explanation='Saved model and structured evidence require review.'
+    for position in incidence['extras'] if value is not None else []:
+        offered=item(po_items,position)
+        reference=saved['source_fields']['PO'][position-1]['reference']
+        pairs.append(dict(pr={},po=offered,pr_position=None,po_position=position,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.'))
+        findings.append(dict(detail='Extra PO item',requested=None,offered=offered or reference,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.'))
+    basis=(f"Item-line discrepancy incidence: {incidence['affected']} affected / {incidence['total']} assessed lines; not model confidence or quantity deviation."
+           if value is not None else 'Not calculated: '+explanation)
+    return dict(status=status,percentage=percentage(value),percentage_basis=basis,eligibility_status=eligibility_status,
         findings=findings,pairs=pairs,explanation=explanation)
 
 def verification_context(api,row):
@@ -439,7 +558,7 @@ def verification_context(api,row):
     review_evidence_current=stored_review_matches(row,current_mapping,technical)
     display=verification_display(row,api['parse_items'](pr['items']),api['parse_items'](po['items']),stale)
     inspection_ready=False
-    if (not stale and review_evidence_current and display['status']=='Match' and row.get('status')=='Approved'
+    if (not stale and review_evidence_current and display['eligibility_status']=='Match' and row.get('status')=='Approved'
             and po.get('status')=='Approved' and (row.get('result') in ('Acceptable','Needs Review'))):
         inspection_ready=any(p['id']==po['id'] for p in api['next_available_records']('iar')[5])
     return dict(row=row,pr=pr,po=po,
