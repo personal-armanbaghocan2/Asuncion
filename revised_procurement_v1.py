@@ -646,7 +646,7 @@ def approve_aoq(api,identifier_value):
     if not isinstance(receipt,dict):return receipt
     if receipt.get('aoq_id')!=identifier_value or receipt.get('new_status')!='Approved':abort(503)
     flash('AOQ approved. Its reviewed quotation is available for PO generation.')
-    return redirect(url_for('po'))
+    return redirect(url_for('aoq_review',id=identifier_value))
 
 def create_po(api,identifier_value):
     receipt=rpc(api,'create_po_for_review_v2',(identifier(identifier_value),))
@@ -745,11 +745,18 @@ def upload_aoq(api):
     if row:return existing_response(row)
     with extraction_path(content,extension) as path:
         document=api['extract_aoq_document'](path)
+        from aoq_workspace import validate_document
+        try:validate_document(document)
+        except ValueError as error:abort(422,description=str(error))
         preview=api['build_flexible_aoq_preview'](document,[])
     if len(preview.get('offer_items') or [])>200 or len(preview.get('suppliers') or [])>100:abort(400)
     preview.update(pr_id=pr_id,pr_no=pr['no'] if pr else '',ocr_filename=name,stored_filename='',
         offer_review_token=secrets.token_urlsafe(24),source_award_hint=preview.get('winner_index',-1),
         selected_winner_index=-1,offer_items=[],offer_supplier_index='')
+    # Open the first actual quotation for review, never select its winner.
+    first=next((i for i,s in enumerate(preview.get('suppliers') or []) if s.get('items')),None)
+    if first is not None:
+        preview.update(offer_items=[dict(item) for item in preview['suppliers'][first]['items']],offer_supplier_index=str(first))
     did=str(uuid.uuid4())
     with durable.transaction(api,read_committed=True) as (con,uid):
         con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',

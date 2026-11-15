@@ -3333,6 +3333,9 @@ def aoq_quotation_page(preview):
 def aoq():
     # Verify mode before any GET/POST draft read. GET binds its shared read
     # connection once; POST also needs the actor before loading its draft.
+    import aoq_workspace
+    workspace_tab=request.args.get('tab','workspace')
+    if workspace_tab not in ('workspace','history') or len(request.args.getlist('tab'))>1:abort(400)
     independent_aoq = revised_workflow_preview.active() or revised_procurement.enabled(globals())
     if request.method == 'POST':
         if not independent_aoq:
@@ -3374,10 +3377,10 @@ def aoq():
             selected_pr = dict(selected_pr_row)
             selected_pr['items_list'] = parse_items(selected_pr.get('items'))
     return render_template(
-        'aoq.html', independent_aoq=independent_aoq, active='aoq', rows=rows, prs=pr_previews,
+        'aoq_workspace.html', workspace_tab=workspace_tab, workspace_quotes=aoq_workspace.quotations(ocr_data or {}), workspace_warnings=(ocr_data or {}).get('warnings',[]), independent_aoq=independent_aoq, active='aoq', rows=rows, prs=pr_previews,
         aoq_counts=aoq_counts,
         ocr_data=ocr_data or None, selected_pr=selected_pr, title='Quotation Evaluation (AOQ)',
-        history=document_history.listing(globals(),'aoq'),quotation_view=aoq_quotation_page(ocr_data or {}),
+        history=document_history.listing(globals(),'aoq') if workspace_tab=='history' else None,
         supported_aoq_formats=', '.join(sorted(x.upper().lstrip('.') for x in ALLOWED_OCR_EXTENSIONS)),
     )
 
@@ -3395,54 +3398,18 @@ def aoq_review(id):
         flash('AOQ record not found.')
         return redirect(url_for('aoq'))
     d = dict(row)
-    historical_pr_no = d['pr_no'].strip() if isinstance(d.get('pr_no'), str) else ''
-    if (type(d.get('pr_id')) is not int or d['pr_id'] <= 0
-            or historical_pr_no.casefold() in ('', 'none', 'null', 'n/a', 'not recorded', 'no linked pr', 'independent aoq', '—', '-')):
-        historical_pr_no = None
-    pr_items = parse_items(d.get('pr_items')) if historical_pr_no else []
-    offer_items = parse_items(d.get('winning_offer'))
-    suppliers = parse_items(d.get('suppliers'))
-    return render_review_page(
-        active='aoq', title=f'Review Quotation Evaluation {d["no"]}', document_type='AOQ / Bidding Result',
-        document_no=d['no'], status=d['status'], created_at=d.get('created_at'),
-        linked_records=[
-            *([{'label': 'Historical PR reference', 'value': historical_pr_no}] if historical_pr_no else []),
-            {'label': 'Source File', 'value': d.get('ocr_filename') or 'Legacy/manual record',
-             'url': url_for('aoq_source_file', id=id) if d.get('stored_filename') or d.get('has_durable_source') else ''},
-            {'label': 'Detected Document Type', 'value': d.get('source_type') or 'Legacy/manual record'},
-            {'label': 'Extraction Method', 'value': d.get('extraction_method') or 'Legacy/manual extraction', 'diagnostic': True},
-        ],
-        summary=[
-            {'label': 'Requesting Office', 'value': d.get('pr_office') or '—'},
-            {'label': 'Winning Supplier', 'value': d.get('winner') or '—'},
-            {'label': 'Winning Amount', 'value': money_text(d.get('winning_amount'))},
-            {'label': 'Winning Offer Items', 'value': len(offer_items)},
-        ],
-        item_sections=[
-            *([review_section('Approved PR Requirements', pr_items, historical_pr_no,
-                              'Retained historical requirements; independent AOQ approval does not require a PR link.',
-                              optional=True)] if historical_pr_no else []),
-            review_section('Winning Quotation Details', offer_items, d['no'],
-                           'Double-check the supplier offer, description, specification, quantity, unit, and price before approval.'),
-            *[review_section('Supplier quotation: '+str(supplier.get('supplier') or 'Name not recorded'),
-                             [item for item in supplier.get('items',[]) if isinstance(item,dict)], d['no'],
-                             'Recorded quotation total: '+review_value(supplier.get('amount'))+'. '+str(supplier.get('remarks') or ''),
-                             optional=True)
-              for supplier in suppliers if isinstance(supplier,dict) and isinstance(supplier.get('items',[]),list)],
-        ],
-        text_blocks=[
-            {'title': 'Supplier / Quotation Records', 'content': json.dumps(suppliers, indent=2, ensure_ascii=False, default=str) if suppliers else 'No supplier list stored.', 'diagnostic': True},
-            {'title': 'Flexible Extraction Profile', 'content': json.dumps(parse_json_object(d.get('extraction_profile')), indent=2, ensure_ascii=False, default=str) if d.get('extraction_profile') else 'No extraction profile stored.', 'diagnostic': True},
-            {'title': 'Source Review Warnings', 'content': parse_json_list(d.get('extraction_warnings')) or ['No source review warnings stored.']},
-            {'title': 'Raw Extracted Text', 'content': d.get('ocr_text') or 'No raw extracted text stored.', 'diagnostic': True},
-        ],
-        approve_url=url_for('aoq_approve', id=id), approve_label=f'Approve AOQ {d["no"]}',
-        approval_effect='Approval locks the reviewed winning offer and makes this AOQ available for Purchase Order generation.',
-        back_url=url_for('aoq'), print_url=None, can_approve=d.get('status') == 'For Review' and workflow_active and not revised_workflow_preview.active(),
-        approval_details=[('AOQ', d['no']), *([('Historical PR', historical_pr_no)] if historical_pr_no else []),
-                          ('Winning supplier', d.get('winner') or 'Not selected'),
-                          ('Winning amount', money_text(d.get('winning_amount'))), ('Item count', len(offer_items))],
-    )
+    import aoq_workspace
+    d['winning_items']=parse_items(d.get('winning_offer'))
+    suppliers=parse_items(d.get('suppliers'))
+    linked_po=q('select id,no from po where aoq_id=? order by id limit 1',(id,),one=True)
+    private=q("select payload from psms_documents.aoq_drafts where official_aoq_id=? and owner_id=? and status='CONFIRMED' order by updated_at desc limit 1",(id,session.get('user_id')),one=True) if workflow_active else None
+    reviewed=parse_json_object(private.get('payload')) if private else {}
+    reviewed['suppliers']=suppliers
+    return render_template('aoq_workspace.html',active='aoq',title='Quotation Evaluation (AOQ)',
+        workspace_tab='workspace',rows=[],ocr_data=None,official_aoq=d,linked_po=linked_po,
+        workspace_quotes=aoq_workspace.quotations(reviewed,d),
+        workspace_warnings=parse_json_list(d.get('extraction_warnings')),
+        independent_aoq=workflow_active,history=None)
 
 @app.route('/aoq/<int:id>/source')
 def aoq_source_file(id):

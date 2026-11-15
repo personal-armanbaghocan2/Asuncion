@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}"><link rel="stylesheet" href="{{url_for('static',filename='css/aoq-workspace.css')}}">{% endblock %}
+{% macro quotation_fields(item) %}
+<input type="hidden" name="offer_source_index" value="{{item.ordinal}}">
+<label>Item<input name="offer_item" value="{{item.get('item','')}}" placeholder="Missing — review source" required></label>
+<label>Description / specifications<textarea name="offer_description" rows="2" placeholder="Missing — review source" required>{{item.get('description','')}}</textarea></label>
+<div class="aoq-values">{% for key,label in [('qty','Quantity'),('unit','Unit'),('unit_cost','Unit price'),('amount','Total (verify source)')] %}<label>{{label}}<input name="offer_{{key}}" value="{{item.get(key) if item.get(key) is not none else ''}}" {% if key!='unit' %}inputmode="decimal"{% endif %} placeholder="Missing — review source" required></label>{% endfor %}</div>
+<label>Classification<select name="offer_category"><option value="">Not established</option>{% for category in ['DBM','NON-DBM','LIB'] %}<option {{'selected' if (item.get('category') or item.get('source_category'))==category}}>{{category}}</option>{% endfor %}</select></label>
+<label>Quotation remarks<input name="offer_remarks" value="{{item.get('remarks','')}}"></label><small class="aoq-missing" data-arithmetic-warning role="status"></small>
+{% endmacro %}
+{% block content %}
+<div class="aoq-workspace">
+<h2>Quotation Evaluation (AOQ)</h2>
+<nav class="aoq-tabs" aria-label="AOQ workspace tabs"><a class="btn" href="{{url_for('aoq')}}" {% if workspace_tab!='history' %}aria-current="page"{% endif %}>AOQ Workspace</a><a class="btn" href="{{url_for('aoq',tab='history')}}" {% if workspace_tab=='history' %}aria-current="page"{% endif %}>Document History</a></nav>
+{% if workspace_tab=='history' %}
+<div class="actions"><a class="btn" href="{{url_for('aoq',tab='history')}}">Uploaded documents</a><a class="btn" href="{{url_for('aoq',tab='history',view='records')}}">Official AOQ records</a></div>
+{% if request.args.get('view')=='records' %}{% include 'aoq_records.html' %}{% else %}{% include 'aoq_workspace_history.html' %}{% endif %}
+{% else %}
+{% set official=official_aoq|default(none) %}
+{% set matrix=workspace_quotes %}
+<ol class="aoq-steps" aria-label="AOQ progress"><li {% if not ocr_data and not official %}aria-current="step"{% endif %}>1. Upload</li><li {% if ocr_data and ocr_data.get('selected_winner_index',-1)|int<0 %}aria-current="step"{% endif %}>2. Review Quotations</li><li {% if ocr_data and ocr_data.get('selected_winner_index',-1)|int>=0 %}aria-current="step"{% endif %}>3. Select Winner and Save</li><li {% if official %}aria-current="step"{% endif %}>4. Approve AOQ{% if official %} — {{official.status}}{% endif %}</li></ol>
+{% if rows %}<label>Open saved AOQ<select id="aoq-open-record"><option value="">Select saved record</option>{% for record in rows %}<option value="{{url_for('aoq_review',id=record.id)}}" {{'selected' if official and official.id==record.id}}>{{record.no}} — {{record.status}}</option>{% endfor %}</select></label>{% endif %}
+{% if not official %}
+<details class="card" id="aoq-upload-panel" {% if not ocr_data %}open{% endif %}><summary>{{'Upload another quotation file' if ocr_data else 'Upload AOQ Document'}}</summary>
+{% if not independent_aoq %}<p class="notice" role="status">Upload requires the authorized procurement workflow.</p>{% endif %}
+<form id="aoq-upload-form" method="post" enctype="multipart/form-data" action="{{url_for('aoq')}}" data-document-processing>
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="extract_ocr">
+<label for="aoq-file-input">Choose quotation file</label><input id="aoq-file-input" type="file" name="ocr_file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.docx,.xlsx,.xlsm,.csv,.txt" required>
+<p class="muted">Supported: {{supported_aoq_formats}}</p><button class="btn primary" type="submit" {{'disabled' if not independent_aoq or workflow_preview}}>Upload &amp; Extract</button>
+</form></details>
+{% endif %}
+{% if ocr_data or official %}
+<section class="card" id="aoq-draft-review" {% if ocr_data %}data-active-draft{% endif %}>
+<div class="toolbar"><div><h3>{{'AOQ '+official.no if official else 'Review Quotations'}}</h3><p>{{official.ocr_filename if official else ocr_data.ocr_filename}}</p></div>
+<div class="aoq-source-actions">{% if official %}{% if official.stored_filename or official.has_durable_source %}<a class="btn" href="{{url_for('aoq_source_file',id=official.id)}}">Download original</a>{% endif %}{% elif ocr_data.source_id %}<a class="btn" href="{{url_for('document_history_detail',sid=ocr_data.source_id)}}">View File</a><a class="btn" href="{{url_for('document_history_source',sid=ocr_data.source_id)}}">Download</a>{% endif %}</div></div>
+<div class="aoq-summary" role="status">{{matrix.item_count}} source item group{{'' if matrix.item_count==1 else 's'}} · {{matrix.supplier_count}} supplier{{'' if matrix.supplier_count==1 else 's'}} · {{matrix.quotation_count}} quotation row{{'' if matrix.quotation_count==1 else 's'}}{% if official %} · {{official.status}}{% endif %}</div>
+{% set warnings=workspace_warnings %}{% if warnings %}<div class="warning-box"><strong>Review required</strong><ul>{% for warning in warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}
+{% if not matrix.rows %}<p class="notice">{{matrix.get('document_error') or 'No supplier quotations recognized. Review the original file and upload an AOQ containing supplier quotations. No official AOQ can be saved from missing items.'}}</p>{% endif %}
+{% if ocr_data %}
+<form method="post" action="{{url_for('aoq')}}" id="aoqReviewForm" data-confirm="Save the reviewed quotation and explicitly selected winning supplier?">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" id="aoqAction" value="save_ocr">
+<input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><input type="hidden" name="offer_supplier_index" value="{{ocr_data.offer_supplier_index|default('')}}"><input type="hidden" name="offer_review_token" value="{{ocr_data.offer_review_token|default('')}}">
+<label>Quotation to edit<select name="review_supplier_index">{% for index in matrix.indices %}<option value="{{index}}" {{'selected' if matrix.selected==index|string}}>{{matrix.suppliers[index].supplier}}</option>{% endfor %}</select></label>
+<button class="btn" type="submit" id="loadSupplierReview" formnovalidate>Review selected quotation</button>
+<p class="muted">Editing a quotation does not select its supplier as winner. Source totals are never changed automatically.</p>
+{% endif %}
+<div class="aoq-matrix-scroll"><table class="table aoq-matrix" id="aoqQuotationTable"><caption class="sr-only">Source supplier quotations and authorized corrections</caption><thead><tr><th scope="col">Source item</th>{% for index in matrix.indices %}{% set supplier=matrix.suppliers[index] %}{% set edited=ocr_data.supplier_form[index] if ocr_data and ocr_data.supplier_form is defined and index<ocr_data.supplier_form|length else supplier %}<th scope="col" class="{{'aoq-winning' if official and supplier.supplier==official.winner}}">
+{% if ocr_data %}<label>Supplier<input name="supplier_name" value="{{edited.supplier if edited.supplier!='Unidentified Supplier' else ''}}" placeholder="Supplier name requires review" required></label><label>Quotation total<input name="supplier_amount" inputmode="decimal" value="{{edited.amount if edited.amount is not none else ''}}" placeholder="Missing — review source"></label><label>Supplier remarks<input name="supplier_remarks" value="{{edited.remarks}}"></label>{% else %}{{supplier.supplier}}<p>Total: {{supplier.amount|money if supplier.amount is not none and supplier.amount!='' else 'Not recorded'}}</p>{% if supplier.supplier==official.winner %}<span class="badge ok">Selected winner</span>{% endif %}{% endif %}
+</th>{% endfor %}</tr></thead><tbody>
+{% for row in matrix.rows %}<tr data-source-item><th scope="row">{{row.number or loop.index}}<p>{{row.item}}</p></th>{% for index in matrix.indices %}<td class="{{'aoq-winning' if official and matrix.suppliers[index].supplier==official.winner}}">
+{% for item in row.cells.get(index,[]) %}<div data-quotation data-supplier-index="{{index}}">
+{% if ocr_data and matrix.selected==index|string %}{{quotation_fields(item)}}{% else %}<p><strong>{{item.get('item') or 'Item missing'}}</strong></p><p>{{item.get('description') or 'Description not recorded'}}</p><p>Quantity: {{item.get('qty') if item.get('qty') is not none and item.get('qty')!='' else 'Not recorded'}} {{item.get('unit') or 'Unit not recorded'}}</p><p>Unit price: {{item.unit_cost|money if item.get('unit_cost') is not none and item.get('unit_cost')!='' else 'Not recorded'}}</p><p>Total: {{item.amount|money if item.get('amount') is not none and item.get('amount')!='' else 'Not recorded'}}</p>{% endif %}
+{% if item.get('_private_review_correction') %}<small class="muted">Your reviewed correction; original retained.</small>{% endif %}{% if item.get('source') %}<small class="muted">{{item.source}}</small>{% endif %}</div>{% else %}<span class="aoq-missing">No quotation recorded for this source item.</span>{% endfor %}</td>{% endfor %}</tr>{% else %}<tr><td colspan="{{1+matrix.indices|length}}">No quotation items available.</td></tr>{% endfor %}
+</tbody></table></div>
+{% if ocr_data %}<label>AOQ remarks<textarea name="remarks">{{ocr_data.get('remarks','')}}</textarea></label>
+<label><input type="checkbox" name="confirm_reviewed" value="yes" required> I verified these quotation values against the original file.</label>
+<div id="aoq-review-message" role="status" class="aoq-missing"></div>
+<div class="aoq-footer"><label>Select Winner<select name="winner_index" required><option value="">Select winning supplier explicitly</option>{% for index in matrix.indices %}<option value="{{index}}" {{'selected' if ocr_data.get('selected_winner_index',-1)|string==index|string}}>{{matrix.suppliers[index].supplier}}</option>{% endfor %}</select></label><button class="btn primary" type="submit" {{'disabled' if not matrix.rows or workflow_preview or not independent_aoq}}>Save</button><button class="btn" type="button" disabled>Approve AOQ — save first</button></div></form>
+{% elif official %}
+<div class="aoq-footer"><p><strong>Winning supplier:</strong> {{official.winner or 'Not selected'}} · <strong>Total:</strong> {{official.winning_amount|money if official.winning_amount is not none else 'Not recorded'}}</p>
+{% if official.status=='For Review' and independent_aoq and not workflow_preview %}<form method="post" action="{{url_for('aoq_approve',id=official.id)}}" data-confirm="Approve this saved AOQ and its reviewed winning quotation?">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><label><input type="checkbox" name="review_confirm" value="yes" required> I reviewed the saved winning quotation.</label><label><input type="checkbox" name="final_confirm" value="yes" required> I explicitly authorize AOQ approval.</label><button class="btn primary" type="submit">Approve AOQ</button></form>
+{% elif official.status=='Approved' %}{% if linked_po %}<a class="btn primary" href="{{url_for('po_review',id=linked_po.id)}}">View {{linked_po.no}}</a>{% else %}<a class="btn primary" href="{{url_for('po',aoq_id=official.id)}}">Proceed to PO</a>{% endif %}{% else %}<span class="badge warn">{{official.status}}</span>{% endif %}</div>
+{% endif %}
+</section>
+{% endif %}
+{% endif %}</div>
+{% endblock %}
+{% block scripts %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script><script defer src="{{url_for('static',filename='js/aoq-workspace.js')}}"></script>{% endblock %}
