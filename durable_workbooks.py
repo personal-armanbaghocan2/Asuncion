@@ -363,6 +363,7 @@ def refresh_drafts(api, category):
 def edit(api, category, fields, form):
     if not 1 <= len(fields) <= 200:
         abort(400, description='Edit 1 to 200 source rows.')
+    if form.get('source_review_confirm','') not in ('','yes'):abort(400)
     with transaction(api) as (con, uid):
         category_lock(con, category)
         rows = {str(row['_row']): row for row in api['read_excel'](category, connection=con)}
@@ -374,6 +375,10 @@ def edit(api, category, fields, form):
         try:
             ws = wb[category]
             headers = {cell.value: cell.column for cell in ws[1] if cell.value}
+            from ppmp_creation import SOURCE_REVIEW_FIELD, source_review_fingerprint
+            if form.get('source_review_confirm')=='yes' and SOURCE_REVIEW_FIELD not in headers:
+                headers[SOURCE_REVIEW_FIELD]=ws.max_column+1
+                ws.cell(1,headers[SOURCE_REVIEW_FIELD],SOURCE_REVIEW_FIELD)
             for code, changes in fields.items():
                 for header, value in changes.items():
                     if header not in api['ASUNCION_HEADERS'] or len(value) > 5000:
@@ -385,6 +390,14 @@ def edit(api, category, fields, form):
                     cell = ws.cell(int(code), headers[header], value)
                     if isinstance(value, str):
                         cell.data_type = 's'
+                if form.get('source_review_confirm')=='yes':
+                    candidate=api['normalize_excel_row'](dict(rows[code],**changes),category)
+                    errors=api['planning_item_errors']([candidate])
+                    if errors:abort(422,description=' '.join(errors))
+                    receipt=dict(actor=uid,at=api['now'](),category=category,
+                                 fingerprint=source_review_fingerprint(candidate,category))
+                    cell=ws.cell(int(code),headers[SOURCE_REVIEW_FIELD],json.dumps(receipt,sort_keys=True))
+                    cell.data_type='s'
             content = _bytes(wb)
             sid = _save(con, uid, head, 'PPMP_Data.xlsx', content)
             # Read our uncommitted head on this same connection. Existing lineage
@@ -393,5 +406,8 @@ def edit(api, category, fields, form):
             api['sync_draft_ppmp_from_excel'](category, connection=con, source_rows=fresh)
             api['log']('Edited PPMP Workbook Source', 'PPMP', category,
                        f'{len(fields)} row(s); retained version {sid}', connection=con)
+            if form.get('source_review_confirm')=='yes':
+                api['log']('Reviewed PPMP Workbook Source','PPMP',category,
+                           f'{len(fields)} explicitly confirmed row(s); retained version {sid}',connection=con)
         finally:
             wb.close()

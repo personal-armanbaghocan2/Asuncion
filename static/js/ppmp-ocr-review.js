@@ -16,6 +16,7 @@
   const statusBox = document.getElementById('ocrReviewStatus');
   const specification = 'Quantity and Size of the Project to be Procured';
   const difference = document.getElementById('ocrSourceDifference'), differenceConfirm = document.getElementById('ocrSourceDifferenceConfirm');
+  const categoryReview=document.getElementById('ocrCategoryReview'), categoryConfirm=document.getElementById('ocrCategoryConfirmed');
   let items = [], index = 0, original = '', saving = false, launcher;
   const clean = value => String(value ?? '').replace(/\u00a0/g, ' ').trim();
   function displayValue(label, value) {
@@ -67,7 +68,7 @@
     } else if (item) result[specification] = item.loaded[specification];
     return result;
   }
-  const stash = () => { if (items[index]) { items[index].fields = values(); items[index].source_changes_confirmed = differenceConfirm.checked; } };
+  const stash = () => { if (items[index]) { items[index].fields = values(); items[index].source_changes_confirmed = differenceConfirm.checked; if(categoryConfirm)items[index].confirmed_category=categoryConfirm.checked?dialog.dataset.category:null; } };
   const selectedIds = () => [...new Set(checkboxes.filter(box => box.checked).map(box => box.value))];
   const readableFields = fields => Object.entries(fields || {}).map(([label, value]) =>
     `${label}:\n  ${typeof value === 'object' && value !== null ? JSON.stringify(value, null, 2) : value || 'Unresolved'}`).join('\n\n');
@@ -95,6 +96,8 @@
   }
   function load() {
     const item = items[index];
+    if(categoryReview)categoryReview.hidden=item.status_code!=='CATEGORY_REVIEW';
+    if(categoryConfirm)categoryConfirm.checked=item.confirmed_category===dialog.dataset.category;
     item.loaded = {...item.fields};
     item.loadedSpecifications = specificationsOnly(item.fields[specification], item.fields.Quantity, item.fields.Unit, item);
     document.getElementById('ocrTempId').value = item.temp_id; document.getElementById('ocrRevision').value = item.revision;
@@ -192,11 +195,14 @@
   });
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (saving) return;
-    stash(); saving = true; renderNavigation(); saveButton.disabled = true; fields.forEach(field => { field.disabled = true; });
+    stash();
+    const unconfirmed=items.findIndex(item=>item.status_code==='CATEGORY_REVIEW'&&item.confirmed_category!==dialog.dataset.category);
+    if(unconfirmed>=0){index=unconfirmed;load();message.textContent='Check the original evidence and explicitly confirm this item category before saving.';categoryConfirm?.focus();return;}
+    saving = true; renderNavigation(); saveButton.disabled = true; fields.forEach(field => { field.disabled = true; });
     message.textContent = 'Validating and saving all selected reviews…';
     try {
       const body = new FormData(); body.set('csrf_token', form.querySelector('[name="csrf_token"]').value);
-      body.set('action', 'update_ocr_rows'); body.set('ocr_batch', JSON.stringify(items.map(({temp_id, revision, fields, source_changes_confirmed}) => ({temp_id, revision, fields, source_changes_confirmed}))));
+      body.set('action', 'update_ocr_rows'); body.set('ocr_batch', JSON.stringify(items.map(({temp_id, revision, fields, source_changes_confirmed,confirmed_category}) => ({temp_id, revision, fields, source_changes_confirmed,confirmed_category}))));
       // The hidden control named "action" shadows HTMLFormElement.action.
       // Read the attribute so a native browser posts to this review route.
       const response = await fetch(form.getAttribute('action') || window.location.href, {method: 'POST', body, credentials: 'same-origin', redirect: 'error'});

@@ -49,7 +49,7 @@ FIELD_ALIASES = {
         "price", "quotation price",
     ],
     "amount": [
-        "amount", "total", "total amount", "grand total", "extended amount",
+        "amount", "total", "total amount", "total price", "grand total", "extended amount",
         "total bid", "bid amount", "quotation amount", "contract amount",
     ],
     "remarks": [
@@ -1031,7 +1031,9 @@ def _metric_from_header(value: str) -> Tuple[str, str]:
     if not normalized:
         return "", ""
     metric = ""
-    for candidate in ("unit_cost", "amount", "description", "remarks"):
+    preferred = _map_header(value)
+    candidates = (preferred,) + tuple(key for key in ("unit_cost", "amount", "description", "remarks") if key != preferred) if preferred in {"unit_cost", "amount"} else ("unit_cost", "amount", "description", "remarks")
+    for candidate in candidates:
         aliases = FIELD_ALIASES[candidate]
         for alias in sorted(aliases, key=len, reverse=True):
             alias_n = _norm(alias)
@@ -1045,6 +1047,13 @@ def _metric_from_header(value: str) -> Tuple[str, str]:
         return "", ""
     supplier = re.sub(r"\b(?:supplier|bidder|vendor|quotation|quote|offered|offer)\b", " ", normalized)
     supplier = re.sub(r"\s+", " ", supplier).strip(" -")
+    # A monetary header's currency suffix is not a bidder identity. Preserve
+    # actual names (including names beginning PHP or Total), and source cells.
+    supplier = re.sub(r"(?:^|\s)(?:php|ph\.?p|pesos?|usd|₱|\$)[.\s]*$", "", supplier).strip()
+    identity = re.sub(r"\b(?:php|ph\.?p|pesos?|usd)\b|[₱$]", " ", supplier)
+    for label in sorted(FIELD_ALIASES['unit_cost'] + FIELD_ALIASES['amount'],key=len,reverse=True):
+        identity = re.sub(rf"\b{re.escape(_norm(label))}\b", " ", identity)
+    if not re.sub(r"[^a-z0-9]", "", identity):supplier = ""
     return supplier, metric
 
 

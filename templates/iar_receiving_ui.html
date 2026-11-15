@@ -1,0 +1,17 @@
+{% macro receiving_form(items) -%}
+<input type="hidden" name="receiving_version" value="2">
+<input type="hidden" name="receiving_source_hash" value="{{items[0].get('_Receiving Source Hash','')}}">
+<fieldset><legend>Actual delivery and inspection</legend>
+<p class="muted">Use the ordered unit. Accepted + rejected must equal delivered; damaged quantities are included in rejected. Only accepted stock is posted. This workflow has one IAR per PO; partial acceptance does not create a later balance-delivery record.</p>
+{% for item in items %}{% set index=loop.index0 %}<fieldset><legend>{{loop.index}}. {{item.get('item') or item.get('Item Name')}} — ordered {{item.get('ordered_qty')}} {{item.get('unit') or item.get('Unit')}}</legend>
+<div class="grid grid-2">
+{% for key,label in [('delivered_qty','Delivered'),('received_qty','Accepted'),('rejected_qty','Rejected (includes damaged)'),('damaged_qty','Damaged')] %}<label>{{label}} quantity<input name="{{key}}_{{index}}" inputmode="decimal" maxlength="64" value="{{item.get(key,'')}}" required></label>{% endfor %}
+</div><label>Inspection findings<textarea name="inspection_findings_{{index}}" maxlength="1000" required>{{item.get('inspection_findings','')}}</textarea></label>
+<label>Inventory classification (required only for accepted stock)<select name="inventory_category_{{index}}"><option value="">Not selected</option>{% for category in ['Equipment','Consumable'] %}<option value="{{category}}" {{'selected' if item.get('_Inventory Category')==category}}>{{category}}</option>{% endfor %}</select></label>
+</fieldset>{% endfor %}</fieldset>
+{%- endmacro %}
+{% macro receiving_summary(items) -%}
+<section class="card"><h3>Saved inspection outcomes</h3><div class="table-scroll"><table class="table"><thead><tr><th>Item</th><th>Ordered</th><th>Delivered</th><th>Accepted</th><th>Rejected</th><th>Damaged</th><th>Not delivered</th><th>Outcome / Findings</th></tr></thead><tbody>
+{% for item in items %}<tr><td>{{item.get('item') or item.get('Item Name')}}</td><td>{{item.get('ordered_qty',item.get('qty',item.get('Quantity','Not recorded')))}}</td><td>{{item.get('delivered_qty') if item.get('delivered_qty') not in [none,''] else 'Not recorded'}}</td><td>{{item.get('received_qty') if item.get('received_qty') not in [none,''] else 'Not recorded'}}</td><td>{{item.get('rejected_qty') if item.get('rejected_qty') not in [none,''] else 'Not recorded'}}</td><td>{{item.get('damaged_qty') if item.get('damaged_qty') not in [none,''] else 'Not recorded'}}</td><td>{{item.get('missing_qty','Not recorded')}}</td><td>{{item.get('inspection_outcome','Inspection not recorded')}}<br>{{item.get('inspection_findings','')}}</td></tr>{% endfor %}
+</tbody></table></div></section>
+{%- endmacro %}

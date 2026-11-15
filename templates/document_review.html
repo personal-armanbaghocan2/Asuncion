@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from 'procurement_ui.html' import display_value %}
+{% from 'iar_receiving_ui.html' import receiving_form,receiving_summary with context %}
 {% block head_extra %}{% if active in ['pr','aoq','po','nlp'] %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endif %}{% endblock %}
 {% block content %}
 {% set procurement_display = active in ['ppmp','app','pr','aoq','po','nlp'] %}
@@ -156,6 +157,7 @@
 {% include 'pr_po_item_comparison.html' %}
 {% endif %}
 
+{% if active=='iar' and status=='Approved' and receiving_items %}{{receiving_summary(receiving_items)}}{% endif %}
 <div class="card approval-review-card {{'procurement-final-approval' if updated_review}}">
   {% if can_review and not workflow_preview and not retired_nlp %}
   <div class="approval-warning-title">Review Completion</div>
@@ -178,25 +180,7 @@
         {% if active in ['aoq','po'] %}data-final-approval="true" data-approval-details="{{ approval_details|tojson|forceescape }}"{% endif %}
         {% if active in ['ppmp','app','pr','po','iar','ris'] %}data-confirm-category="{{active}}"{% endif %}
         data-confirm="Approve {{ document_no }} after confirming that every listed item and linked record was reviewed?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    {% if receiving_items %}
-    <fieldset><legend>Actual receiving and inventory classification</legend>
-      <p class="muted">Record accepted quantities in the ordered unit. The ordered quantities remain preserved. Partial acceptance does not create a balance delivery record.</p>
-      {% for item in receiving_items %}
-      <label class="form-field">{{item.get('item') or item.get('Item Name') or 'Item'}} — Ordered: {{item.get('ordered_qty',item.get('qty',item.get('Quantity','')))}} {{item.get('unit') or item.get('Unit')}}
-        {% if item.get('_Receiving Contract Version') %}
-        <input name="received_qty_{{loop.index0}}" inputmode="decimal" value="{{item.get('received_qty','')}}" required aria-label="Actual received quantity for item {{loop.index}}">
-        {% endif %}
-      </label>
-      {% set category = item.get('_Inventory Category') or item.get('inventory_category') or item.get('category') or item.get('Category') %}
-      <label class="form-field">Reviewed inventory classification
-        <select name="inventory_category_{{loop.index0}}" required aria-label="Inventory classification for item {{loop.index}}">
-          <option value="">Choose after reviewing the item</option>
-          {% for choice in ['Equipment','Consumable'] %}<option value="{{choice}}" {% if category==choice %}selected{% endif %}>{{choice}}</option>{% endfor %}
-        </select>
-      </label>
-      {% endfor %}
-    </fieldset>
-    {% endif %}
+    {% if receiving_items %}{{receiving_form(receiving_items)}}{% endif %}
     <label class="review-confirm-check">
       <input type="checkbox" name="review_confirm" value="yes" id="reviewConfirmCheckbox" required>
       <span>{{'I verified the winning supplier, all quotation items, quantities and amounts. This independent AOQ does not require a PR link.' if active=='aoq' else 'I reviewed all items, their stored details, and linked records in this document.'}}</span>

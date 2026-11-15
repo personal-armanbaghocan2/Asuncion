@@ -257,6 +257,9 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
     if state is _STATE_UNSET:state=ppmp_state(api,ptype)
     where="owner_id=? and ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')"
     params=[_uid(),ptype]
+    if state and state.get('classification_pending_count',0)>0:
+        where="owner_id=? and ((ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')) or (ppmp_category='UNASSIGNED' and status='CATEGORY_REVIEW' and source_id=?))"
+        params.append(state['source_id'])
     selected=request.args.get('ocr_source','all')!='all' and state
     if selected:where+=' and source_id=?';params.append(state['source_id'])
     fields="(CASE WHEN fields_json IS JSON OBJECT THEN fields_json::jsonb ELSE '{}'::jsonb END)"
@@ -279,7 +282,7 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
     rows=api['q']('select * from ppmp_ocr_drafts where '+where+' order by '+order+' limit 200 offset ?',(*params,(page-1)*200))
     return [api['_ocr_draft_to_ui'](row) for row in rows]
 
-def _ppmp_locked(con,uid,ptype,temp_id):
+def _ppmp_locked(con,uid,ptype,temp_id,allow_category_review=False):
     row=con.execute('select * from ppmp_ocr_drafts where temp_code=? and ppmp_category=? and owner_id=? for update',(temp_id,ptype,uid)).fetchone()
     if not row and isinstance(temp_id,str) and re.fullmatch(r'OCR-TEMP-[0-9]{1,20}',temp_id):
         # Older rows can have no stored code. Resolve exactly the fallback
@@ -288,11 +291,13 @@ def _ppmp_locked(con,uid,ptype,temp_id):
         did=int(temp_id.removeprefix('OCR-TEMP-'))
         if 0<did<=9223372036854775807 and temp_id==f'OCR-TEMP-{did:06d}':
             row=con.execute("select * from ppmp_ocr_drafts where id=? and (temp_code is null or temp_code='') and ppmp_category=? and owner_id=? for update",(did,ptype,uid)).fetchone()
+    if not row and allow_category_review:
+        row=con.execute("select * from ppmp_ocr_drafts where temp_code=? and owner_id=? and ppmp_category='UNASSIGNED' and status='CATEGORY_REVIEW' for update",(temp_id,uid)).fetchone()
     if not row:
         if getattr(g,'document_stage',None)=='creation_draft_lock':
             creation_item_error(temp_id,'This saved item is unavailable in this category for your account. Reopen its latest review before creating a PPMP.',404)
         abort(404)
-    if row['status']=='CATEGORY_REVIEW':
+    if row['status']=='CATEGORY_REVIEW' and not allow_category_review:
         abort(409,description='Confirm the item category in Document Upload and Review before reviewing or saving this draft.')
     return row
 
@@ -319,7 +324,7 @@ def ppmp_batch_review(api,ptype):
     with transaction(api) as (con,uid):
         pending=[]
         for code,entry in sorted(unique.items()):
-            row=_ppmp_locked(con,uid,ptype,code)
+            row=_ppmp_locked(con,uid,ptype,code,allow_category_review=entry.get('confirmed_category')==ptype)
             if row['converted'] or row['status'] in ('CONVERTED_TO_PPMP','CANCELLED') or row['revision']!=revision(entry['revision']):
                 return jsonify(saved=False,errors={code:['This draft changed, was cancelled, or became official. Reopen its latest saved review.']},
                     message='No items saved. Your corrections remain in this review; compare them with the latest saved revision.'),409
@@ -340,11 +345,20 @@ def ppmp_batch_review(api,ptype):
         for code,row,fields in pending:
             confidence=api['_json_dict'](row['confidence_json']);before=api['_json_dict'](row['fields_json'])
             confidence.setdefault('_original_fields',dict(before))
+            assigning=row['status']=='CATEGORY_REVIEW'
+            if assigning:
+                confidence['_category_confirmed']=True
+                confidence['_category_review']=dict(previous=row['ppmp_category'],assigned=ptype,by=uid,at=api['now']())
+                confidence.setdefault('_review_history',[]).append(dict(revision=row['revision'],previous_category=row['ppmp_category'],category=ptype,
+                    by=uid,at=api['now'](),before_fields=before,after_fields=dict(fields)))
             for label in labels:
                 if fields[label]!=before.get(label):
                     previous=dict(confidence.get(label) or {})
                     previous.update(human_corrected=True,human_confirmed=True,level='Human corrected',source_match=False)
                     confidence[label]=previous
+            if assigning:
+                con.execute("update ppmp_ocr_drafts set ppmp_category=? where id=?",(ptype,row['id']))
+                audit(api,con,'Assigned Reviewed Item Category','PPMP',row['id'])
             con.execute('''update ppmp_ocr_drafts set fields_json=?,confidence_json=?,status='REVIEWED',reviewed=true,
                 reviewed_by=?,reviewed_at=?,updated_at=?,revision=revision+1 where id=?''',
                 (payload(fields),payload(confidence),session['username'],api['now'](),api['now'](),row['id']))
@@ -359,7 +373,7 @@ def ppmp_source(api,ptype,sid,diagnostics=False):
     """Original private bytes or administrator diagnostics, checked per request."""
     if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
     if diagnostics and not api['is_admin']():abort(403)
-    row=api['q']("select filename,extension,content,extraction from psms_documents.sources where id=? and owner_id=? and kind='ppmp' and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and d.ppmp_category=?))",
+    row=api['q']("select filename,extension,content,extraction from psms_documents.sources where id=? and owner_id=? and kind='ppmp' and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and (d.ppmp_category=? or (d.ppmp_category='UNASSIGNED' and d.status='CATEGORY_REVIEW'))))",
                  (str(sid),_uid(),ptype,_uid(),ptype),one=True)
     if not row:abort(404)
     if diagnostics:

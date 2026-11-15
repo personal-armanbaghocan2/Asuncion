@@ -4,12 +4,37 @@ import json
 import os
 import re
 import secrets
+from decimal import Decimal, InvalidOperation
 
 from flask import abort, current_app, flash, g, jsonify, redirect, request, session, url_for
 from itsdangerous import BadData, URLSafeTimedSerializer
 from psycopg.conninfo import conninfo_to_dict
 import durable_ocr_v0_1_0 as durable
 import server_sessions_v0_1_0 as sessions
+
+SOURCE_REVIEW_FIELD = '_PPMP Source Review'
+
+
+def source_review_fingerprint(row, category):
+    from offline_ocr_mapper import PPMP_FIELDS
+    labels=[entry['label'] for entry in PPMP_FIELDS.values()]+['Item Name','Quantity','Unit','Estimated Unit Cost']
+    values={key:str(row.get(key) if row.get(key) is not None else '').strip() for key in labels}
+    for key in ('Quantity','Estimated Unit Cost','Estimated Budget Allocation (Php)'):
+        try:
+            value=Decimal(values[key].replace(',',''))
+            if value.is_finite():values[key]=format(value.normalize(),'f')
+        except (InvalidOperation,ValueError):pass
+    return hashlib.sha256(json.dumps([category,values],sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def source_reviewed(row, category):
+    """Display source-bound review evidence; never authorizes procurement approval."""
+    try:
+        receipt=json.loads(row.get(SOURCE_REVIEW_FIELD) or '{}')
+        return (type(receipt) is dict and type(receipt.get('actor')) is int and receipt['actor']>0
+                and bool(receipt.get('at')) and receipt.get('category')==category
+                and receipt.get('fingerprint')==source_review_fingerprint(row,category))
+    except (ValueError,TypeError):return False
 
 
 def _signer():
