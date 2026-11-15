@@ -20,6 +20,7 @@ import procurement_comparison_v1 as evidence
 
 RPC={
  'approve_po_before_verification_v2':('bigint','boolean','boolean'),
+ 'approve_po_before_verification_v3':('bigint','boolean','boolean'),
  'save_approved_pr_po_verification_v2':('bigint','bigint','text','text','text','double precision','jsonb','text','text'),
  'create_pr_from_approved_app_v1':('bigint','text','text','double precision'),
  'approve_pr_v1':('bigint','boolean'),
@@ -213,7 +214,7 @@ def rpc(api,name,values):
     if name not in RPC:raise ValueError('Unknown procurement operation')
     if getattr(g,'workflow_preview',False) or request.method!='POST':abort(405)
     if not enabled(api):abort(409,description='The revised procurement workflow is disabled.')
-    if name in ('approve_po_before_verification_v2','save_approved_pr_po_verification_v2') and not final_contract_ready(api):
+    if name in ('approve_po_before_verification_v2','approve_po_before_verification_v3','save_approved_pr_po_verification_v2') and not final_contract_ready(api):
         abort(409,description='The approved-PO-before-NLP database contract is not installed and reviewed. No legacy operation or direct table update was attempted.')
     try:
         with api['durable_ocr'].transaction(api,read_committed=True) as (con,uid):
@@ -703,8 +704,8 @@ def approve_po(api,identifier_value):
     # The final workflow no longer uses NLP approval as PO approval. A new
     # private RPC must lock/recheck the AOQ, reviewed lines, actor and status.
     # Never fall back to the old pre-verification contract or direct UPDATE.
-    if not final_contract_ready(api):abort(409,description='PO approval before NLP requires the reviewed v2 database installation. No status was changed.')
-    receipt=rpc(api,'approve_po_before_verification_v2',(identifier_value,True,True))
+    if not final_contract_ready(api):abort(409,description='PO approval requires the reviewed source-tracking v3 database installation. No status was changed.')
+    receipt=rpc(api,'approve_po_before_verification_v3',(identifier_value,True,True))
     if not isinstance(receipt,dict):return receipt
     if receipt.get('po_id')!=identifier_value or receipt.get('new_status')!='Approved':abort(503)
     flash('PO approved. It is available for PR–PO NLP verification; receiving eligibility remains separately protected.')
@@ -772,7 +773,7 @@ def upload_aoq(api):
 def final_contract_ready(api):
     """Additive v2 contract only; old routines and their pins remain unchanged."""
     if has_request_context() and hasattr(g,'final_procurement_ready'):return g.final_procurement_ready
-    names=('approve_po_before_verification_v2','save_approved_pr_po_verification_v2')
+    names=('approve_po_before_verification_v3','save_approved_pr_po_verification_v2')
     if any(not re.fullmatch('[0-9a-f]{32}',FINAL_ROUTINE_MD5.get(name,'')) for name in names):return False
     signatures=[api_schema()+'.'+name+'('+','.join(RPC[name])+')' for name in names]
     sql="""select count(*)=2 as ready from pg_catalog.pg_proc p
@@ -804,5 +805,6 @@ def final_contract_ready(api):
 # Strict LF-normalized proposed SQL source pins; absent/mismatched routines fail closed.
 FINAL_ROUTINE_MD5={
  'approve_po_before_verification_v2':'78b71630fef5e136daf21315dc4c491c',
+ 'approve_po_before_verification_v3':'c267a3f3e0cd74cf76663546402d2c1f',
  'save_approved_pr_po_verification_v2':'52ad5a0db477be37f94b0517236cd68e',
  'save_selected_aoq_independent_v2':'d0b92df38409db6b832b088e7b0b81e1'}
