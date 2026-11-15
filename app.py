@@ -3334,6 +3334,8 @@ def aoq():
     # Verify mode before any GET/POST draft read. GET binds its shared read
     # connection once; POST also needs the actor before loading its draft.
     import aoq_workspace
+    if request.method=='GET' and request.args.get('aoq_id'):
+        return aoq_review(revised_procurement.identifier(request.args['aoq_id']))
     workspace_tab=request.args.get('tab','workspace')
     if workspace_tab not in ('workspace','history') or len(request.args.getlist('tab'))>1:abort(400)
     independent_aoq = revised_workflow_preview.active() or revised_procurement.enabled(globals())
@@ -3387,6 +3389,7 @@ def aoq():
 
 @app.route('/aoq/<int:id>/view')
 def aoq_review(id):
+    if request.endpoint=='aoq_review':return redirect(url_for('aoq',aoq_id=id))
     workflow_active = revised_workflow_preview.active() or revised_procurement.enabled(globals())
     durable_source = '''exists(select 1 from psms_documents.aoq_drafts ds
                              where ds.official_aoq_id=aq.id and ds.status='CONFIRMED')''' if workflow_active else 'false'
@@ -3460,50 +3463,25 @@ def po():
         d['offer_summary'] = '; '.join(f"{value_any(item, 'item', 'Item Name', default='Item')}: {quantity_text(item.get('qty'))} {item.get('unit') or '—'} at {source_money_text(item.get('unit_cost'))}"
                                       for item in parse_items(a['winning_offer']))
         aoqs.append(d)
-    return render_template('po.html', active='po', rows=rows, aoqs=aoqs, title='Purchase Orders', revised_workflow_active=revised_procurement.enabled(globals()))
+    selected_po=None;selected_aoq=None;review_items=[];can_approve=False
+    if request.args.get('po_id'):
+        po_id=revised_procurement.identifier(request.args['po_id'])
+        row=q('select p.*,a.no aoq_no from po p left join aoq a on a.id=p.aoq_id where p.id=?',(po_id,),one=True)
+        if not row:abort(404)
+        selected_po=dict(row);review_items=parse_items(selected_po.get('items'))
+        can_approve=(selected_po.get('status')=='For Review' and revised_procurement.enabled(globals())
+                     and revised_procurement.final_contract_ready(globals()))
+    elif request.args.get('aoq_id'):
+        aoq_id=revised_procurement.identifier(request.args['aoq_id'])
+        selected_aoq=next((a for a in aoqs if a['id']==aoq_id),None)
+        if selected_aoq:review_items=parse_items(selected_aoq.get('winning_offer'))
+    return render_template('po.html',active='po',rows=rows,aoqs=aoqs,title='Purchase Orders',
+        revised_workflow_active=revised_procurement.enabled(globals()),selected_po=selected_po,
+        selected_aoq=selected_aoq,review_items=review_items,can_approve=can_approve)
 
 @app.route('/po/<int:id>/view')
 def po_review(id):
-    row = q(f'''select p.*, aq.no aoq_no, aq.winner aoq_winner,
-                      aq.winning_offer aoq_items, r.no pr_no, r.items pr_items,
-                      r.office pr_office
-               from po p
-               left join aoq aq on aq.id=p.aoq_id
-               left join pr r on r.id={revised_procurement.pr_reference(globals())}
-               where p.id=?''', (id,), one=True)
-    if not row:
-        flash('PO record not found.')
-        return redirect(url_for('po'))
-    d = request_queries.recorded_pr_references(q, [row])[0]
-    po_items = parse_items(d.get('items'))
-    return render_review_page(
-        active='po', title=f'Review Purchase Order {d["no"]}', document_type='Purchase Order',
-        document_no=d['no'], status=d['status'], created_at=d.get('created_at'),
-        linked_records=([{'label':'PR-PO verification','value':'Review sources before final PO approval','url':url_for('nlp')}] if revised_procurement.enabled(globals()) else [])+[
-            {'label': 'Related PR', 'value': d.get('pr_no') or 'No linked PR'},
-            {'label': 'Source AOQ', 'value': d.get('aoq_no') or 'No linked AOQ'},
-        ],
-        summary=[
-            {'label': 'Supplier', 'value': d.get('supplier') or '—'},
-            {'label': 'Requesting Office', 'value': d.get('pr_office') or '—'},
-            {'label': 'Number of PO Items', 'value': len(po_items)},
-            {'label': 'PO Total', 'value': money_text(d.get('total'))},
-        ],
-        item_sections=[
-            review_section('Purchase Order Items for Approval', po_items, d['no'],
-                           'Double-check all descriptions, specifications, quantities, units, prices, and totals.'),
-            review_section('Compare with Approved AOQ', parse_items(d.get('aoq_items')), d.get('aoq_no') or 'AOQ',
-                           'Original winning offer for comparison. Review differences against the PO items above.', optional=True),
-            review_section('Compare with Approved PR', parse_items(d.get('pr_items')), d.get('pr_no') or 'PR',
-                           'Original requirements. Item correspondence remains subject to separate review.', optional=True),
-        ],
-        approve_url=url_for('po_approve', id=id), approve_label=f'Approve PO {d["no"]}',
-        approval_effect=('Final approval requires a recorded authorized PR-PO relationship and reviewed NLP evidence.' if revised_procurement.enabled(globals()) else 'Approval locks this PO and makes the linked PR–PO pair available for NLP Verification.'),
-        back_url=url_for('po'), print_url=url_for('po_print', id=id),
-        can_approve=d.get('status') == 'For Review' and revised_procurement.enabled(globals()) and revised_procurement.po_has_review(globals(),id),
-        approval_details=[('PO', d['no']), ('Supplier', d.get('supplier') or 'Not recorded'),
-                          ('Linked AOQ', d.get('aoq_no') or 'Not linked'), ('Amount', money_text(d.get('total')))],
-    )
+    return redirect(url_for('po',po_id=id))
 
 @app.route('/po/<int:id>/approve', methods=['POST'])
 def po_approve(id):
@@ -3599,7 +3577,7 @@ def nlp_review(id):
     if not row:
         flash('NLP result not found.')
         return redirect(url_for('nlp'))
-    if row.get('workflow_version') == 1:
+    if row.get('workflow_version') in (1,2):
         return revised_procurement.modern_review(globals(),dict(row))
     return revised_procurement.historical_review(globals(),dict(row))
 
@@ -3610,6 +3588,8 @@ def nlp_approve(id):
     if not row:
         flash('NLP result not found.')
         return redirect(url_for('nlp'))
+    if row.get('workflow_version') == 2:
+        abort(405,description='The final workspace saves post-approval NLP results separately. This endpoint cannot approve those results or receiving.')
     if row.get('workflow_version') == 1:
         if not revised_procurement.enabled(globals()):
             abort(409,description='The revised workflow is currently disabled.')

@@ -7,15 +7,30 @@
     const reviewer=form.elements.namedItem('review_supplier_index');
     const winner=form.elements.namedItem('winner_index');
     const loaded=form.elements.namedItem('offer_supplier_index');
-    const load=document.getElementById('loadSupplierReview');
-    const submitReview=()=>{action.value='review_supplier';form.requestSubmit(load);};
-    reviewer.addEventListener('change',submitReview);
+    // Keep source values compact and read-only until a correction is needed.
+    for(const row of form.querySelectorAll?.('[data-quotation]')||[]){
+      const fields=[...row.querySelectorAll('input:not([type="hidden"]),textarea')];
+      for(const field of fields)field.readOnly=Boolean(field.value.trim());
+      const correct=row.querySelector('[data-correct-quotation]');
+      correct?.addEventListener('click',()=>{
+        const editing=correct.getAttribute('aria-pressed')!=='true';
+        correct.setAttribute('aria-pressed',String(editing));
+        correct.textContent=editing?'Done':'Correct';
+        for(const field of fields)field.readOnly=!editing&&Boolean(field.value.trim());
+        if(editing)fields[0]?.focus();
+      });
+    }
+    let changingSupplier=false;
+    const submitReview=()=>{
+      const originalValidation=form.noValidate;
+      changingSupplier=true;form.noValidate=true;
+      try {action.value='review_supplier';form.requestSubmit();}
+      finally {form.noValidate=originalValidation;changingSupplier=false;}
+    };
     winner.addEventListener('change',()=>{if(winner.value){reviewer.value=winner.value;submitReview();}});
     form.addEventListener('submit',event=>{
-      const reviewing=event.submitter===load;
-      action.value=reviewing?'review_supplier':'save_ocr';
-      if(reviewing)delete form.dataset.confirm;
-      else form.dataset.confirm='Save the reviewed quotation and explicitly selected winning supplier?';
+      const reviewing=changingSupplier;
+      action.value=reviewing?'review_supplier':'save_selection';
       if(!reviewing && (!winner.value || winner.value!==loaded.value)){
         event.preventDefault();document.getElementById('aoq-review-message').textContent='Select and review the winning supplier before saving.';
       }

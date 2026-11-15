@@ -512,6 +512,12 @@ def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
     # signed zero, across PostgreSQL JSONB's numeric normalization.
     wire_items=[dict(item,**{key:str(item[key]) for key in ('qty','unit_cost','amount')}) for item in items]
     expected_revision=None if preview.get('_status')=='CONFIRMED' else revision(request.form.get('draft_revision'))
+    if request.form.get('approve_after_review')=='yes':
+        abort(400,description='Save Selection and Approve AOQ are separate actions. Reopen the current form.')
+    selected=request.form.getlist('selected_offer_index') if request.form.get('action')=='save_selection' and preview.get('_status')!='CONFIRMED' else None
+    if selected is not None and (not selected or len(selected)!=len(set(selected)) or any(not value.isdigit() or int(value)>=len(items) for value in selected)):
+        abort(400,description='Select actual quoted item rows before saving.')
+    subset=selected is not None and sorted(map(int,selected))!=list(range(len(items)))
     try:
         with transaction(api,read_committed=True) as (con,uid):
             con.execute("SET LOCAL lock_timeout = '5s'")
@@ -519,12 +525,30 @@ def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
             if preview.get('pr_id') is None and not revised_procurement.enabled(api):
                 abort(409,description='Independent AOQ saving is disabled until its database contract is authorized.')
             saver='save_reviewed_aoq_independent_v1' if preview.get('pr_id') is None else 'save_reviewed_aoq_v1'
+            if subset:
+                if preview.get('pr_id') is not None:abort(409,description='Partial selection for historical PR-linked AOQs requires a separately reviewed contract.')
+                saver='save_selected_aoq_independent_v2'
+                digest=revised_procurement.FINAL_ROUTINE_MD5.get(saver,'')
+                if not re.fullmatch('[0-9a-f]{32}',digest):abort(409,description='The source-item selection SQL fingerprint has not been reviewed. No rows were removed or saved.')
+                signature=revised_procurement.api_schema()+'.'+saver+'(uuid,bigint,text,integer,jsonb,jsonb,text,text,boolean,jsonb)'
+                ready=con.execute("""select coalesce(has_function_privilege(to_regprocedure(?),'EXECUTE'),false)
+                    and exists(select 1 from pg_catalog.pg_proc p join pg_catalog.pg_roles r on r.oid=p.proowner
+                      where p.oid=to_regprocedure(?) and p.prosecdef and r.rolname='psms_aoq_function_owner'
+                      and not r.rolsuper and not r.rolbypassrls and not r.rolcanlogin
+                      and 'row_security=on'=any(p.proconfig)
+                      and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+                      and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+                      and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+                        where a.privilege_type='EXECUTE' and a.grantee not in
+                          (p.proowner,coalesce((select oid from pg_catalog.pg_roles where rolname='psms_vercel_backend'),0)))) ready""",
+                    (signature,signature,digest)).fetchone()
+                if not ready or ready.get('ready') is not True:abort(409,description='Saving a subset of source items requires the reviewed selection SQL contract. No other items were silently removed.')
             result=con.execute(f'''select aoq_id,aoq_no,created,draft_revision
                 from {revised_procurement.api_schema()}.{saver}(
-                    ?::uuid,?::bigint,?::text,?::integer,?::jsonb,?::jsonb,?::text,?::text,?::boolean)''',
+                    ?::uuid,?::bigint,?::text,?::integer,?::jsonb,?::jsonb,?::text,?::text,?::boolean{',?::jsonb' if subset else ''})''',
                 (preview['draft_id'],expected_revision,
                  request.form.get('offer_review_token'),index,payload(corrections),payload(wire_items),custom,remarks,
-                 request.form.get('confirm_reviewed')=='yes')).fetchone()
+                 request.form.get('confirm_reviewed')=='yes')+((payload(sorted(map(int,selected))),) if subset else ())).fetchone()
             if (not result or type(result['aoq_id']) is not int or result['aoq_id']<=0
                     or not isinstance(result['aoq_no'],str) or type(result['created']) is not bool
                     or type(result['draft_revision']) is not int or result['draft_revision']<=0):
@@ -555,13 +579,14 @@ def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
         response.headers['Cache-Control']='private, no-store'
         return response
     session.pop('aoq_draft_id',None)
-    flash('Confirmed AOQ saved in PostgreSQL; procurement approval remains separate.' if result['created'] else
+    flash('Selection saved for review; AOQ approval remains separate.' if result['created'] else
           'This confirmed AOQ is already saved. No duplicate was created.')
-    return redirect(url_for('aoq_review',id=result['aoq_id']))
+    return redirect(url_for('aoq',view='records'))
 
 
 def aoq_post(api):
     action=request.form.get('action') or 'extract_ocr'
+    if action=='save_selection':action='save_ocr'
     if action=='save_ocr' and not revised_procurement.enabled(api):
         abort(409, description='Official AOQ saving requires the authorized revised workflow.')
     if action=='extract_ocr':return aoq_upload(api)
@@ -578,47 +603,32 @@ def aoq_post(api):
     from aoq_flexible import winning_offer_error,offer_supplier_error,reviewed_total
     suppliers=api['posted_aoq_suppliers'](preview);items=api['posted_aoq_items']()
     if len(items)>200 or len(suppliers)>100:abort(400)
-    positions=request.form.getlist('offer_source_index')
-    if positions:
-        current=str(preview.get('offer_supplier_index',''))
-        original=preview.get('suppliers') or []
-        if not current.isdigit() or int(current)>=len(original):abort(400,description='Reopen the source quotation.')
-        expected=len(original[int(current)].get('items') or [])
-        if (len(positions)!=len(items) or any(not re.fullmatch(r'[0-9]{1,3}',p) for p in positions)
-                or sorted(map(int,positions))!=list(range(expected))):
-            abort(400,description='Quotation row references changed. Reopen the source review.')
-        items=[item for _,item in sorted(zip(map(int,positions),items),key=lambda pair:pair[0])]
     try:index=int(request.form.get('winner_index') or -1)
     except ValueError:index=-1
     custom=(request.form.get('winner_custom') or '').strip()[:500]
     remarks=(request.form.get('remarks') or '').strip()[:5000]
     if action=='review_supplier':
         original=preview.get('suppliers') or []
-        # Changing the quotation being reviewed does not award that supplier.
-        target=request.form.get('review_supplier_index')
-        try:review_index=int(target) if target is not None else index
-        except (TypeError,ValueError):abort(400,description='Choose an extracted supplier quotation.')
-        reviewed=preview.setdefault('reviewed_offers',{})
-        current=preview.get('offer_supplier_index','')
-        if items and isinstance(current,str) and current.isdigit() and int(current)<len(original):
-            error=offer_supplier_error(preview,int(current),items,request.form)
-            if error:abort(400,description=error)
-            reviewed[current]=items
-        if 0<=review_index<len(original) and len(suppliers)==len(original):
-            preview.update(offer_items=[dict(i) for i in reviewed.get(str(review_index),original[review_index].get('items') or [])],offer_supplier_index=str(review_index),offer_custom_winner='')
+        if 0<=index<len(original) and len(suppliers)==len(original):
+            preview.update(offer_items=[dict(i) for i in original[index].get('items') or []],offer_supplier_index=str(index),offer_custom_winner='')
         elif custom and index==-1:preview.update(offer_items=[],offer_supplier_index='custom',offer_custom_winner=custom)
         else:abort(400,description='Select a quotation supplier first.')
-        preview.update(offer_review_token=secrets.token_urlsafe(24),supplier_form=suppliers,remarks=remarks,
-                       selected_winner_index=index if 0<=index<len(original) else -1)
+        preview.update(offer_review_token=secrets.token_urlsafe(24),supplier_form=suppliers,remarks=remarks,selected_winner_index=index)
     elif action=='save_ocr':
         if 0<=index<len(suppliers):winner=suppliers[index]['supplier']
         elif custom:winner=custom
         else:winner=''
         if not winner or sum(api['_norm_text'](s.get('supplier'))==api['_norm_text'](winner) for s in suppliers)>1:abort(400,description='Choose one unambiguous winning supplier.')
-        error=winning_offer_error(items) or offer_supplier_error(preview,index,items,request.form)
+        selected_items=items
+        if request.form.get('action')=='save_selection':
+            selected=request.form.getlist('selected_offer_index')
+            if not selected or len(selected)!=len(set(selected)) or any(not value.isdigit() or int(value)>=len(items) for value in selected):
+                abort(400,description='Select actual quoted item rows before saving.')
+            selected_items=[items[position] for position in sorted(map(int,selected))]
+        error=winning_offer_error(selected_items) or offer_supplier_error(preview,index,items,request.form)
         if any(s.get('items') for s in preview.get('suppliers') or []) and len(suppliers)!=len(preview['suppliers']):error='Supplier rows changed; reopen Review.'
         if error:abort(400,description=error)
-        amount=round(reviewed_total(items),2)
+        amount=round(reviewed_total(selected_items),2)
         if amount<=0:abort(400,description='Reviewed total must be positive.')
         return aoq_save_function(api,preview,suppliers,items,index,custom,remarks)
     elif action not in ('clear_ocr','prepare_preview'):abort(400)
