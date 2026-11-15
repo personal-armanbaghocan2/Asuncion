@@ -2884,8 +2884,10 @@ def render_ppmp_category(ptype, creation_validation=None):
     data, used_rows, total_excel_rows = available_excel_rows(ptype)
     # available_excel_rows returns the whole authorized workbook source, not a
     # paginated screen. Filter before rendering without mutating original rows.
-    if item_filters['item_source']=='extracted' or item_filters['item_review']=='REVIEWED':
-        data=[]  # Workbook source rows have no persisted human-review receipt.
+    if item_filters['item_source']=='extracted':
+        data=[]
+    elif item_filters['item_review']:
+        data=[row for row in data if bool(ppmp_creation.source_reviewed(row,ptype))==(item_filters['item_review']=='REVIEWED')]
     if item_filters['item_q']:
         keys=('Item Name','General Description and Objective of the Project to be Procured',
               'Quantity and Size of the Project to be Procured','Quantity','Unit','Estimated Unit Cost',
@@ -2922,7 +2924,8 @@ def render_ppmp_category(ptype, creation_validation=None):
     return render_template('ppmp_type.html', active='ppmp', ptype=ptype, data=data, used_count=len(used_rows), total_excel_rows=total_excel_rows, title=f'PPMP - {ptype}', excel=os.path.basename(EXCEL_PATH), excel_meta=meta, ocr_state=ocr_state, ocr_rows=ocr_rows, ocr_field_labels=ocr_field_labels, creation_token=ppmp_creation.creation_token(ptype), creation_validation=creation_validation,
                            item_filters=item_filters,draft_page=draft_page,draft_url=draft_url,
                            selected_excel=request.form.getlist('rows') if creation_validation else [],
-                           selected_ocr=request.form.getlist('ocr_rows') if creation_validation else [])
+                           selected_ocr=request.form.getlist('ocr_rows') if creation_validation else [],
+                           source_item_reviewed=ppmp_creation.source_reviewed)
 
 
 @app.route('/ppmp/<ptype>/sources/<uuid:sid>')
@@ -3662,13 +3665,15 @@ def iar():
     rows=paged_q(f'''select i.*, p.no po_no, p.supplier, n.no nlp_no, aq.no aoq_no, r.no pr_no
               from iar i
               left join po p on p.id=i.po_id
-              left join nlp n on n.po_id=p.id
+              left join nlp n on n.id=(select n2.id from nlp n2 where n2.po_id=p.id and n2.status='Approved' order by n2.id desc limit 1)
               left join aoq aq on aq.id=p.aoq_id
               left join pr r on r.id={revised_procurement.pr_reference(globals())}
               order by i.id desc''')
     _,_,_,_,_,raw_pos = next_available_records('iar')
-    pos=[]
+    pos=[];seen=set()
     for p in raw_pos:
+        if p['id'] in seen:continue
+        seen.add(p['id'])
         d=dict(p)
         trace=trace_for_po(p)
         n=q("select no,result from nlp where po_id=? and status='Approved' order by id desc limit 1",(p['id'],),one=True)
@@ -3677,11 +3682,12 @@ def iar():
         d['nlp_result']=n['result'] if n else ''
         d['item_preview']=item_preview_from_json(d.get('items'),limit=1)
         pos.append(d)
-    return render_template('iar.html', active='iar', rows=rows, pos=pos, title='IAR/AIR')
+    return render_template('iar.html', active='iar', rows=rows, pos=pos, title='IAR/AIR',
+                           receiving_workflow_ready=revised_procurement.enabled(globals()))
 
 @app.route('/iar/<int:id>/view')
 def iar_review(id):
-    row = q(f'''select i.*, p.no po_no, p.items po_items, p.supplier,
+    row = q(f'''select i.*, p.no po_no, p.items po_items, p.status po_status, p.supplier,
                       aq.no aoq_no, r.no pr_no, n.no nlp_no, n.result nlp_result
                from iar i
                join po p on p.id=i.po_id
@@ -3694,6 +3700,14 @@ def iar_review(id):
         return redirect(url_for('iar'))
     d = dict(row)
     iar_items = parse_items(d.get('items'))
+    receiving_items=[];receiving_ready=d.get('status')=='For Review' and d.get('po_status')=='Approved' and revised_procurement.enabled(globals());receiving_error=''
+    if d.get('status')=='For Review' and not receiving_ready:
+        receiving_error='The source PO must remain approved and the authorized receiving workflow must be active.'
+    if receiving_ready:
+        import iar_receiving
+        try:receiving_items=iar_receiving.prepare(iar_items,parse_items(d.get('po_items')))
+        except ValueError as error:receiving_ready=False;receiving_error=str(error)
+    elif d.get('status')=='Approved':receiving_items=iar_items
     return render_review_page(
         active='iar', title=f'Review IAR {d["no"]}', document_type='Inspection and Acceptance Report',
         document_no=d['no'], status=d['status'], created_at=d.get('created_at'),
@@ -3706,7 +3720,7 @@ def iar_review(id):
         summary=[
             {'label': 'Supplier', 'value': d.get('supplier') or '—'},
             {'label': 'Delivery Items', 'value': len(iar_items)},
-            {'label': 'Inventory Effect', 'value': 'Accepted items will be added to Inventory after approval.'},
+            {'label': 'Inventory Effect', 'value': 'Only positive accepted stock is posted after inspection approval.'},
         ],
         item_sections=[
             review_section('Purchase Order Items', parse_items(d.get('po_items')), d.get('po_no') or 'PO',
@@ -3715,73 +3729,23 @@ def iar_review(id):
                            'Verify every delivered item and quantity before accepting the IAR.'),
         ],
         approve_url=url_for('iar_approve', id=id), approve_label=f'Approve IAR {d["no"]}',
-        approval_effect='Approval accepts the delivery and adds every listed IAR item to the system Inventory.',
+        approval_effect='Approval records the inspection findings and posts only accepted quantities to Inventory.',
         back_url=url_for('iar'), print_url=url_for('iar_print', id=id),
-        can_approve=d.get('status') != 'Approved',
-        receiving_items=iar_items,
+        can_approve=receiving_ready,
+        text_blocks=[{'title':'Receiving unavailable','content':receiving_error}] if receiving_error else [],
+        receiving_items=receiving_items,
     )
 
-def confirmed_receiving_items(items, form):
-    """Record actual receipts separately, under the IAR approval transaction."""
-    from procurement_item_contract import decimal_number, number_text
-    if not isinstance(items, list) or not items or any(not isinstance(item, dict) for item in items):
-        raise ValueError('IAR items are missing or invalid. Review the delivery before approval.')
-    confirmed = []
-    for index, source in enumerate(items):
-        item = dict(source)
-        if item.get('_Receiving Contract Version'):
-            ordered = decimal_number(item.get('ordered_qty'))
-            received = decimal_number(form.get(f'received_qty_{index}'))
-            if ordered is None or ordered <= 0 or received is None or received <= 0 or received > ordered:
-                raise ValueError(f'IAR item {index + 1}: enter a positive actual received quantity no greater than the ordered quantity.')
-            item['received_qty'] = number_text(received)
-            item['_Receiving Quantity Difference'] = number_text(received - ordered)
-        category = form.get(f'inventory_category_{index}')
-        if category is None:
-            category = item.get('_Inventory Category') or item.get('inventory_category') or item.get('category') or item.get('Category')
-        if category not in ('Equipment', 'Consumable'):
-            raise ValueError(f'IAR item {index + 1}: explicitly review Equipment or Consumable classification before approval.')
-        item['_Inventory Category'] = category
-        confirmed.append(item)
-    return confirmed
+def confirmed_receiving_items(items,form,po_items=None):
+    """Explicit source-bound inspection; received_qty means accepted quantity."""
+    import iar_receiving
+    return iar_receiving.confirm(items,form,po_items)
 
 
 def iar_inventory_items(items_json):
-    """Validate every receipt before allocating identifiers or writing inventory."""
-    from aoq_flexible import review_number
-
-    items = parse_items(items_json)
-    if not isinstance(items, list) or not items:
-        raise ValueError('IAR items are missing or invalid. Review the delivery before approval.')
-    receipts = []
-    for index, it in enumerate(items, 1):
-        if not isinstance(it, dict):
-            raise ValueError(f'IAR item {index} is invalid. Review the delivery before approval.')
-
-        def value(*aliases):
-            for alias in aliases:
-                candidate = it.get(alias)
-                if candidate is not None and candidate != '':
-                    return candidate
-            return None
-
-        item_name = value('item', 'Item Name')
-        unit = value('unit', 'Unit')
-        for label, text in (('item name', item_name), ('unit', unit)):
-            if not isinstance(text, str) or not text.strip():
-                raise ValueError(f'IAR item {index}: {label} is missing or invalid. Correct it before approval.')
-        qty = review_number(value('received_qty', 'qty', 'Quantity'))
-        unit_cost = review_number(value('unit_cost', 'Unit Cost', 'Estimated Unit Cost'))
-        for label, number in (('quantity', qty), ('unit cost', unit_cost)):
-            if number is None or number < 0:
-                raise ValueError(f'IAR item {index}: {label} must be a valid, non-negative number. Correct it before approval.')
-        description = it.get('description') or it.get('Description / Specification') or it.get('Description') or ''
-        cat = value('_Inventory Category', 'inventory_category', 'category', 'Category')
-        if cat not in ('Equipment', 'Consumable'):
-            raise ValueError(f'IAR item {index}: reviewed inventory classification is required before approval.')
-        source_dataset_id = it.get('_Dataset Record ID') or it.get('_dataset_record_id')
-        receipts.append((item_name, description, cat, qty, unit, unit_cost, source_dataset_id))
-    return receipts
+    """Only positive, explicitly accepted stock reaches inventory."""
+    import iar_receiving
+    return iar_receiving.inventory_receipts(parse_items(items_json))
 
 
 @app.route('/iar/<int:id>/approve', methods=['POST'])
@@ -3791,6 +3755,8 @@ def iar_approve(id):
         return guard
     con = conn()
     try:
+        # Revalidate active actor/session in the same transaction as stock writes.
+        uid=durable_ocr._active(con)
         # Repeated/concurrent requests must check status after obtaining this lock.
         row = con.execute('''select i.*, p.no po_no from iar i
                              join po p on p.id=i.po_id where i.id=?
@@ -3803,8 +3769,28 @@ def iar_approve(id):
             con.rollback()
             flash('IAR is already approved.')
             return redirect(url_for('iar_review', id=id))
+        if row['status']!='For Review':
+            con.rollback();abort(409,description='Only an IAR For Review can record inspection approval.')
+        if not revised_procurement.enabled(globals()):
+            con.rollback();abort(409,description='Receiving requires the authorized procurement workflow.')
+        revised_procurement.apply_release_context(con)
+        con.execute("select set_config('psms.workbook_actor',?,true)",
+                    (json.dumps({'uid':uid,'sid':server_sessions.token_hash(session.get(server_sessions.COOKIE_KEY))}),))
         try:
-            confirmed = confirmed_receiving_items(parse_items(row['items']), request.form)
+            po=con.execute('select * from '+revised_procurement.api_schema()+'.lock_po_for_workflow_v2(?::bigint,?::text)',
+                           (row['po_id'],'iar')).fetchone()
+        except Exception as error:
+            state=getattr(error,'sqlstate',None)
+            if state in ('PA002','PA003','PA004','PA007'):
+                abort({'PA002':409,'PA003':403,'PA004':404,'PA007':409}[state],description='The approved PO or its authorized verification is no longer eligible for receiving.')
+            raise
+        if not po or po['status']!='Approved':abort(409,description='An approved eligible PO is required.')
+        try:
+            confirmed = confirmed_receiving_items(parse_items(row['items']), request.form,parse_items(po['items']))
+            recorded_at=now()
+            for item in confirmed:
+                item['_Inspected By']=session.get('username')
+                item['_Inspection Recorded At']=recorded_at
             receipts = iar_inventory_items(json.dumps(confirmed))
         except ValueError as exc:
             con.rollback()
@@ -3826,14 +3812,14 @@ def iar_approve(id):
                 raise RuntimeError('IAR inventory receipt was not inserted.')
         if con.execute('update iar set status=? where id=?', ('Approved', id)).rowcount != 1:
             raise RuntimeError('IAR approval status was not updated.')
-        log('Approved IAR', 'IAR', row['no'], 'Delivery accepted and items added to inventory', connection=con)
+        log('Approved IAR', 'IAR', row['no'], f'Inspection approved; {len(receipts)} accepted stock line(s) posted. Rejected, damaged and missing quantities remain in IAR evidence.', connection=con)
         con.commit()
     except Exception:
         con.rollback()
         raise
     finally:
         con.close()
-    flash('IAR approved. Delivery items were added to inventory.')
+    flash('Inspection approved. Only accepted stock quantities were added to inventory.')
     return redirect(url_for('iar'))
 
 @app.route('/iar/<int:id>/print')

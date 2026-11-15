@@ -30,7 +30,7 @@
         if (control) control.value = value(recorded[label]);
       });
       const status = document.getElementById('sourceReviewStatus');
-      if (status) status.textContent = 'Review not recorded. Saving source changes does not confirm item verification or procurement approval.';
+      if (status) status.textContent = items[index].sourceReviewed ? 'Human review recorded for the saved values. Changes require a new confirmation; procurement approval remains separate.' : 'Review not recorded. Confirm the selected values before saving; procurement approval remains separate.';
     }
     if (saved) { document.getElementById('saved_item_index').value=index; original=JSON.stringify(fields()); }
     window.resizeEditorFields?.(dialog);
@@ -44,6 +44,7 @@
   function open() {
     if (!items.length) { window.psmsNotify('Select at least one PPMP item to edit.'); return; }
     launcher=document.activeElement; index=0; select.replaceChildren();
+    const reviewConfirm=document.getElementById('sourceReviewConfirm'); if(reviewConfirm) reviewConfirm.checked=false;
     items.forEach((it,i) => { const option=document.createElement('option'); option.value=i; option.textContent=`${i+1}. ${it.general || it.quantity || 'PPMP item'}`; select.append(option); });
     if (!saved) original=JSON.stringify(items);
     window.closeNavigation?.(); dialog.showModal(); load();
@@ -68,7 +69,7 @@
     table.querySelectorAll('[data-review-row]').forEach(button => button.addEventListener('click', () => {
       const row=button.closest('tr'), it={row:button.dataset.reviewRow};
       it.sourceSignature=row.querySelector(`[name="source_signature_${it.row}"]`)?.value || '';
-      it.sourceFields=sourceFields(row);
+      it.sourceFields=sourceFields(row); it.sourceReviewed=row.dataset.sourceReviewed==='yes';
       keys.forEach(k => { it[k]=row.querySelector(`[name="${k}_${it.row}"]`)?.value || ''; });
       it.budget=cleanMoney(it.budget); items=[it]; open();
     }));
@@ -76,7 +77,7 @@
       items=Array.from(table.querySelectorAll('input[name=rows][type=checkbox]:checked')).map(cb => {
         const row=cb.closest('tr'), it={row:cb.value};
         it.sourceSignature=row.querySelector(`[name="source_signature_${it.row}"]`)?.value || '';
-        it.sourceFields=sourceFields(row);
+        it.sourceFields=sourceFields(row); it.sourceReviewed=row.dataset.sourceReviewed==='yes';
         keys.forEach(k => { it[k]=row.querySelector(`[name="${k}_${cb.value}"]`)?.value || ''; }); it.budget=cleanMoney(it.budget); return it;
       }); open();
     });

@@ -93,6 +93,7 @@ def create_nlp(api,identifier):
 def create_iar(api, identifier):
     import revised_procurement_v1 as revised_procurement
     secure_receiving=revised_procurement.enabled(api)
+    if not secure_receiving:abort(409,description='IAR creation requires the authorized procurement workflow.')
     with locked_parent(api,'po',identifier,'iar','po_id') as (con,row,existing):
         eligible=None
         if row and not existing:
@@ -109,12 +110,11 @@ def create_iar(api, identifier):
             return redirect(url_for('iar'))
         no=api['next_document_no']('IAR','IAR','iar',connection=con)
         items=api['assign_item_identifiers'](api['parse_items'](row['items']),'_IAR Item ID',no)
-        for item in items:
-            item['_Receiving Contract Version']=1
-            item['ordered_qty']=api['value_any'](item,'qty','Quantity',default='')
-            item['received_qty']=''
+        import iar_receiving
+        try:items=iar_receiving.prepare(items,api['parse_items'](row['items']))
+        except ValueError as error:abort(422,description=str(error))
         con.execute('insert into iar(no,po_id,status,created_at,items) values(?,?,?,?,?)',
                     (no,row['id'],'For Review',api['now'](),json.dumps(items,default=str)))
         api['log']('Created IAR','IAR',no,'IAR created for review; inventory is updated only after approval',connection=con)
-    flash('IAR created. Approve actual receiving before adding inventory.')
+    flash('IAR created. Record actual delivery and inspection findings before approval; no stock was added.')
     return redirect(url_for('iar'))
