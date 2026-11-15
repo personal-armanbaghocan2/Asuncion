@@ -578,17 +578,38 @@ def aoq_post(api):
     from aoq_flexible import winning_offer_error,offer_supplier_error,reviewed_total
     suppliers=api['posted_aoq_suppliers'](preview);items=api['posted_aoq_items']()
     if len(items)>200 or len(suppliers)>100:abort(400)
+    positions=request.form.getlist('offer_source_index')
+    if positions:
+        current=str(preview.get('offer_supplier_index',''))
+        original=preview.get('suppliers') or []
+        if not current.isdigit() or int(current)>=len(original):abort(400,description='Reopen the source quotation.')
+        expected=len(original[int(current)].get('items') or [])
+        if (len(positions)!=len(items) or any(not re.fullmatch(r'[0-9]{1,3}',p) for p in positions)
+                or sorted(map(int,positions))!=list(range(expected))):
+            abort(400,description='Quotation row references changed. Reopen the source review.')
+        items=[item for _,item in sorted(zip(map(int,positions),items),key=lambda pair:pair[0])]
     try:index=int(request.form.get('winner_index') or -1)
     except ValueError:index=-1
     custom=(request.form.get('winner_custom') or '').strip()[:500]
     remarks=(request.form.get('remarks') or '').strip()[:5000]
     if action=='review_supplier':
         original=preview.get('suppliers') or []
-        if 0<=index<len(original) and len(suppliers)==len(original):
-            preview.update(offer_items=[dict(i) for i in original[index].get('items') or []],offer_supplier_index=str(index),offer_custom_winner='')
+        # Changing the quotation being reviewed does not award that supplier.
+        target=request.form.get('review_supplier_index')
+        try:review_index=int(target) if target is not None else index
+        except (TypeError,ValueError):abort(400,description='Choose an extracted supplier quotation.')
+        reviewed=preview.setdefault('reviewed_offers',{})
+        current=preview.get('offer_supplier_index','')
+        if items and isinstance(current,str) and current.isdigit() and int(current)<len(original):
+            error=offer_supplier_error(preview,int(current),items,request.form)
+            if error:abort(400,description=error)
+            reviewed[current]=items
+        if 0<=review_index<len(original) and len(suppliers)==len(original):
+            preview.update(offer_items=[dict(i) for i in reviewed.get(str(review_index),original[review_index].get('items') or [])],offer_supplier_index=str(review_index),offer_custom_winner='')
         elif custom and index==-1:preview.update(offer_items=[],offer_supplier_index='custom',offer_custom_winner=custom)
         else:abort(400,description='Select a quotation supplier first.')
-        preview.update(offer_review_token=secrets.token_urlsafe(24),supplier_form=suppliers,remarks=remarks,selected_winner_index=index)
+        preview.update(offer_review_token=secrets.token_urlsafe(24),supplier_form=suppliers,remarks=remarks,
+                       selected_winner_index=index if 0<=index<len(original) else -1)
     elif action=='save_ocr':
         if 0<=index<len(suppliers):winner=suppliers[index]['supplier']
         elif custom:winner=custom

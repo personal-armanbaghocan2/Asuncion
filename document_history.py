@@ -182,7 +182,7 @@ def _catalog_sql(kind=None):
           ELSE coalesce(p.unclassified,0) END AS unclassified,coalesce(p.reviewed,0) AS reviewed,
         coalesce(p.converted,0) AS converted,coalesce(p.cancelled,0) AS cancelled,a.id AS draft_id,a.status AS aoq_status,
         a.official_aoq_id,official.no AS official_no,official.status AS official_status,
-        coalesce(official.no,'') AS search_references,
+        concat_ws(' ',official.no,official.winner) AS search_references,official.winner AS winning_supplier,
         CASE WHEN source_groups.total>0 THEN source_groups.total ELSE {fallback_total} END AS aoq_total,
         greatest({quote_count},coalesce(quotations.row_count,0)) AS quotation_count,
         {suppliers} AS supplier_count,r.status AS run_status,

@@ -8,7 +8,7 @@
     <h3 id="aoq-records-title"><span class="procurement-mini-mark">{{aoq_icon('document')}}</span>AOQ Records</h3>
   </div>
     <form method="get" action="{{url_for('aoq')}}#aoq-records" class="aoq-record-controls" role="search" data-auto-filters data-record-navigation>
-      <input type="hidden" name="_nav" value="{{navigation_token()}}">
+      <input type="hidden" name="_nav" value="{{navigation_token()}}"><input type="hidden" name="tab" value="history"><input type="hidden" name="view" value="records">
       {% if ocr_data %}<input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}">{% elif request.args.get('draft_id') %}<input type="hidden" name="draft_id" value="{{request.args.draft_id}}">{% endif %}
       {% for key,value in request.args.items() if key.startswith('h_') or key in ['quote_q','quote_supplier','quote_sort','quote_page'] %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}
       <div class="aoq-search"><label for="aoq-record-search">Search AOQ records</label><div class="aoq-search-field"><span aria-hidden="true">{{aoq_icon('search')}}</span><input id="aoq-record-search" name="q" type="search" maxlength="160" value="{{search_term}}" placeholder="AOQ number, supplier, item or description"></div></div>
@@ -28,7 +28,7 @@
   <div class="table-scroll"><table class="table aoq-record-table">
     <thead><tr><th>AOQ No.</th><th>Uploaded File</th><th>Supplier (Winning)</th><th class="numeric">Amount</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>{% for r in rows %}<tr>
-      <td class="document-ref"><strong>{{r.no}}</strong>{% if r.pr_no %}<small class="muted">Historical PR: {{r.pr_no}}</small>{% endif %}</td>
+      <td class="document-ref"><strong>{{r.no}}</strong></td>
       <td><div class="aoq-file"><span class="aoq-file-icon {{'pdf' if (r.ocr_filename or '').lower().endswith('.pdf') else ''}}">{{aoq_icon('document')}}</span><div>{% if r.owned_source_id and not workflow_preview %}<a href="{{url_for('document_history_detail',sid=r.owned_source_id)}}">{{r.ocr_filename or 'Saved original'}}</a>{% else %}<span>{{r.ocr_filename or 'Original file not recorded'}}</span>{% endif %}<small class="muted">{{'Independent AOQ' if not r.pr_no else 'Retained source association'}}</small></div></div></td>
       <td><strong>{{r.winner or 'Not selected'}}</strong><small class="muted">{{r.item_preview or 'No winning items recorded'}}</small></td>
       <td class="numeric">{{r.winning_amount|money if r.winning_amount is not none else 'Not recorded'}}</td>
