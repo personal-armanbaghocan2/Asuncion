@@ -1,37 +1,13 @@
 {% extends 'base.html' %}
 {% from 'pr_po_verification_ui.html' import result_badge,comparison_table with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
-{% block content %}
-<div class="pr-po-simple">
-<section class="card"><h2>Purchase Request–Purchase Order Verification (PR–PO)</h2><p>Compare the items, quantities and specifications in the approved PR and created PO.</p>
-{% if not model_state.active %}<p class="warning-box">{{model_state.message}}</p>{% endif %}
-<form action="{{url_for('nlp')}}" method="{{'get' if workflow_preview else 'post'}}" class="pr-po-select">
-{% if workflow_preview %}<input type="hidden" name="_nav" value="{{navigation_token()}}">{% else %}<input type="hidden" name="csrf_token" value="{{csrf_token()}}">{% endif %}
-<label>Approved Purchase Request (PR)<select name="pr_id" required><option value="">Select Approved PR</option>{% for r in prs %}<option value="{{r.id}}" {{'selected' if selected_pr and selected_pr.id==r.id}}>{{r.no}} · {{r.office}}</option>{% endfor %}</select></label>
-<label>Created Purchase Order (PO)<select name="po_id" required><option value="">Select Created PO</option>{% for p in pos %}<option value="{{p.id}}" {{'selected' if selected_po and selected_po.id==p.id}}>{{p.no}} · {{p.supplier}}</option>{% endfor %}{% if selected_po and selected_po.id not in pos|map(attribute='id')|list %}<option value="{{selected_po.id}}" selected>{{selected_po.no}}</option>{% endif %}</select></label>
-{% if not workflow_preview %}<button class="btn primary" name="action" value="run" type="submit" {{'disabled' if not model_state.active or not prs or not pos}}>Run Verification</button>{% else %}<p>Read-only preview</p>{% endif %}
-</form>
-{% if verification %}{% set v=verification %}
-<div class="pr-po-result {{'pr-po-match' if v.display.status=='Match' else 'pr-po-attention'}}" role="status"><h3>Verification Result: {{result_badge(v.display)}}</h3><p>{{v.display.explanation}}</p></div>
-{{comparison_table(v.display)}}
-<div class="actions"><a class="btn" href="{{url_for('nlp_review',id=v.row.id)}}">View Results</a>
-{% if v.inspection_ready and not workflow_preview %}<a class="btn primary" href="{{url_for('iar',po_id=v.po.id)}}">Continue to Inspection &amp; Acceptance</a>{% else %}<button class="btn" disabled aria-disabled="true">Continue to Inspection &amp; Acceptance</button><small>Requires current matching evidence, authorized review and final PO approval.</small>{% endif %}</div>
-{% set row=v.row %}{% set comparison=v.comparison %}
-{% set can_authorize = row.status=='For Review' and not v.stale and row.technical_status=='MATCH' and comparison.technical_status=='MATCH' and v.score_ready and v.can_review_relationship and v.review_evidence_current %}
-{% if can_authorize and not workflow_preview %}<details class="pr-po-required-review"><summary>Required relationship review</summary>
-<form method="post" class="procurement-evidence-form" action="{{url_for('nlp_approve',id=row.id)}}" data-confirm="Record this reviewed official PR–PO relationship? Final PO approval remains separate.">
-<input type="hidden" name="csrf_token" value="{{csrf_token()}}">
-<ul>{% for line in comparison.rows %}<li>PR item {{line.pr_position}} → PO item {{line.po_position}}<input type="hidden" name="match_po_position" value="{{line.po_position}}"></li>{% endfor %}</ul>
-<label>Relationship and procurement-scope justification<textarea name="relationship_reason" minlength="10" maxlength="2000" required></textarea></label>
-<label>Supporting authorization/document reference<input name="evidence_reference" minlength="3" maxlength="500" required></label>
-<label class="review-confirm-check"><input type="checkbox" name="review_confirm" value="yes" required> I reviewed all original PR and PO items, specifications, quantities, units and authorized procurement scope.</label>
-<label class="review-confirm-check"><input type="checkbox" name="final_confirm" value="yes" required> I explicitly authorize recording this PR–PO relationship using the supporting evidence above.</label>
-<div class="form-actions"><button class="btn primary" type="submit">Record authorized relationship</button></div>
-</form>
-</details>{% endif %}
+{% block content %}<section class="card pr-po-simple"><h2>PR–PO Review</h2>
+{% if not historical|default(false) %}<form action="{{url_for('nlp')}}" method="post" class="pr-po-select"><input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+<label>Approved PR<select name="pr_id" required><option value="">Select Approved PR</option>{% for r in prs %}<option value="{{r.id}}" {{'selected' if selected_pr and selected_pr.id==r.id}}>{{r.no}} — {{r.office}}</option>{% endfor %}</select></label>
+<label>Approved PO<select name="po_id" required><option value="">Select Approved PO</option>{% for p in pos %}<option value="{{p.id}}" {{'selected' if selected_po and selected_po.id==p.id}}>{{p.no}} — {{p.supplier}}</option>{% endfor %}</select></label>
+<button class="btn primary" name="action" value="run" type="submit" {{'disabled' if not model_state.active or not prs or not pos or not final_contract_ready}}>Run Verification</button></form>
+{% if not final_contract_ready %}<p class="notice">Post-approval verification requires the reviewed SQL contract. No result will be fabricated.</p>{% endif %}{% if not model_state.active %}<p class="notice">{{model_state.message}}</p>{% endif %}{% endif %}
+{% if verification %}{% set v=verification %}<h3>{{v.row.no}}</h3><p>PR {{v.pr.no}} · PO {{v.po.no}} · Verification status: {{v.row.status}}</p><div class="pr-po-result" role="status"><h3>{{result_badge(v.display)}}</h3><p>{{v.display.explanation}}</p></div>{{comparison_table(v.display)}}<p class="muted">Model prediction: {{v.row.result or 'Not recorded'}}{% if v.row.confidence is not none %} · Prediction confidence: {{'%.2f'|format(v.row.confidence)}}%{% endif %}. Prediction confidence is separate from discrepancy percentage.</p>
 {% endif %}
-</section>
-<section class="card"><h3>Verification Records</h3><div class="table-scroll"><table class="table"><thead><tr><th>Record No.</th><th>PR No.</th><th>PO No.</th><th>Result</th><th>Finding</th><th>Reviewed By</th><th>Date</th><th>Action</th></tr></thead><tbody>
-{% for row in rows %}{% set d=record_displays.get(row.id) if record_displays is defined else none %}<tr><td>{{row.no}}</td><td>{{row.pr_no or 'Not recorded'}}</td><td>{{row.po_no}}</td><td>{{result_badge(d) if d else 'Needs Review (Not calculated)'}}</td><td>{{d.explanation if d else 'Open saved findings.'}}</td><td>{{row.reviewed_by or 'Not reviewed'}}</td><td>{{row.reviewed_at|philippine_time if row.reviewed_at else row.created_at|philippine_time if row.created_at else 'Not recorded'}}</td><td><a class="btn small" href="{{url_for('nlp_review',id=row.id)}}">View Results</a></td></tr>{% else %}<tr><td colspan="8">No saved verification records.</td></tr>{% endfor %}
-</tbody></table></div></section></div>
-{% endblock %}
+{% if not historical|default(false) %}<h3>Verification Records</h3><div class="table-scroll"><table class="table"><thead><tr><th>Record</th><th>PR</th><th>PO</th><th>Result</th><th>Status</th><th>Action</th></tr></thead><tbody>{% for saved in rows %}<tr><td>{{saved.no}}</td><td>{{saved.pr_no or 'Not recorded'}}</td><td>{{saved.po_no}}</td><td>{{result_badge(record_displays[saved.id])}}</td><td>{{saved.status}}</td><td><a class="btn small" href="{{url_for('nlp',verification_id=saved.id)}}">View Results</a></td></tr>{% else %}<tr><td colspan="6">No saved verification results.</td></tr>{% endfor %}</tbody></table></div>{% if record_pagination %}<nav>{% if record_pagination.page>1 %}<a class="btn" href="{{pagination_url(record_pagination.page-1)}}">Previous</a>{% endif %}{% if record_pagination.has_next %}<a class="btn" href="{{pagination_url(record_pagination.page+1)}}">Next</a>{% endif %}</nav>{% endif %}{% endif %}
+</section>{% endblock %}
