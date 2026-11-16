@@ -3591,7 +3591,7 @@ def nlp_approve(id):
     if row.get('workflow_version') == 2:
         if not revised_procurement.enabled(globals()):
             abort(409,description='The authorized relationship-review workflow is unavailable.')
-        return revised_procurement.approve_verification(globals(),dict(row))
+        return revised_procurement.staged_verification(globals(),dict(row))
     if row.get('workflow_version') == 1:
         if not revised_procurement.enabled(globals()):
             abort(409,description='The revised workflow is currently disabled.')

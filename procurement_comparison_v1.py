@@ -291,12 +291,26 @@ def compare(pr_items,po_items,*,semantic_candidates=(),manual_mapping=None):
             or len(set(manual_mapping))!=len(manual_mapping)):
             raise ValueError('INVALID_ITEM_CORRESPONDENCE')
     lcounts=Counter(norm(row['name']) for row in left);rcounts=Counter(norm(row['name']) for row in right)
+    # Repeated names need more evidence, not positional allocation. Resolve
+    # only a unique, reciprocal, completely compliant same-name counterpart.
+    # Identical duplicates and any unknown/conflicting check stay unresolved.
+    exact_options={}
+    if manual_mapping is None:
+        for row in left:
+            name=norm(row['name'])
+            if name and (lcounts[name]>1 or rcounts[name]>1):
+                exact_options[row['position']]=[offer['position'] for offer in right
+                    if norm(offer['name'])==name and
+                    all(check['state']=='MATCH' for check in check_pair(row,offer,'EXACT_NAME'))]
     used=set();rows=[]
     for index,row in enumerate(left):
         target=None;identity='UNRESOLVED';score=None
         if manual_mapping is not None:target=manual_mapping[index];identity='HUMAN_CONFIRMED'
         elif row['name'] and lcounts[norm(row['name'])]==rcounts[norm(row['name'])]==1:
             target=next(r['position'] for r in right if norm(r['name'])==norm(row['name']));identity='EXACT_NAME'
+        elif (len(exact_options.get(row['position'],[]))==1 and
+              sum(exact_options[row['position']][0] in options for options in exact_options.values())==1):
+            target=exact_options[row['position']][0];identity='EXACT_NAME'
         else:
             ranked=sorted((v for v in semantic_candidates if v['pr_position']==row['position']),key=lambda v:v['similarity'],reverse=True)
             if ranked:target=ranked[0]['po_position'];score=ranked[0]['similarity'];identity='CANDIDATE'
