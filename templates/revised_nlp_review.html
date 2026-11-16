@@ -6,5 +6,5 @@
 <div class="pr-po-result {{'pr-po-match' if display.status=='Match' else 'pr-po-attention'}}"><h3>Verification Result: {{result_badge(display)}}</h3><p>{{display.explanation}}</p></div>
 <div class="pr-po-documents">{{document_panel('Purchase Request (PR)',pr_items)}}{{document_panel('Purchase Order (PO)',po_items)}}</div>
 <h3>Discrepancy Details</h3>{{findings_table(display)}}
-<div class="actions"><a class="btn" href="{{url_for('nlp') if historical|default(false) else url_for('nlp',pr_id=pr.id,po_id=po.id,verification_id=row.id)}}">Back to PR–PO Review</a></div>
+<div class="actions"><a class="btn" href="{{url_for('nlp')}}">Back to PR–PO Review</a></div>
 </section></div>{% endblock %}

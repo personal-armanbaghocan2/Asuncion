@@ -174,11 +174,37 @@ def facts(row):
     return {attribute:list({json.dumps(value,sort_keys=True):value for value in values}.values())
             for attribute,values in result.items()}
 
+def explicit_product_kind(row):
+    """Narrow source evidence, not a general semantic classifier.
+
+    Require both a literal product name and corroborating technical attributes.
+    Composite/qualified names stay unresolved. These disjoint kinds establish
+    non-equivalence only; they never establish a match or a quantity conversion.
+    """
+    name=norm(row['name']);attributes=facts(row)
+    if re.search(r'\b(?:kit|bundle|set|with|and|or|compatible|except|not)\b|[/+]',name):return None
+    if re.search(r'\b(?:not|except|optional|alternative|compatible|without)\b',row['description'],re.I):return None
+    storage=bool(attributes.get('capacity') and attributes.get('USB interface'))
+    paper=bool(attributes.get('paper size') and attributes.get('paper weight'))
+    if storage and paper:return None
+    if (re.match(r'^(?:usb )?flash (?:drive|disk)\b',name)
+            and storage):
+        return 'USB flash storage'
+    if (re.match(r'^(?:(?:a[0-6]|letter|legal) )?(?:copy|bond) paper\b',name)
+            and paper):
+        return 'Copy paper'
+    return None
+
+
 def check_pair(left,right,identity):
     findings=[]
     def add(attribute,state,requested,offered):
         findings.append(dict(attribute=attribute,state=state,requested=requested,offered=offered,
                              conditional_on_identity=identity=='CANDIDATE'))
+    left_kind,right_kind=explicit_product_kind(left),explicit_product_kind(right)
+    if left_kind and right_kind and left_kind!=right_kind:
+        findings.append(dict(attribute='source-backed product kind',state='MISMATCH',
+            requested=left_kind,offered=right_kind,conditional_on_identity=False))
     lq,rq=number(left['quantity']),number(right['quantity'])
     add('quantity','UNKNOWN' if left['conflicting_quantity'] or right['conflicting_quantity'] or lq is None or rq is None or lq<=0 or rq<=0 else 'MATCH' if lq==rq else 'MISMATCH',left['quantity'],right['quantity'])
     lu,ru=norm(left['unit']),norm(right['unit'])
