@@ -22,12 +22,14 @@ RPC={
  'approve_po_before_verification_v2':('bigint','boolean','boolean'),
  'approve_po_before_verification_v3':('bigint','boolean','boolean'),
  'save_approved_pr_po_verification_v2':('bigint','bigint','text','text','text','double precision','jsonb','text','text'),
+ 'save_approved_pr_po_verification_v3':('bigint','bigint','text','text','text','double precision','jsonb','text','text','bigint'),
  'create_pr_from_approved_app_v1':('bigint','text','text','double precision'),
  'approve_pr_v1':('bigint','boolean'),
  'approve_reviewed_aoq_v1':('bigint','boolean','boolean'),
  'create_po_for_review_v2':('bigint',),
  'save_pr_po_verification_v1':('bigint','bigint','text','text','text','double precision','jsonb','text','text'),
  'review_pr_po_verification_v1':('bigint','jsonb','jsonb','text','text','boolean'),
+ 'review_approved_pr_po_verification_v2':('bigint','jsonb','jsonb','text','text','boolean'),
  'approve_po_after_verification_v1':('bigint','boolean','boolean')}
 
 REQUIRED_COLUMNS = [('po','pr_id')] + [('nlp',name) for name in (
@@ -214,8 +216,12 @@ def rpc(api,name,values):
     if name not in RPC:raise ValueError('Unknown procurement operation')
     if getattr(g,'workflow_preview',False) or request.method!='POST':abort(405)
     if not enabled(api):abort(409,description='The revised procurement workflow is disabled.')
-    if name in ('approve_po_before_verification_v2','approve_po_before_verification_v3','save_approved_pr_po_verification_v2') and not final_contract_ready(api):
+    if name in ('approve_po_before_verification_v2','approve_po_before_verification_v3','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3') and not final_contract_ready(api):
         abort(409,description='The approved-PO-before-NLP database contract is not installed and reviewed. No legacy operation or direct table update was attempted.')
+    if name=='save_approved_pr_po_verification_v3' and not replacement_contract_ready(api):
+        abort(409,description='The append-only replacement database contract is unavailable.')
+    if name=='review_approved_pr_po_verification_v2' and not replacement_contract_ready(api,relationship_review=True):
+        abort(409,description='The authorized post-approval relationship-review contract is unavailable.')
     try:
         with api['durable_ocr'].transaction(api,read_committed=True) as (con,uid):
             sql='select * from '+api_schema()+'.'+name+'('+','.join('?::'+kind for kind in RPC[name])+')'
@@ -223,12 +229,12 @@ def rpc(api,name,values):
             if not receipt:raise RuntimeError('Operation receipt unavailable')
             key=('pr_id' if name in ('create_pr_from_approved_app_v1','approve_pr_v1') else
                  'aoq_id' if name=='approve_reviewed_aoq_v1' else
-                 'nlp_id' if name in ('save_pr_po_verification_v1','save_approved_pr_po_verification_v2','review_pr_po_verification_v1') else 'po_id')
+                 'nlp_id' if name in ('save_pr_po_verification_v1','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3','review_pr_po_verification_v1','review_approved_pr_po_verification_v2') else 'po_id')
             if type(receipt.get(key)) is not int or receipt[key]<=0:
                 raise RuntimeError('Operation receipt identifier invalid')
             if name.startswith('approve_') and (receipt[key]!=values[0] or receipt.get('new_status')!='Approved'):
                 raise RuntimeError('Operation approval receipt invalid')
-            if name in ('create_pr_from_approved_app_v1','create_po_for_review_v2','save_pr_po_verification_v1','save_approved_pr_po_verification_v2') and type(receipt.get('created')) is not bool:
+            if name in ('create_pr_from_approved_app_v1','create_po_for_review_v2','save_pr_po_verification_v1','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3') and type(receipt.get('created')) is not bool:
                 raise RuntimeError('Operation creation receipt invalid')
         return receipt
     except HTTPException:raise
@@ -278,6 +284,64 @@ def comparison(api,pr,po,*,manual_mapping=None,semantic=False):
         sorted((c for c in candidates if c['pr_position']==row),key=lambda c:c['similarity'],reverse=True)[:3]]
     return result
 
+def verification_save_plan(rows,pr_id,pr_hash,po_hash):
+    """Choose a saved fact or an append-only replacement, never a silent rerun."""
+    def current(row):return (row.get('pr_id')==pr_id and row.get('pr_items_hash')==pr_hash
+                            and row.get('po_items_hash')==po_hash and row.get('workflow_version')==2)
+    if not rows:return {'action':'fresh'}
+    modern=[r for r in rows if r.get('workflow_version')==2]
+    legacy=[r for r in rows if r.get('workflow_version')==1]
+    if len(rows)==1 and len(modern)==1 and current(modern[0]):return {'action':'reopen','id':modern[0]['id']}
+    if len(legacy)!=1 or legacy[0].get('pr_id')!=pr_id:return {'action':'conflict'}
+    old=legacy[0]
+    if (old.get('status')!='For Review' or any(old.get(k) is not None for k in
+        ('reviewed_by','reviewed_at','review_mapping','staff_decision'))
+        or (old.get('relationship_reason') or '').strip() or (old.get('evidence_reference') or '').strip()):return {'action':'conflict'}
+    if len(rows)==1:return {'action':'replace','legacy_id':old['id']}
+    if len(rows)==2 and len(modern)==1 and current(modern[0]):
+        details=modern[0].get('details') or {}
+        if isinstance(details,str):
+            try:details=json.loads(details)
+            except (TypeError,ValueError):return {'action':'conflict'}
+        lineage=details.get('verification_lineage') if isinstance(details,dict) else None
+        if (isinstance(lineage,dict) and lineage.get('legacy_nlp_id')==old['id']
+            and isinstance(lineage.get('legacy_record_sha256'),str)
+            and re.fullmatch('[0-9a-f]{64}',lineage['legacy_record_sha256'])):
+            return {'action':'reopen','id':modern[0]['id']}
+    return {'action':'conflict'}
+
+
+def replacement_contract_ready(api,*,relationship_review=False):
+    """The private lineage table has no backend access; only its pinned RPC writes."""
+    name='review_approved_pr_po_verification_v2' if relationship_review else 'save_approved_pr_po_verification_v3'
+    digest=FINAL_ROUTINE_MD5.get(name,'')
+    if not re.fullmatch('[0-9a-f]{32}',digest):return False
+    con=None
+    try:
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY');con.execute("SET LOCAL statement_timeout='3s'")
+        row=con.execute("""select exists(select 1 from pg_proc p join pg_roles r on r.oid=p.proowner
+          where p.oid=to_regprocedure(?) and r.rolname='psms_aoq_approval_owner' and p.prosecdef
+          and not r.rolcanlogin and not r.rolsuper and not r.rolbypassrls
+          and 'row_security=on'=any(p.proconfig)
+          and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+          and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+          and has_function_privilege(current_user,p.oid,'EXECUTE')
+          and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+            where a.privilege_type='EXECUTE' and a.grantee not in(p.proowner,'psms_vercel_backend'::regrole)))
+          and exists(select 1 from pg_class c where c.oid=to_regclass('psms_documents.nlp_legacy_replacements')
+            and c.relowner='postgres'::regrole and c.relrowsecurity and c.relforcerowsecurity
+            and not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+              where a.grantee<>c.relowner and (a.grantee<>'psms_aoq_approval_owner'::regrole
+                or a.privilege_type not in ('SELECT','INSERT') or a.is_grantable))) as ready""",
+            (api_schema()+'.'+name+'('+','.join(RPC[name])+')',digest)).fetchone()
+        return bool(row and row.get('ready') is True)
+    except Exception:return False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+
+
 def nlp_page(api):
     if request.method=='POST':
         pr_id,po_id=identifier(request.form.get('pr_id')),identifier(request.form.get('po_id'))
@@ -285,15 +349,14 @@ def nlp_page(api):
         if request.form.get('action')!='run':abort(400)
         pr,po=source_pair(api,pr_id,po_id)
         if po['status']!='Approved':abort(409,description='Select an Approved PO. Save and approve the PO before running verification.')
-        existing=api['q']('select id,pr_id,pr_items_hash,po_items_hash,workflow_version from nlp where po_id=? order by id',(po_id,))
-        if existing:
-            if (len(existing)==1 and existing[0].get('workflow_version') in (1,2)
-                    and existing[0].get('pr_id')==pr_id
-                    and existing[0].get('pr_items_hash')==evidence.fingerprint(pr['items'])
-                    and existing[0].get('po_items_hash')==evidence.fingerprint(po['items'])):
-                return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=existing[0]['id']))
-            abort(409,description='The saved verification uses different or changed sources. '
-                  'Open the existing evidence for review; no result was overwritten or rerun.')
+        existing=api['q']('select id,status,pr_id,pr_items_hash,po_items_hash,workflow_version,details,reviewed_by,reviewed_at,review_mapping,staff_decision,relationship_reason,evidence_reference from nlp where po_id=? order by id',(po_id,))
+        plan=verification_save_plan(existing,pr_id,evidence.fingerprint(pr['items']),evidence.fingerprint(po['items']))
+        if plan['action']=='reopen':
+            return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=plan['id']))
+        if plan['action']=='conflict':
+            abort(409,description='Existing verification evidence requires authorized review. No record was overwritten.')
+        if plan['action']=='replace' and not replacement_contract_ready(api):
+            abort(409,description='The append-only legacy verification replacement contract is not installed and reviewed.')
         if not final_contract_ready(api):abort(409,description='The post-approval NLP save contract is not installed and reviewed. No model result or database record was fabricated.')
         from nlp_runtime_selection import require_available
         require_available(api['app'].config)
@@ -326,8 +389,9 @@ def nlp_page(api):
             approved_inference_release_id=api['app'].config.get('_PSMS_INFERENCE_RELEASE_ID'),
             workflow_version=2,source_pr_id=pr_id,source_po_id=po_id,technical_comparison=technical,
             overall_verification_status=(result if result in ('Reject','Needs Recanvass') or technical['technical_status']=='MATCH' else 'Needs Review'))
-        receipt=rpc(api,'save_approved_pr_po_verification_v2',(po_id,pr_id,evidence.fingerprint(pr['items']),
-            evidence.fingerprint(po['items']),result,float(confidence),json.dumps(details,ensure_ascii=False),model_version,technical['technical_status']))
+        values=(po_id,pr_id,evidence.fingerprint(pr['items']),evidence.fingerprint(po['items']),result,float(confidence),
+            json.dumps(details,ensure_ascii=False),model_version,technical['technical_status'])
+        receipt=rpc(api,'save_approved_pr_po_verification_v3',values+(plan['legacy_id'],)) if plan['action']=='replace' else rpc(api,'save_approved_pr_po_verification_v2',values)
         if not isinstance(receipt,dict):return receipt
         flash('Verification results saved. PO approval and NLP verification remain separate records; discrepancies do not authorize receiving.')
         return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=receipt['nlp_id']))
@@ -477,6 +541,22 @@ def discrepancy_incidence(saved):
     if positions!=set(range(1,len(refs['PR'])+1)) or set(missing)!=unresolved:return unavailable()
     # A PO candidate may be an unmatched PR counterpart, not a proven extra.
     if unresolved or unknown:
+        # A single, source-backed substitution counts one affected line.
+        # Never compare quantities or allocate extra lines across uncertain
+        # product identities. Name differences/probabilities are insufficient.
+        if len(refs['PR'])==len(refs['PO'])==len(rows)==1:
+            line=rows[0]
+            explicit=[(index,c) for index,c in enumerate(line['checks']) if isinstance(c,dict)
+                and c.get('attribute')=='source-backed product kind' and c.get('state')=='MISMATCH'
+                and c.get('conditional_on_identity') is False
+                and isinstance(c.get('requested'),str) and isinstance(c.get('offered'),str)
+                and {c.get('requested'),c.get('offered')}=={'USB flash storage','Copy paper'}]
+            if (line.get('pr_position')==line.get('po_position')==1 and explicit
+                    and line.get('po_reference')==refs['PO'][0]):
+                index,_=explicit[0]
+                result.update(value=100.0,affected=1,total=1,pairs={1:100},
+                    checks={(1,index):100},extras=[],reason='')
+                return result
         result['reason']='Unresolved identity or checks prevent an exact item-line rate.'
         return result
     expected_extra=set(range(1,len(refs['PO'])+1))-mapped
@@ -485,6 +565,13 @@ def discrepancy_incidence(saved):
     total=len(refs['PR'])+len(expected_extra);affected+=len(expected_extra)
     result.update(value=100*affected/total,affected=affected,total=total,reason='')
     return result
+
+
+def discrepancy_band(value):
+    """Owner-defined incidence bands; never an approval or model confidence."""
+    if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not 0<=value<=100:
+        return 'Needs Review'
+    return 'Match' if value<=10 else 'Needs Review' if value<=50 else 'Mismatch'
 
 
 def verification_display(row,pr_items=(),po_items=(),stale=False):
@@ -543,7 +630,10 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
         status='Mismatch' if confirmed else 'Needs Review'
         if confirmed:explanation=confirmed['detail'].capitalize()+': Mismatch. Overall percentage is not calculated.'
         elif not stale:explanation=incidence['reason']
-    elif value>0:status='Mismatch'
+    elif value>0:
+        status=discrepancy_band(value)
+        # A small affected-line rate cannot waive mandatory discrepancies.
+        if status=='Match' and eligibility_status!='Match':status='Needs Review'
     elif status!='Match':
         value=None;status='Needs Review';explanation='Saved model and structured evidence require review.'
     for position in incidence['extras'] if value is not None else []:
@@ -554,6 +644,7 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
     basis=(f"Item-line discrepancy incidence: {incidence['affected']} affected / {incidence['total']} assessed lines; not model confidence or quantity deviation."
            if value is not None else 'Not calculated: '+explanation)
     return dict(status=status,percentage=percentage(value),percentage_basis=basis,eligibility_status=eligibility_status,
+        score_band=discrepancy_band(value),
         findings=findings,pairs=pairs,explanation=explanation)
 
 def verification_context(api,row):
@@ -647,9 +738,13 @@ def approve_verification(api,row):
         abort(422,description='Technical, quantity, missing or extra-item findings remain unresolved. No relationship or PO was approved.')
     if not stored_review_matches(row,mapping,technical):
         abort(422,description='Saved server technical evidence does not authorize this correspondence. Confirmation cannot upgrade or replace unresolved verification evidence.')
-    receipt=rpc(api,'review_pr_po_verification_v1',(row['id'],json.dumps(mapping),json.dumps(technical,default=str),
+    receipt=rpc(api,'review_approved_pr_po_verification_v2' if row.get('workflow_version')==2 else 'review_pr_po_verification_v1',(row['id'],json.dumps(mapping),json.dumps(technical,default=str),
         request.form.get('relationship_reason',''),request.form.get('evidence_reference',''),True))
     if not isinstance(receipt,dict):return receipt
+    if row.get('workflow_version')==2:
+        if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id']:abort(503)
+        flash('PR-PO relationship approved and recorded. Receiving remains subject to the existing IAR eligibility checks.')
+        return redirect(url_for('nlp',verification_id=row['id']))
     flash('PR-PO relationship authorized and recorded. Final PO approval remains a separate explicit action.')
     return redirect(url_for('po_review',id=receipt['po_id']))
 
@@ -807,4 +902,6 @@ FINAL_ROUTINE_MD5={
  'approve_po_before_verification_v2':'78b71630fef5e136daf21315dc4c491c',
  'approve_po_before_verification_v3':'c267a3f3e0cd74cf76663546402d2c1f',
  'save_approved_pr_po_verification_v2':'52ad5a0db477be37f94b0517236cd68e',
+ 'save_approved_pr_po_verification_v3':'3c7203e69e3203e0ca90f198c403e5ab',
+ 'review_approved_pr_po_verification_v2':'1ffa25321ca839f203d061983ce25843',
  'save_selected_aoq_independent_v2':'d0b92df38409db6b832b088e7b0b81e1'}

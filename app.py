@@ -3589,7 +3589,9 @@ def nlp_approve(id):
         flash('NLP result not found.')
         return redirect(url_for('nlp'))
     if row.get('workflow_version') == 2:
-        abort(405,description='The final workspace saves post-approval NLP results separately. This endpoint cannot approve those results or receiving.')
+        if not revised_procurement.enabled(globals()):
+            abort(409,description='The authorized relationship-review workflow is unavailable.')
+        return revised_procurement.approve_verification(globals(),dict(row))
     if row.get('workflow_version') == 1:
         if not revised_procurement.enabled(globals()):
             abort(409,description='The revised workflow is currently disabled.')
@@ -3780,10 +3782,44 @@ def iar_print(id):
     items=parse_items(row['items'])
     return render_template('print_iar.html', row=row, po=po_row, items=items, **managed_signatories.print_context(conn, 'iar', dict(row)), title='Print IAR')
 
+def inventory_planning_classification():
+    """Source-backed planning label, separate from physical stock category.
+
+    Inventory has no planning-category column. Resolve only matching accepted
+    lines of an approved IAR for its recorded PO; conflicting/absent evidence
+    yields NULL. Never infer classification from an item's name or stock type.
+    """
+    return """(select case when count(*)>0 and count(receipt.planning)=count(*)
+                        and count(distinct receipt.planning)=1 then min(receipt.planning) end
+        from (select
+          (select case when count(distinct upper(btrim(tag.value)))=1
+                       then min(upper(btrim(tag.value))) end
+           from (values (line->>'_Procurement Category'),(line->>'Source Category'),
+                        (line->>'Category'),(line->>'category'),
+                        (line->>'PPMP Category'),(line->>'ppmp_category')) tag(value)
+           where upper(btrim(tag.value)) in ('DBM','NON-DBM','LIB')) planning
+          from public.iar receipt_source join public.po source_po on source_po.id=receipt_source.po_id
+          cross join lateral jsonb_array_elements(case when receipt_source.items is json array
+               then receipt_source.items::jsonb else '[]'::jsonb end) entry(line)
+          where receipt_source.status='Approved' and source_po.no=inventory.source_po
+            and coalesce(nullif(line->>'item',''),line->>'Item Name')=inventory.item
+            and coalesce(nullif(line->>'unit',''),line->>'Unit')=inventory.unit
+            and coalesce(nullif(line->>'description',''),nullif(line->>'Description / Specification',''),line->>'Description','')=coalesce(inventory.description,'')
+            and case when line->>'received_qty' ~ '^[0-9]+([.][0-9]+){0,1}$'
+                          and length(line->>'received_qty')<=64
+                     then (line->>'received_qty')::numeric>0 else false end
+            and case when coalesce(nullif(line->>'unit_cost',''),nullif(line->>'Unit Cost',''),nullif(line->>'Estimated Unit Cost',''),nullif(line->>'unit_price',''),line->>'Unit Price') ~ '^[0-9]+([.][0-9]+){0,1}$'
+                          and length(coalesce(nullif(line->>'unit_cost',''),nullif(line->>'Unit Cost',''),nullif(line->>'Estimated Unit Cost',''),nullif(line->>'unit_price',''),line->>'Unit Price'))<=64
+                     then coalesce(nullif(line->>'unit_cost',''),nullif(line->>'Unit Cost',''),nullif(line->>'Estimated Unit Cost',''),nullif(line->>'unit_price',''),line->>'Unit Price')::numeric=inventory.unit_cost::numeric
+                     else false end
+        ) receipt)"""
+
+
 @app.route('/inventory')
 def inventory():
     search_text = (request.args.get('q') or '').strip()
     category_filter = (request.args.get('category') or '').strip()
+    planning_filter = (request.args.get('planning') or '').strip()
     stock_filter = (request.args.get('stock') or '').strip().lower()
     stock_filter = {'in':'in stock','low':'low stock','out':'out of stock'}.get(stock_filter,stock_filter)
     sort = request.args.get('sort','newest')
@@ -3792,8 +3828,9 @@ def inventory():
             'category':"lower(coalesce(category,'')),lower(coalesce(item,'')),id",
             'qty_asc':'qty asc nulls first,id','qty_desc':'qty desc nulls last,id',
             'cost_desc':'unit_cost desc nulls last,id'}
-    if (any(len(request.args.getlist(key))>1 for key in ('q','category','stock','sort','page'))
+    if (any(len(request.args.getlist(key))>1 for key in ('q','category','planning','stock','sort','page'))
             or len(search_text)>160 or len(category_filter)>120 or len(stock_filter)>30
+            or planning_filter not in ('','DBM','NON-DBM','LIB')
             or sort not in orders or not re.fullmatch(r'[1-9][0-9]{0,3}',page_text)):
         abort(400,description='Choose valid inventory filters, sort and page.')
     page=int(page_text);page_size=100
@@ -3813,6 +3850,8 @@ def inventory():
         params.append(search_text)
     if category_filter:
         where.append('btrim(category)=?');params.append(category_filter)
+    if planning_filter:
+        where.append(inventory_planning_classification()+'=?');params.append(planning_filter)
     stock_predicates={'in stock':'coalesce(qty,0)>5','in':'coalesce(qty,0)>5',
         'low stock':'coalesce(qty,0)>0 and coalesce(qty,0)<=5','low':'coalesce(qty,0)>0 and coalesce(qty,0)<=5',
         'out of stock':'coalesce(qty,0)<=0','out':'coalesce(qty,0)<=0'}
@@ -3856,13 +3895,14 @@ def inventory():
                    (*movement_params,movement_size,(movement_page-1)*movement_size))
     movement_types=[row['transaction_type'] for row in q("select distinct transaction_type from inventory_transactions where transaction_type is not null and btrim(transaction_type)<>'' order by transaction_type")]
     def movement_url(**changes):
-        values={key:value for key,value in request.args.items() if key in ('q','category','stock','sort','page','t_q','t_type','t_sort','t_page')}
+        values={key:value for key,value in request.args.items() if key in ('q','category','planning','stock','sort','page','t_q','t_type','t_sort','t_page')}
         values.update(changes)
         return url_for('inventory',**values)+'#inventory-transactions'
     return render_template(
         'inventory.html', active='inventory', rows=rows, transactions=transactions,
         title='Inventory', categories=categories, search_text=search_text,
         category_filter=category_filter, stock_filter=stock_filter,
+        planning_filter=planning_filter,
         stock_summary=stock_summary,
         filtered_count=filtered_count,inventory_sort=sort,transaction_filters=transaction_filters,
         transaction_total=movement_total,transaction_page=movement_page,
@@ -4119,9 +4159,10 @@ def report_export(report_type):
     if report_type == 'procurement':
         rows = q('''select r.no pr_no, aq.no aoq_no, aq.winner, p.no po_no, p.total, p.status,
                            n.no nlp_no, n.result nlp_result, n.status nlp_status
-                    from pr r left join aoq aq on aq.pr_id=r.id
-                    left join po p on p.aoq_id=aq.id left join nlp n on n.po_id=p.id
-                    order by r.id desc''')
+                    from aoq aq full join po p on p.aoq_id=aq.id
+                    left join nlp n on n.po_id=p.id
+                    full join pr r on r.id=coalesce(p.pr_id,aq.pr_id)
+                    order by r.id desc nulls last,p.id desc,aq.id desc,n.id desc''')
         return _csv_response('procurement_chain_report.csv',
             ['PR Number','AOQ Number','Winning Supplier','PO Number','PO Total','PO Status','NLP Number','NLP Result','NLP Status'],
             [[r['pr_no'],r['aoq_no'],r['winner'],r['po_no'],r['total'],r['status'],r['nlp_no'],r['nlp_result'],r['nlp_status']] for r in rows])
