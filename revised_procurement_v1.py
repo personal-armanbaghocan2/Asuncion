@@ -44,6 +44,22 @@ REVIEW_STAGE_RPC={
  'approve_reviewed_pr_po_v3':('bigint','boolean')}
 RPC.update(REVIEW_STAGE_RPC)
 
+# New owner-approved tolerance policy is additive; blank pins keep it disabled
+# until reviewed SQL is supplied. The original technical-MATCH gate remains.
+TOLERANCE_ROUTINES={
+ 'approve_reviewed_pr_po_v4':('bigint','boolean'),
+ 'lock_po_for_workflow_v4':('bigint','text'),
+ 'require_ten_percent_review_v4':('text','jsonb','jsonb','jsonb'),
+ 'approve_tolerated_pr_po_v4':('bigint','jsonb','jsonb','text','text','boolean')}
+TOLERANCE_ROUTINE_MD5={
+ 'require_ten_percent_review_v4':'dcba10fecc06cb13c3dc85d887d7c0b1',
+ 'approve_tolerated_pr_po_v4':'f2c750de246964af449df4e9ebbe6e1f',
+ 'approve_reviewed_pr_po_v4':'5eef2d7b2e84d32e1ae1a4630cf70057',
+ 'lock_po_for_workflow_v4':'cebda6b491a15e82be49b821eb7a8f71'}
+RPC['approve_reviewed_pr_po_v4']=TOLERANCE_ROUTINES['approve_reviewed_pr_po_v4']
+RPC['refresh_pr_po_comparison_v4']=('bigint','jsonb','boolean')
+REFRESH_ROUTINE_MD5='a4a3cca709023a74e4a87e670da5213d'
+
 # A true policy cannot select older review/approval routines without the
 # saved-evidence guard. The private helper needs no backend EXECUTE grant.
 GUARDED_ROUTINES = (
@@ -230,6 +246,10 @@ def rpc(api,name,values):
         abort(409,description='The authorized post-approval relationship-review contract is unavailable.')
     if name in REVIEW_STAGE_RPC and not review_stage_contract_ready(api):
         abort(409,description='The persisted PR-PO review-stage SQL contract is not installed and reviewed.')
+    if name=='approve_reviewed_pr_po_v4' and not tolerance_contract_ready(api):
+        abort(409,description='The reviewed 10% discrepancy approval policy is unavailable.')
+    if name=='refresh_pr_po_comparison_v4' and not refresh_contract_ready(api):
+        abort(409,description='The reviewed source-comparison refresh contract is unavailable.')
     try:
         with api['durable_ocr'].transaction(api,read_committed=True) as (con,uid):
             sql='select * from '+api_schema()+'.'+name+'('+','.join('?::'+kind for kind in RPC[name])+')'
@@ -237,13 +257,15 @@ def rpc(api,name,values):
             if not receipt:raise RuntimeError('Operation receipt unavailable')
             key=('pr_id' if name in ('create_pr_from_approved_app_v1','approve_pr_v1') else
                  'aoq_id' if name=='approve_reviewed_aoq_v1' else
-                 'nlp_id' if name in REVIEW_STAGE_RPC or name in ('save_pr_po_verification_v1','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3','review_pr_po_verification_v1','review_approved_pr_po_verification_v2') else 'po_id')
+                 'nlp_id' if name in REVIEW_STAGE_RPC or name in ('refresh_pr_po_comparison_v4','approve_reviewed_pr_po_v4','save_pr_po_verification_v1','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3','review_pr_po_verification_v1','review_approved_pr_po_verification_v2') else 'po_id')
             if type(receipt.get(key)) is not int or receipt[key]<=0:
                 raise RuntimeError('Operation receipt identifier invalid')
             if name.startswith('approve_') and (receipt[key]!=values[0] or receipt.get('new_status')!='Approved'):
                 raise RuntimeError('Operation approval receipt invalid')
             if name=='mark_pr_po_reviewed_v3' and (receipt[key]!=values[0] or receipt.get('new_status')!='Reviewed'):
                 raise RuntimeError('Operation review receipt invalid')
+            if name=='refresh_pr_po_comparison_v4' and (receipt[key]!=values[0] or receipt.get('new_status')!='For Review'):
+                raise RuntimeError('Operation refresh receipt invalid')
             if name in ('create_pr_from_approved_app_v1','create_po_for_review_v2','save_pr_po_verification_v1','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3') and type(receipt.get('created')) is not bool:
                 raise RuntimeError('Operation creation receipt invalid')
         return receipt
@@ -395,6 +417,126 @@ def review_stage_contract_ready(api):
             try:con.rollback()
             finally:con.close()
 
+def tolerance_contract_ready(api):
+    """Verify new immutable routines and private helper privileges, without DDL."""
+    if api_schema()!='psms_aoq_api':return False
+    if has_request_context() and hasattr(g,'tolerance_procurement_ready'):
+        return g.tolerance_procurement_ready
+    if any(not re.fullmatch('[0-9a-f]{32}',TOLERANCE_ROUTINE_MD5.get(name,''))
+           for name in TOLERANCE_ROUTINES):return False
+    con=None;ready=False
+    try:
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY')
+        con.execute("SET LOCAL statement_timeout='3s'")
+        for name,kinds in TOLERANCE_ROUTINES.items():
+            public=name in ('approve_reviewed_pr_po_v4','lock_po_for_workflow_v4')
+            definer=name!='require_ten_percent_review_v4'
+            row=con.execute("""select exists(select 1 from pg_proc p join pg_roles r on r.oid=p.proowner
+              where p.oid=to_regprocedure(?) and r.rolname='psms_aoq_approval_owner' and p.prosecdef=?
+              and not r.rolcanlogin and not r.rolsuper and not r.rolbypassrls
+              and 'row_security=on'=any(p.proconfig)
+              and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+              and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+              and has_function_privilege('psms_vercel_backend',p.oid,'EXECUTE')=?
+              and has_function_privilege(current_user,p.oid,'EXECUTE')=?
+              and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+                where a.privilege_type='EXECUTE' and (a.is_grantable or
+                  (a.grantee<>p.proowner and (not ? or a.grantee<>'psms_vercel_backend'::regrole))))) ready""",
+                ('psms_aoq_api.'+name+'('+','.join(kinds)+')',definer,
+                 TOLERANCE_ROUTINE_MD5[name],public,public,public)).fetchone()
+            if not row or row.get('ready') is not True:return False
+        ready=True
+        return True
+    except Exception:return False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+        if has_request_context():g.tolerance_procurement_ready=ready
+
+
+def refresh_contract_ready(api):
+    """An explicit source refresh needs its reviewed additive SQL and audit."""
+    if api_schema()!='psms_aoq_api' or not re.fullmatch('[0-9a-f]{32}',REFRESH_ROUTINE_MD5):return False
+    if has_request_context() and hasattr(g,'refresh_procurement_ready'):return g.refresh_procurement_ready
+    con=None;ready=False
+    try:
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY');con.execute("SET LOCAL statement_timeout='3s'")
+        row=con.execute("""select exists(select 1 from pg_proc p join pg_roles r on r.oid=p.proowner
+          where p.oid=to_regprocedure(?) and r.rolname='psms_aoq_approval_owner' and p.prosecdef
+          and not r.rolcanlogin and not r.rolsuper and not r.rolbypassrls
+          and 'row_security=on'=any(p.proconfig)
+          and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+          and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+          and has_function_privilege(current_user,p.oid,'EXECUTE')
+          and has_function_privilege('psms_vercel_backend',p.oid,'EXECUTE')
+          and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+            where a.privilege_type='EXECUTE' and (a.is_grantable or a.grantee not in(p.proowner,'psms_vercel_backend'::regrole)))) ready""",
+            ('psms_aoq_api.refresh_pr_po_comparison_v4(bigint,jsonb,boolean)',REFRESH_ROUTINE_MD5)).fetchone()
+        ready=bool(row and row.get('ready') is True);return ready
+    except Exception:return False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+        if has_request_context():g.refresh_procurement_ready=ready
+
+
+def refresh_current_comparison(api,row,pr,po):
+    """Replay saved semantic candidates; never fetch or recompute embeddings."""
+    try:
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details')
+        saved=details.get('technical_comparison')
+        if type(saved) is not dict:return None
+        left,right=api['parse_items'](pr['items']),api['parse_items'](po['items'])
+        candidates=saved.get('semantic_candidates',[])
+        if type(candidates) is not list or len(candidates)>len(left)*3:return None
+        for value in candidates:
+            if (type(value) is not dict or type(value.get('pr_position')) is not int
+                or type(value.get('po_position')) is not int or not 1<=value['pr_position']<=len(left)
+                or not 1<=value['po_position']<=len(right) or type(value.get('similarity')) not in (int,float)
+                or not math.isfinite(value['similarity']) or not -1<=value['similarity']<=1):return None
+        result=dict(saved)
+        result.update(evidence.compare(left,right,semantic_candidates=candidates))
+        return result
+    except (ValueError,TypeError,AttributeError,KeyError,IndexError):return None
+
+
+def refresh_comparison_allowed(row,pr,po,current):
+    """Source-identical bounded wording refresh, never a model rerun or approval."""
+    try:
+        if row.get('workflow_version')!=2 or row.get('status') not in ('For Review','Reviewed') or po.get('status')!='Approved':return False
+        if (evidence.fingerprint(pr['items'])!=row.get('pr_items_hash')
+                or evidence.fingerprint(po['items'])!=row.get('po_items_hash')):return False
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details')
+        saved=details.get('technical_comparison')
+        if (type(saved) is not dict or type(current) is not dict or current.get('wording_policy')!='CORE_DESCRIPTION_V2'
+                or saved.get('source_fields')!=current.get('source_fields') or saved==current):return False
+        ignored={'rows','technical_status','wording_policy'}
+        if {k:v for k,v in saved.items() if k not in ignored}!={k:v for k,v in current.items() if k not in ignored}:return False
+        old_rows,new_rows=saved.get('rows'),current.get('rows')
+        if type(old_rows) is not list or type(new_rows) is not list or len(old_rows)!=len(new_rows):return False
+        changed=False
+        for old,new in zip(old_rows,new_rows):
+            if (type(old) is not dict or type(new) is not dict
+                or {k:v for k,v in old.items() if k!='checks'}!={k:v for k,v in new.items() if k!='checks'}):return False
+            old_checks,new_checks=old.get('checks'),new.get('checks')
+            if type(old_checks) is not list or type(new_checks) is not list or len(old_checks)!=len(new_checks):return False
+            for before,after in zip(old_checks,new_checks):
+                if before==after:continue
+                if (type(before) is not dict or type(after) is not dict
+                    or before.get('attribute')!='source specification wording'
+                    or before.get('state')!='REQUIRES_HUMAN_REVIEW' or after.get('state')!='MATCH'
+                    or {k:v for k,v in before.items() if k!='state'}!={k:v for k,v in after.items() if k!='state'}):return False
+                changed=True
+        if not changed:return False
+        # Validate complete new evidence without mutating the saved record.
+        candidate=dict(row,technical_status=current.get('technical_status'),details={'technical_comparison':current})
+        mapping=[line.get('po_position') for line in current.get('rows',[])]
+        return tolerance_review_matches(candidate,mapping,current)
+    except (ValueError,TypeError,AttributeError,KeyError):return False
+
+
 def saved_review_evidence(api,row,pr,po):
     """Replay saved correspondence evidence against unchanged source fields.
 
@@ -426,13 +568,23 @@ def saved_review_evidence(api,row,pr,po):
 def staged_verification(api,row):
     """Persist human review first; final approval uses that saved evidence."""
     action=request.form.get('review_action')
-    expected={'review':'For Review','approve':'Reviewed'}
-    if row.get('workflow_version')!=2 or action not in expected or row.get('status')!=expected[action]:
+    expected={'review':('For Review',),'approve':('Reviewed',),'recalculate':('For Review','Reviewed')}
+    if row.get('workflow_version')!=2 or action not in expected or row.get('status') not in expected[action]:
         abort(409,description='Reopen the current verification and use its available Review or Approve action.')
-    if not review_stage_contract_ready(api):abort(409,description='The persisted PR-PO review-stage SQL contract is unavailable.')
+    if action!='recalculate' and not review_stage_contract_ready(api):abort(409,description='The persisted PR-PO review-stage SQL contract is unavailable.')
     if request.form.get('review_confirm')!='yes':abort(400,description='Explicit source review confirmation is required.')
     pr,po=source_pair(api,row['pr_id'],row['po_id'])
     if not relationship_review_allowed(api,po):abort(403,description='Relationship review is unavailable for this account or policy.')
+    if action=='recalculate':
+        if not refresh_contract_ready(api):abort(409,description='The reviewed source-comparison refresh contract is unavailable.')
+        current=refresh_current_comparison(api,row,pr,po)
+        if not refresh_comparison_allowed(row,pr,po,current):
+            abort(409,description='Recalculation requires unchanged complete sources, a bounded wording-policy update and a final discrepancy of at most 10%. No history was changed.')
+        receipt=rpc(api,'refresh_pr_po_comparison_v4',(row['id'],json.dumps(current,ensure_ascii=False),True))
+        if not isinstance(receipt,dict):return receipt
+        if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id'] or receipt.get('new_status')!='For Review':abort(503)
+        flash('Current sources recalculated. Previous comparison and human review are preserved in history. Review and approval must be completed again; the model result is unchanged.')
+        return redirect(url_for('nlp',verification_id=row['id']))
     saved,current,valid=saved_review_evidence(api,row,pr,po)
     if not valid:abort(409,description='Saved verification evidence differs from the current sources. No review or approval was saved.')
     mapping=[line.get('po_position') for line in saved['rows']]
@@ -448,9 +600,10 @@ def staged_verification(api,row):
         status='Reviewed'
     else:
         if request.form.get('final_confirm')!='yes':abort(400,description='Explicit final approval confirmation is required.')
-        if row.get('result') not in ('Acceptable','Needs Review') or not stored_review_matches(row,mapping,current):
+        tolerance=tolerance_contract_ready(api) and tolerance_review_matches(row,mapping,current)
+        if not tolerance and (row.get('result') not in ('Acceptable','Needs Review') or not stored_review_matches(row,mapping,current)):
             abort(422,description='Unresolved technical or model findings prevent approval. Reviewed does not authorize IAR.')
-        receipt=rpc(api,'approve_reviewed_pr_po_v3',(row['id'],True))
+        receipt=rpc(api,'approve_reviewed_pr_po_v4' if tolerance else 'approve_reviewed_pr_po_v3',(row['id'],True))
         status='Approved'
     if not isinstance(receipt,dict):return receipt
     if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id'] or receipt.get('new_status')!=status:abort(503)
@@ -848,15 +1001,32 @@ def verification_context(api,row):
     stale=evidence.fingerprint(pr['items'])!=row['pr_items_hash'] or evidence.fingerprint(po['items'])!=row['po_items_hash']
     current_mapping=[item.get('po_position') for item in technical.get('rows',[])]
     review_evidence_current=stored_review_matches(row,current_mapping,technical)
+    tolerance_ready=tolerance_contract_ready(api)
+    tolerance_eligible=(not stale and evidence_current and tolerance_review_matches(row,current_mapping,technical))
+    policy_approved=(tolerance_ready and row.get('status')=='Approved'
+                     and tolerance_approval_current(row,technical))
+    approval_available=(tolerance_ready and tolerance_eligible) or (
+        review_evidence_current and row.get('result') in ('Acceptable','Needs Review'))
     display=verification_display(row,api['parse_items'](pr['items']),api['parse_items'](po['items']),stale)
+    refresh_available=False
+    if row.get('status') in ('For Review','Reviewed') and not stale and refresh_contract_ready(api):
+        refreshed=refresh_current_comparison(api,row,pr,po)
+        refresh_available=refresh_comparison_allowed(row,pr,po,refreshed)
+    if tolerance_ready and tolerance_eligible:
+        if discrepancy_incidence(technical).get('value')==0:display['status']='Match'
+        display['eligibility_status']='Eligible under 10% policy'
+        display['explanation']='Final measured discrepancy is at most 10%. Authorized manual approval is permitted; original model output and individual findings are preserved.'
     inspection_ready=False
-    if (not stale and review_evidence_current and display['eligibility_status']=='Match' and row.get('status')=='Approved'
-            and po.get('status')=='Approved' and (row.get('result') in ('Acceptable','Needs Review'))):
-        inspection_ready=any(p['id']==po['id'] for p in api['next_available_records']('iar')[5])
+    if not stale and row.get('status')=='Approved' and po.get('status')=='Approved':
+        if policy_approved:inspection_ready=True
+        elif review_evidence_current and display['eligibility_status']=='Match' and row.get('result') in ('Acceptable','Needs Review'):
+            inspection_ready=any(p['id']==po['id'] for p in api['next_available_records']('iar')[5])
     return dict(row=row,pr=pr,po=po,
         pr_items=api['parse_items'](pr['items']),po_items=api['parse_items'](po['items']),comparison=technical,
         details=details,saved_comparison=saved_comparison,stale=stale,review_evidence_current=review_evidence_current,
         can_review_relationship=relationship_review_allowed(api,po),score_ready=(row.get('result') in ('Acceptable','Needs Review')),
+        tolerance_ready=tolerance_ready,tolerance_eligible=tolerance_eligible,approval_available=approval_available,
+        refresh_available=refresh_available,
         review_stage_ready=review_stage_contract_ready(api),source_evidence_current=evidence_current,
         display=display,inspection_ready=inspection_ready)
 
@@ -920,6 +1090,73 @@ def stored_review_matches(row,mapping,current):
         return True
     except (ValueError,TypeError,AttributeError,KeyError):
         return False
+
+
+def tolerance_review_matches(row,mapping,current):
+    """A final <=10% measured incidence permits manual policy approval only.
+
+    Classifier labels/confidence never enter this source-evidence check. A
+    pending finding, ambiguous correspondence or missing/extra line still fails.
+    """
+    try:
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details')
+        saved=details.get('technical_comparison')
+        if type(saved) is not dict or type(current) is not dict or type(mapping) is not list or not mapping:return False
+        if row.get('technical_status')!=saved.get('technical_status'):return False
+        keys=('version','technical_status','rows','source_fields','missing_or_unresolved_pr_items',
+              'extra_or_unallocated_items','automatic_approval','human_review_required')
+        if any(saved.get(key)!=current.get(key) for key in keys):return False
+        count=len(mapping)
+        if (saved.get('version')!='PR_PO_REVIEW_V1' or saved.get('automatic_approval') is not False
+            or saved.get('human_review_required') is not True
+            or saved.get('technical_status') not in ('MATCH','NEEDS_REVIEW')
+            or saved.get('missing_or_unresolved_pr_items')!=[] or saved.get('extra_or_unallocated_items')!=[]
+            or type(saved.get('rows')) is not list or len(saved['rows'])!=count
+            or any(type(n) is not int or not 1<=n<=count for n in mapping) or len(set(mapping))!=count):return False
+        sources=saved.get('source_fields')
+        if type(sources) is not dict:return False
+        for side in ('PR','PO'):
+            entries=sources.get(side)
+            if (type(entries) is not list or len(entries)!=count
+                or any(type(entry) is not dict or not isinstance(entry.get('reference'),str)
+                       or not entry['reference'].strip() or type(entry.get('fields')) is not list
+                       or not entry['fields'] or any(not isinstance(f,str) or not f.strip() for f in entry['fields']) for entry in entries)
+                or len({entry['reference'] for entry in entries})!=count):return False
+        for position,(line,target) in enumerate(zip(saved['rows'],mapping),1):
+            if (type(line) is not dict or type(line.get('pr_position')) is not int or line['pr_position']!=position
+                or type(line.get('po_position')) is not int or line['po_position']!=target
+                or line.get('identity')!='EXACT_NAME'
+                or line.get('pr_reference')!=sources['PR'][position-1]['reference']
+                or line.get('po_reference')!=sources['PO'][target-1]['reference']
+                or type(line.get('checks')) is not list or len(line['checks'])<2):return False
+            if any(type(c) is not dict or c.get('state') not in ('MATCH','MISMATCH')
+                   or c.get('conditional_on_identity') is not False
+                   or not isinstance(c.get('attribute'),str) or not c['attribute'].strip() for c in line['checks']):return False
+        incidence=discrepancy_incidence(saved)
+        return (incidence.get('value') is not None and type(incidence.get('affected')) is int
+                and type(incidence.get('total')) is int and incidence['total']==count
+                and incidence['affected']*10<=incidence['total']
+                and all(value is not None for value in incidence.get('checks',{}).values())
+                and len(incidence.get('pairs',{}))==count
+                and all(value is not None for value in incidence['pairs'].values()))
+    except (ValueError,TypeError,AttributeError,KeyError,IndexError):return False
+
+
+def tolerance_approval_current(row,current):
+    """A persisted policy marker must retain exact source and comparison evidence."""
+    try:
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details')
+        marker=details.get('threshold_approval_v4')
+        mapping=[line.get('po_position') for line in current['rows']]
+        incidence=discrepancy_incidence(current)
+        return (type(marker) is dict and marker.get('version')==1
+                and type(marker.get('percentage')) in (int,float)
+                and marker['percentage']==incidence['value']
+                and marker.get('technical_comparison')==details.get('technical_comparison')
+                and marker.get('pr_items_hash')==row.get('pr_items_hash')
+                and marker.get('po_items_hash')==row.get('po_items_hash')
+                and tolerance_review_matches(row,mapping,current))
+    except (ValueError,TypeError,AttributeError,KeyError):return False
 
 
 def approve_verification(api,row):

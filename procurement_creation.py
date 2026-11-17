@@ -29,7 +29,9 @@ def locked_parent(api, table, identifier, child, foreign_key):
             import revised_procurement_v1 as revised_procurement
             if revised_procurement.enabled(api):
                 try:
-                    parent=con.execute('select * from '+revised_procurement.api_schema()+'.lock_po_for_workflow_v2(?::bigint,?::text)',(identifier,child)).fetchone()
+                    receiving_lock=('lock_po_for_workflow_v4' if child=='iar' and
+                        revised_procurement.tolerance_contract_ready(api) else 'lock_po_for_workflow_v2')
+                    parent=con.execute('select * from '+revised_procurement.api_schema()+'.'+receiving_lock+'(?::bigint,?::text)',(identifier,child)).fetchone()
                 except Exception as error:
                     state=getattr(error,'sqlstate',None)
                     if state in ('PA002','PA003','PA004'):

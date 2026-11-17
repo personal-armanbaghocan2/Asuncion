@@ -1758,12 +1758,15 @@ def next_available_records(kind=None):
                        left join nlp n on n.po_id=p.id
                        where p.status='Approved' and aq.status='Approved' and r.status='Approved' and n.id is null
                        order by p.id desc''') if kind in (None, 'nlp') else []
-    pos_for_iar = q('''select p.* from po p
+    iar_result_policy="n.result in ('Acceptable','Needs Review')"
+    if kind in (None,'iar') and revised_procurement.tolerance_contract_ready(globals()):
+        iar_result_policy="("+iar_result_policy+" or (n.workflow_version=2 and n.details::jsonb->'threshold_approval_v4'->>'version'='1'))"
+    pos_for_iar = q(f'''select p.* from po p
                        join nlp n on n.po_id=p.id
                        left join iar i on i.po_id=p.id
                        where i.id is null
                          and p.status='Approved' and n.status='Approved'
-                         and n.result in ('Acceptable','Needs Review')
+                         and {iar_result_policy}
                        order by p.id desc''') if kind in (None, 'iar') else []
     return ppmps, apps, prs, aoqs, pos_for_nlp, pos_for_iar
 
@@ -3735,7 +3738,9 @@ def iar_approve(id):
         con.execute("select set_config('psms.workbook_actor',?,true)",
                     (json.dumps({'uid':uid,'sid':server_sessions.token_hash(session.get(server_sessions.COOKIE_KEY))}),))
         try:
-            po=con.execute('select * from '+revised_procurement.api_schema()+'.lock_po_for_workflow_v2(?::bigint,?::text)',
+            receiving_lock=('lock_po_for_workflow_v4' if revised_procurement.tolerance_contract_ready(globals())
+                            else 'lock_po_for_workflow_v2')
+            po=con.execute('select * from '+revised_procurement.api_schema()+'.'+receiving_lock+'(?::bigint,?::text)',
                            (row['po_id'],'iar')).fetchone()
         except Exception as error:
             state=getattr(error,'sqlstate',None)

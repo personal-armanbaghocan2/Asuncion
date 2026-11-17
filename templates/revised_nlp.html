@@ -13,6 +13,11 @@
 {% if v.display.review_coverage %}<p class="notice">Checks resolved: {{v.display.review_coverage}}. {{v.display.pending_checks}} check(s) remain pending.{% if not v.display.percentage_final %} The percentage range is provisional; complete the source review before approval.{% endif %}</p>{% endif %}
 {% endif %}
 {% if verification and not historical|default(false) %}{% set v=verification %}
+{% if v.refresh_available|default(false) and not workflow_preview|default(false) %}<form method="post" action="{{url_for('nlp_approve',id=v.row.id)}}" class="card">
+<input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="review_action" value="recalculate">
+<p>The current source-comparison policy can recalculate these unchanged sources. The saved result above remains unchanged until you confirm. Previous comparison and human review will be preserved in history, and this record will return to For Review. Model predictions will remain unchanged.</p>
+<label><input type="checkbox" name="review_confirm" value="yes" required> I checked the current sources and authorize recalculation with preserved history.</label>
+<button class="btn" type="submit">Recalculate current sources</button></form>{% endif %}
 {% if v.row.workflow_version==2 and not workflow_preview|default(false) %}
 {% if v.po.status!='Approved' or not v.can_review_relationship or not v.source_evidence_current or v.stale %}<div class="notice"><button class="btn primary" type="button" disabled>Approve PR–PO Review</button><p>Approval requires an approved PO, an authorized reviewer and unchanged source evidence. Reopen the current source documents before continuing.</p></div>
 {% elif not v.review_stage_ready %}<div class="notice"><button class="btn primary" type="button" disabled>Approve PR–PO Review</button><p>Review and approval require the reviewed database review-stage update. No status was changed.</p></div>
@@ -23,17 +28,17 @@
 <label>Supporting document reference<input name="evidence_reference" minlength="3" maxlength="500" required></label>
 <label><input type="checkbox" name="review_confirm" value="yes" required> I reviewed the saved PR–PO findings and source documents.</label>
 <button class="btn primary" type="submit">Save Review — Reviewed</button>
-<p class="muted">Review records the findings. Mismatches remain blocked from approval and receiving.</p>
+<p class="muted">Review records the findings. With the installed 10% policy, a final measured discrepancy of at most 10% permits authorized manual approval independently of model label or confidence. Pending checks and missing or extra items remain blocked.</p>
 </form>
-{% elif v.row.status=='Reviewed' and v.review_evidence_current and v.score_ready and v.comparison.technical_status=='MATCH' %}
+{% elif v.row.status=='Reviewed' and v.approval_available %}
 <form method="post" action="{{url_for('nlp_approve',id=v.row.id)}}" class="card">
 <input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="review_action" value="approve">
-<p>Review reason: {{v.row.relationship_reason}}</p><p>Supporting reference: {{v.row.evidence_reference}}</p>
+{% if v.tolerance_ready and v.tolerance_eligible %}<p class="notice">Eligible under the 10% policy: final measured discrepancy {{v.display.percentage}}. This does not change the model prediction or mark every item as matching.</p>{% endif %}<p>Review reason: {{v.row.relationship_reason}}</p><p>Supporting reference: {{v.row.evidence_reference}}</p>
 <label><input type="checkbox" name="review_confirm" value="yes" required> I reviewed the saved PR–PO findings and source documents.</label>
 <label><input type="checkbox" name="final_confirm" value="yes" required> I authorize this documented PR–PO relationship.</label>
 <button class="btn primary" type="submit">Approve PR–PO Review</button>
 </form>
-{% elif v.row.status=='Reviewed' %}<div class="notice"><button class="btn primary" type="button" disabled aria-describedby="nlp-approval-blocked">Approve PR–PO Review</button><p id="nlp-approval-blocked">Approval unavailable: {% if not v.score_ready %}the saved model result is {{v.row.result}}; only Acceptable or Needs Review results may proceed.{% elif v.stale or not v.source_evidence_current %}the source documents or saved evidence changed; reopen the current verification.{% else %}one or more saved item checks remain unresolved. Open the saved checks above and compare the source documents.{% endif %} This record cannot authorize receiving yet.</p></div>
+{% elif v.row.status=='Reviewed' %}<div class="notice"><button class="btn primary" type="button" disabled aria-describedby="nlp-approval-blocked">Approve PR–PO Review</button><p id="nlp-approval-blocked">Approval unavailable: {% if v.tolerance_ready and not v.tolerance_eligible %}the final measured discrepancy exceeds 10%, or source checks/correspondence remain pending. A provisional range cannot authorize approval.{% elif not v.score_ready %}the 10% policy is not installed; the existing approval policy still applies to this saved model result.{% elif v.stale or not v.source_evidence_current %}the source documents or saved evidence changed; reopen the current verification.{% else %}one or more saved item checks remain unresolved. Open the saved checks above and compare the source documents.{% endif %} This record cannot authorize receiving yet.</p></div>
 {% endif %}{% endif %}{% endif %}
 {% if verification and verification.row.status=='Approved' and verification.inspection_ready|default(false) %}<a class="btn primary" href="{{url_for('iar',po_id=verification.po.id)}}">Continue to IAR / AIR</a>{% endif %}
 {% if verification and not historical|default(false) and verification.row.workflow_version==2 and verification.row.status=='Reviewed' %}<p><a class="btn" href="{{url_for('iar',verification_id=verification.row.id)}}">Open Inspection Preparation</a> Review the findings in IAR/AIR. Official receiving requires PR-PO approval.</p>{% endif %}

@@ -12,6 +12,7 @@ import math
 import re
 
 VERSION='PR_PO_REVIEW_V1'
+WORDING_POLICY='CORE_DESCRIPTION_V2'
 # Shared planning context is retained in source records and model input, but is
 # not an item specification which a supplier must repeat on its purchase order.
 PLANNING_CONTEXT = {
@@ -70,6 +71,52 @@ def specification_tokens(value):
                     'interface',str(Decimal(interfaces[0][1])))
     return re.findall(r'\d+(?:\.\d+)?|[^\W\d_]+|[^\w\s]',text)
 def first(item,keys):return next((item[k] for k in keys if item.get(k) not in (None,'')),None)
+
+
+def core_description_tokens(value,row):
+    """Recognize a complete, bounded mouse-description grammar only.
+
+    The approved office wording is descriptive boilerplate, not an arbitrary
+    stopword list. An unknown, negative, mandatory, branded or platform-specific
+    clause keeps the entire original comparison strict. Quantities are removed
+    only when they agree with the independently checked structured quantity.
+    Original fields, model input and recorded source text are never changed.
+    """
+    text=norm(value)
+    quantity=number(row.get('quantity'))
+    unit=UNITS.get(norm(row.get('unit')),norm(row.get('unit')))
+    clauses=[clause.strip() for clause in re.split(r'[,;]',text)]
+    core=set()
+    for clause in clauses:
+        if not clause:continue
+        # Only a complete standalone boilerplate clause is optional. Thus
+        # "must be plug-and-play", "not plug-and-play", Linux, and drivers
+        # cannot disappear through this policy.
+        if clause in ('plug-and-play','plug and play','compatible with standard office computers'):
+            continue
+        tail=re.search(r'\s+(\d+(?:\.\d+)?)\s+(pcs?|pieces?|units?)$',clause)
+        if tail:
+            if (quantity is None or number(tail[1])!=quantity
+                    or UNITS.get(tail[2],tail[2])!=unit):
+                return specification_tokens(value)
+            clause=clause[:tail.start()].strip()
+        product=re.fullmatch(r'(?:(\d+(?:\.\d+)?)\s+)?wireless optical mouse',clause)
+        if product:
+            if product[1] and (quantity is None or number(product[1])!=quantity):
+                return specification_tokens(value)
+            core.add(('product','wireless optical mouse'))
+            continue
+        frequency=re.fullmatch(r'(\d+(?:\.\d+)?)\s*ghz(?: connection)?',clause)
+        if frequency:
+            core.add(('frequency',str(Decimal(frequency[1]).normalize())))
+            continue
+        if clause=='usb receiver':
+            core.add(('receiver','usb'))
+            continue
+        return specification_tokens(value)
+    if ('product','wireless optical mouse') not in core:
+        return specification_tokens(value)
+    return ('bounded mouse description',tuple(sorted(core)))
 def fingerprint(text):return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 def number(value):
@@ -228,7 +275,7 @@ def check_pair(left,right,identity):
     requested_text=' '.join(dict.fromkeys(norm(v) for k,v in left['fields'].items() if norm(k) in narrative_keys))
     offered_text=' '.join(dict.fromkeys(norm(v) for k,v in right['fields'].items() if norm(k) in narrative_keys))
     if requested_text:
-        add('source specification wording', 'MATCH' if specification_tokens(requested_text)==specification_tokens(offered_text) else
+        add('source specification wording', 'MATCH' if core_description_tokens(requested_text,left)==core_description_tokens(offered_text,right) else
             'MISSING_SPECIFICATION' if not offered_text else
             'REQUIRES_HUMAN_REVIEW', requested_text,offered_text)
     requested,offered=facts(left),facts(right)
@@ -323,7 +370,7 @@ def compare(pr_items,po_items,*,semantic_candidates=(),manual_mapping=None):
     extra=[r['position'] for r in right if r['position'] not in used]
     unresolved=any(r['identity'] in ('UNRESOLVED','CANDIDATE') for r in rows)
     clean=not extra and not unresolved and all(c['state']=='MATCH' for row in rows for c in row['checks'])
-    return dict(version=VERSION,technical_status='MATCH' if clean else 'NEEDS_REVIEW',rows=rows,
+    return dict(version=VERSION,wording_policy=WORDING_POLICY,technical_status='MATCH' if clean else 'NEEDS_REVIEW',rows=rows,
         extra_or_unallocated_items=extra,missing_or_unresolved_pr_items=[r['pr_position'] for r in rows if r['identity'] in ('UNRESOLVED','CANDIDATE')],
         source_fields=dict(PR=[dict(reference=r['reference'],fields=list(r['fields'])) for r in left],
                            PO=[dict(reference=r['reference'],fields=list(r['fields'])) for r in right]),

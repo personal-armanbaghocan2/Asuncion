@@ -1,0 +1,19 @@
+# Manual approval at a final discrepancy of at most 10%
+
+Base application commit: `5ed70facf8059b6a1b978a52161100c0be9ec6fc`.
+
+The owner requested that a final PR–PO discrepancy from 0% through 10%, inclusive, permit manual approval. The policy uses the existing affected-item incidence calculation. Classifier confidence and classifier labels remain recorded and visible; they do not decide eligibility under this policy. Approval still requires a separately saved human review, documented reason and source reference, explicit final confirmation, the authorized actor, current approved source documents and an unchanged saved comparison. Pending findings, unresolved item identity, missing or extra items, and stale sources remain blocked.
+
+The implementation adds four private database routines. It preserves existing routines and their privileges. The new approval path keeps source locks, review snapshot verification, duplicate prevention, official relationship evidence and audit writes in one transaction. It preserves the original technical findings, model result and confidence instead of changing them to a match. The IAR receiving lock validates the policy marker, original source hashes and official approval proof before permitting creation. IAR approval and stock updates remain separate operations.
+
+For the reported wireless mouse example, a bounded description grammar recognizes the same product, frequency and USB receiver despite repeated wording and the specific generic clauses “plug-and-play” and “compatible with standard office computers.” The complete original source wording remains stored. Unknown clauses, negative or mandatory requirements, platform-specific compatibility, brands, models, changed frequencies and missing receiver evidence do not receive this equivalence treatment. Other product descriptions retain their existing comparison rules.
+
+Existing saved findings are not silently replaced. A separate, explicitly confirmed recalculation action verifies unchanged source hashes and permits only a bounded wording-check change. Its SQL routine independently checks the complete allowed wording grammar. It archives the previous comparison and human review, records an audit entry and returns the record to For Review. It does not rerun a model or approve anything. The user must save a fresh review and then approve separately.
+
+## Verification and release limits
+
+Focused synthetic Python tests cover the exact screenshot, the inclusive 10% boundary, values above 10%, every model label, incomplete or changed evidence, explicit recalculation, model preservation and capability denial. Native PostgreSQL 17 verification uses only the task-owned synthetic fixture and rolls back its installation and record changes. The native checks cover the SQL threshold validator and the historical-review recalculation and rejection paths. Deployment evidence records the final executed checks separately.
+
+Installation is an explicit operator action, never startup or request work. SQL source, owners, settings and grants are pinned and checked before the application enables the new capabilities. Missing or changed SQL keeps them disabled. Neither installation nor deployment approves or rewrites existing procurement records. No authentication, model, OCR engine, dashboard or inventory mutation code is changed.
+
+Application rollback must preserve the new SQL routines and all procurement history until activity under the new policy has been reviewed. Returning to an older application can hide policy-approved records with a different model label from its IAR selector. Do not restore a database or delete new relationship proofs to resolve that compatibility issue; retain the new receiving support or deploy a reviewed forward fix. Dropping the additive routines is appropriate only after confirming that no retained activity needs them.
