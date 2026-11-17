@@ -27,6 +27,7 @@ from scripts.audits.online_backend_manifest import runtime_sources
 SOURCE_UPLOAD_LIMIT = 90_000_000  # decimal MB; headroom below Hobby's 100 MB CLI limit
 
 DEPLOY_FILES = ('Dockerfile.vercel','vercel.json','.gitignore','.gitattributes','.dockerignore','.vercelignore',
+    'deploy/embedded_model_delivery.py','deploy/embedded_model_image.json',
     '.github/workflows/online-production.yml','deploy/online_delivery.py',
     'deploy/verify_online_image.py','deploy/validate_linux_runtime.py','deploy/source_release.py',
     'scripts/audits/online_backend_manifest.py','inference_release_sources.json',
@@ -311,6 +312,7 @@ def main():
     parser.add_argument('--production',action='store_true',help='Require the existing approved RF production configuration')
     parser.add_argument('--directory',help='Private release (package) or existing transport proposal folder (supabase)')
     parser.add_argument('--project-ref',help='Existing Supabase project for private ROOT archive parts')
+    parser.add_argument('--model-image',help='Reviewed digest-pinned private image descriptor; no model bytes enter the source upload')
     args=parser.parse_args()
     try:
         if args.action=='supabase':
@@ -319,6 +321,11 @@ def main():
         elif args.action=='context':
             result=context(args.output,args.release,inference_mode=args.inference_mode,nlp_runtime=args.nlp_runtime,
                            production=args.production)
+            if args.model_image:
+                from deploy.embedded_model_delivery import apply_image
+                result.update(apply_image(args.output,args.model_image))
+                result['source_bytes']=sum(p.stat().st_size for p in Path(args.output).rglob('*') if p.is_file())
+                releases.require(result['source_bytes'] < SOURCE_UPLOAD_LIMIT,'DELIVERY_HOBBY_SOURCE_LIMIT')
         elif args.action=='package':
             releases.require(bool(args.release),'RELEASE_SELECTION_REQUIRED')
             result=package(args.output,args.release,args.directory)

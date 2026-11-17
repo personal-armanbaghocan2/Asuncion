@@ -1,0 +1,5 @@
+{
+  "release_id": "nlp-online-original-v2",
+  "manifest_sha256": "3b6b141c5e798222331662d564eff4e363a605fc5d9b422ab6b68224493dd22b",
+  "image": "vcr.vercel.com/arman-a87f/asuncion/approved-models@sha256:ab17ebc3a697568a4a3fcafd7af686d7e7e258bda36c7b7e33817da9007356ee"
+}
