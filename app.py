@@ -3632,7 +3632,15 @@ def iar():
         d['nlp_result']=n['result'] if n else ''
         d['item_preview']=item_preview_from_json(d.get('items'),limit=1)
         pos.append(d)
+    preparation=None
+    if request.args.get('verification_id'):
+        if len(request.args.getlist('verification_id'))!=1:abort(400)
+        verification_id=revised_procurement.identifier(request.args['verification_id'])
+        saved=q('select * from nlp where id=?',(verification_id,),one=True)
+        if not saved or saved.get('workflow_version')!=2 or saved.get('status')!='Reviewed':abort(404)
+        preparation=revised_procurement.verification_context(globals(),dict(saved))
     return render_template('iar.html', active='iar', rows=rows, pos=pos, title='IAR/AIR',
+                           inspection_preparation=preparation,
                            receiving_workflow_ready=revised_procurement.enabled(globals()))
 
 @app.route('/iar/<int:id>/view')

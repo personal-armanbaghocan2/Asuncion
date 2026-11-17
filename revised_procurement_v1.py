@@ -321,6 +321,20 @@ def verification_save_plan(rows,pr_id,pr_hash,po_hash):
     return {'action':'conflict'}
 
 
+def current_verification(rows,pr_id,pr_hash,po_hash):
+    """Reopen one current saved result without changing history or save rules."""
+    matches=[row for row in rows if row.get('workflow_version')==2
+             and row.get('pr_id')==pr_id and row.get('pr_items_hash')==pr_hash
+             and row.get('po_items_hash')==po_hash]
+    return matches[0] if len(matches)==1 else None
+
+
+def verification_conflict(rows,message):
+    """Explain bounded workflow conflicts without exposing driver diagnostics."""
+    return render_template('pr_po_conflict.html',active='nlp',title='PR-PO verification review',
+                           message=message,records=rows),409
+
+
 def replacement_contract_ready(api,*,relationship_review=False):
     """The private lineage table has no backend access; only its pinned RPC writes."""
     name='review_approved_pr_po_verification_v2' if relationship_review else 'save_approved_pr_po_verification_v3'
@@ -449,14 +463,23 @@ def nlp_page(api):
         pr_id,po_id=identifier(request.form.get('pr_id')),identifier(request.form.get('po_id'))
         if request.form.get('action')=='compare':return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id))
         if request.form.get('action')!='run':abort(400)
-        pr,po=source_pair(api,pr_id,po_id)
-        if po['status']!='Approved':abort(409,description='Select an Approved PO. Save and approve the PO before running verification.')
         existing=api['q']('select id,status,pr_id,pr_items_hash,po_items_hash,workflow_version,details,reviewed_by,reviewed_at,review_mapping,staff_decision,relationship_reason,evidence_reference from nlp where po_id=? order by id',(po_id,))
-        plan=verification_save_plan(existing,pr_id,evidence.fingerprint(pr['items']),evidence.fingerprint(po['items']))
+        try:pr,po=source_pair(api,pr_id,po_id)
+        except HTTPException as error:
+            if error.code!=409:raise
+            return verification_conflict(existing,'The selected PR and PO conflict with their approved source relationship or supplier. Open the saved verification below, or choose the corresponding approved PR and PO. No record was changed.')
+        if po['status']!='Approved':
+            return verification_conflict(existing,'Approve this PO before running verification. Existing results remain available below; nothing was changed.')
+        pr_hash,po_hash=evidence.fingerprint(pr['items']),evidence.fingerprint(po['items'])
+        current=current_verification(existing,pr_id,pr_hash,po_hash)
+        if current:
+            flash('Opened the existing verification for these unchanged sources. Its review, percentage and approval status were preserved.')
+            return redirect(url_for('nlp',verification_id=current['id']))
+        plan=verification_save_plan(existing,pr_id,pr_hash,po_hash)
         if plan['action']=='reopen':
             return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=plan['id']))
         if plan['action']=='conflict':
-            abort(409,description='Existing verification evidence requires authorized review. No record was overwritten.')
+            return verification_conflict(existing,'This PO already has verification history for another source selection, changed source data, or multiple current records. Open its saved results below. A new inference cannot overwrite that history; no record was changed.')
         if plan['action']=='replace' and not replacement_contract_ready(api):
             abort(409,description='The append-only legacy verification replacement contract is not installed and reviewed.')
         if not final_contract_ready(api):abort(409,description='The post-approval NLP save contract is not installed and reviewed. No model result or database record was fabricated.')
@@ -493,12 +516,26 @@ def nlp_page(api):
             overall_verification_status=(result if result in ('Reject','Needs Recanvass') or technical['technical_status']=='MATCH' else 'Needs Review'))
         values=(po_id,pr_id,evidence.fingerprint(pr['items']),evidence.fingerprint(po['items']),result,float(confidence),
             json.dumps(details,ensure_ascii=False),model_version,technical['technical_status'])
-        receipt=rpc(api,'save_approved_pr_po_verification_v3',values+(plan['legacy_id'],)) if plan['action']=='replace' else rpc(api,'save_approved_pr_po_verification_v2',values)
+        try:
+            receipt=rpc(api,'save_approved_pr_po_verification_v3',values+(plan['legacy_id'],)) if plan['action']=='replace' else rpc(api,'save_approved_pr_po_verification_v2',values)
+        except HTTPException as error:
+            if error.code!=409:raise
+            # A concurrent request may have saved the same immutable sources.
+            # Reopen only a unique exact-source result; never retry a write or
+            # mistake stale/conflicting evidence for successful verification.
+            saved_now=api['q']('select id,status,pr_id,pr_items_hash,po_items_hash,workflow_version,details,reviewed_by,reviewed_at,review_mapping,staff_decision,relationship_reason,evidence_reference from nlp where po_id=? order by id',(po_id,))
+            current=current_verification(saved_now,pr_id,pr_hash,po_hash)
+            if current:
+                flash('Another request saved this source pair. Opened its existing verification; no duplicate was created.')
+                return redirect(url_for('nlp',verification_id=current['id']))
+            return verification_conflict(saved_now,'The source documents or verification history changed while processing. Open the saved result below and review the current source pair. No result was overwritten or approved.')
         if not isinstance(receipt,dict):return receipt
         flash('Verification results saved. PO approval and NLP verification remain separate records; discrepancies do not authorize receiving.')
         return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=receipt['nlp_id']))
     prs=api['q']("select id,no,office,items from pr where status='Approved' order by id desc")
-    pos=api['q']("""select p.id,p.no,p.supplier,p.items,a.no aoq_no,exists(select 1 from nlp n where n.po_id=p.id) has_verification
+    pos=api['q']("""select p.id,p.no,p.supplier,p.items,a.no aoq_no,exists(select 1 from nlp n where n.po_id=p.id) has_verification,
+       coalesce(p.pr_id,a.pr_id) linked_pr_id,
+       (select n.pr_id from nlp n where n.po_id=p.id and n.workflow_version=2 order by n.id desc limit 1) saved_pr_id
        from po p join aoq a on a.id=p.aoq_id where p.status='Approved' and a.status='Approved' order by p.id desc""")
     rows=api['paged_q']("""select n.id,n.no,n.pr_id,n.po_id,n.result,n.status,n.technical_status,n.workflow_version,n.details,n.pr_items_hash,n.po_items_hash,n.created_at,n.reviewed_at,n.reviewed_by,
        p.no po_no,p.items po_items,p.supplier,r.no pr_no,r.items pr_items,r.office,a.no aoq_no from nlp n join po p on p.id=n.po_id
@@ -661,7 +698,17 @@ def discrepancy_incidence(saved):
                 result.update(value=100.0,affected=1,total=1,pairs={1:100},
                     checks={(1,index):100},extras=[],reason='')
                 return result
-        result['reason']='Unresolved identity or checks prevent an exact item-line rate.'
+        if not unresolved:
+            # Correspondence is fixed. Bound the final rate without pretending
+            # that a pending specification passed or failed.
+            extras=set(range(1,len(refs['PO'])+1))-mapped
+            if set(extra)!=extras:return unavailable()
+            total=len(refs['PR'])+len(extras)
+            pending=sum(value is None for value in result['pairs'].values())
+            result.update(lower_value=100*(affected+len(extras))/total,
+                          upper_value=100*(affected+len(extras)+pending)/total,
+                          pending_items=pending)
+        result['reason']='Unresolved identity or checks prevent a final item-line rate.'
         return result
     expected_extra=set(range(1,len(refs['PO'])+1))-mapped
     if set(extra)!=expected_extra:return unavailable()
@@ -722,18 +769,24 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
                 deviation=abs(offered-requested)/requested*100
                 quantity_percentage=f'{deviation:.2f}%'
                 quantity_formula=f'|{offered} - {requested}| / {requested} x 100 = {quantity_percentage}. Quantity only; specifications and model findings remain separate.'
+        pair_percentage=percentage(pair_value)
+        if (not stale and pair_value is None and incidence.get('lower_value') is not None
+                and line.get('pr_position') in incidence['pairs']):pair_percentage='0.00-100.00%'
         pairs.append(dict(pr=left,po=right,pr_position=line.get('pr_position'),po_position=line.get('po_position'),
-            status='Needs Review' if pair_value is None else 'Mismatch' if pair_value else 'Match',percentage=percentage(pair_value),
+            status='Needs Review' if pair_value is None else 'Mismatch' if pair_value else 'Match',percentage=pair_percentage,
             quantity_percentage=quantity_percentage,quantity_formula=quantity_formula,
             percentage_basis='Item-line incidence: this confirmed line is affected (100%) or fully checked (0%).'))
         for index,check in enumerate(checks if isinstance(checks,list) else []):
             if not isinstance(check,dict):continue
             legacy_states.append(check.get('state'))
             check_value=None if stale else incidence['checks'].get((line.get('pr_position'),index))
+            check_percentage=percentage(check_value)
+            if not stale and check_value is None and (line.get('pr_position'),index) in incidence['checks']:
+                check_percentage='0.00-100.00%'
             findings.append(dict(detail=str(check.get('attribute') or 'Item correspondence').replace('source specification field ',''),
                 requested=check.get('requested'),offered=check.get('offered'),
                 status='Needs Review' if check_value is None else 'Mismatch' if check_value else 'Match',
-                percentage=percentage(check_value),percentage_basis='Binary saved-check indicator: 100% confirmed violation, 0% passed; not quantity deviation.'))
+                percentage=check_percentage,percentage_basis='Binary saved-check indicator: 100% confirmed violation, 0% passed; a range is pending review, not quantity deviation.'))
         if not checks:
             legacy_states.append(None)
             findings.append(dict(detail='Item correspondence',requested=line.get('pr_reference'),offered=line.get('po_reference'),status='Needs Review',percentage='Not calculated'))
@@ -766,9 +819,20 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
         reference=saved['source_fields']['PO'][position-1]['reference']
         pairs.append(dict(pr={},po=offered,pr_position=None,po_position=position,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.'))
         findings.append(dict(detail='Extra PO item',requested=None,offered=offered or reference,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.'))
+    resolved=sum(value is not None for value in incidence['checks'].values())
+    check_count=len(incidence['checks'])
+    pending_checks=check_count-resolved
+    coverage=f'{100*resolved/check_count:.2f}%' if check_count and not stale else None
+    pending_items=incidence.get('pending_items',0) if not stale else 0
+    measured=percentage(value)
+    if value is None and not stale and incidence.get('lower_value') is not None:
+        measured=f"{incidence['lower_value']:.2f}-{incidence['upper_value']:.2f}%"
+        explanation=f'{pending_checks} saved check(s) across {pending_items} item(s) require review. The displayed range bounds the final item-line discrepancy; it does not authorize approval.'
     basis=(f"Item-line discrepancy incidence: {incidence['affected']} affected / {incidence['total']} assessed lines; not model confidence or quantity deviation."
            if value is not None else 'Not calculated: '+explanation)
-    return dict(status=status,percentage=percentage(value),percentage_basis=basis,eligibility_status=eligibility_status,
+    if value is None and measured!='Not calculated':basis='Pending discrepancy range: '+explanation
+    return dict(status=status,percentage=measured,percentage_basis=basis,eligibility_status=eligibility_status,
+        percentage_final=value is not None,review_coverage=coverage,pending_checks=pending_checks,pending_items=pending_items,
         score_band=discrepancy_band(value),
         findings=findings,pairs=pairs,explanation=explanation)
 

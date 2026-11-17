@@ -42,6 +42,7 @@ ASSETS = (
     'js/procurement-workspace.js',
     'js/aoq-workspace.js',
     'js/issuance-guide.js',
+    'js/pr-po-selection.js',
     'js/account-recovery.js',
     'images/asuncion_municipal.jpg',
     'images/asuncion-seal.png',

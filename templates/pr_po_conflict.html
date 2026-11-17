@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <h2>Open the saved PR-PO verification</h2>
+  <p class="notice" role="alert">{{message}}</p>
+  {% if records %}
+  <p>Choose a saved record to inspect its source pair, findings and available review action.</p>
+  <ul>{% for record in records %}<li><a class="btn" href="{{url_for('nlp',verification_id=record.id)}}">Open verification {{record.id}} - {{record.status}}</a></li>{% endfor %}</ul>
+  {% endif %}
+  <a class="btn primary" href="{{url_for('nlp')}}">Choose PR and PO</a>
+</section>
+{% endblock %}

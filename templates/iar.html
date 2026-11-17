@@ -1,5 +1,19 @@
 {% extends 'base.html' %}{% block content %}
 <div class="toolbar page-head"><h2>Inspection and Acceptance Report (IAR / AIR)</h2></div>
+{% if inspection_preparation %}
+{% from 'pr_po_verification_ui.html' import result_badge,comparison_table,findings_table with context %}
+{% set prep=inspection_preparation %}
+<section class="card" id="inspection-preparation">
+<h3>Inspection preparation: {{prep.row.no}}</h3>
+<p>PR {{prep.pr.no}} · PO {{prep.po.no}} · Verification status: {{prep.row.status}}</p>
+<p class="notice" role="status">Preparation only. Complete PR-PO review and approval before creating or accepting an official IAR. This view does not add stock.</p>
+{{result_badge(prep.display)}}
+<p>{{prep.display.explanation}}</p>
+{{comparison_table(prep.display)}}
+<details><summary>Requirements to verify before receiving</summary>{{findings_table(prep.display)}}</details>
+<p><a class="btn primary" href="{{url_for('nlp',verification_id=prep.row.id)}}">Return to PR-PO review</a></p>
+</section>
+{% endif %}
 <section class="card"><h3>Approved NLP results ready for inspection</h3><p class="muted">Approved verification makes its PO available below. Record the actual delivery and approve its IAR to add accepted stock to Inventory.</p><div class="table-scroll"><table class="table"><thead><tr><th>Approved NLP</th><th>PR</th><th>PO</th><th>Verification result</th><th>Next step</th></tr></thead><tbody>{% for p in pos %}<tr><td>{% if p.nlp_id %}<a href="{{url_for('nlp',verification_id=p.nlp_id)}}">{{p.nlp_no}}</a>{% else %}{{p.nlp_no}}{% endif %}</td><td>{{p.pr_no}}</td><td>{{p.no}}</td><td><span class="badge ok">{{p.nlp_result}} · Approved</span></td><td><a class="btn small" href="{{url_for('iar',po_id=p.id)}}">Select for IAR / AIR</a></td></tr>{% else %}<tr><td colspan="5">No approved eligible verification is waiting for inspection. Complete PR–PO review and approval first.</td></tr>{% endfor %}</tbody></table></div></section>
 <form method="post" class="source-bar" data-confirm="Create an IAR for this approved procurement chain?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label>Select eligible PO<select name="po_id" required data-source-preview="iarSource"><option value="">Select eligible PO</option>{% for p in pos %}<option value="{{p.id}}" {{'selected' if request.args.get('po_id')==p.id|string}} data-heading="Approved NLP: {{p.nlp_result}}" data-detail="{{p.pr_no}} · {{p.nlp_no}}" data-items="{{p.item_preview}}">{{p.no}} — {{p.supplier}}</option>{% endfor %}</select></label><div class="source-preview eligible" id="iarSource" aria-live="polite">Requires an approved Acceptable or Needs Review NLP result.</div><button class="btn primary" type="submit" {{'disabled' if not pos or not receiving_workflow_ready}}>Create IAR</button></form>
