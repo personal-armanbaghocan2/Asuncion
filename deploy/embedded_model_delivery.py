@@ -76,3 +76,22 @@ def apply_image(context, descriptor, *, base=releases.BASE):
     dockerfile.write_text(docker, encoding='utf-8')
     return {'model_delivery': 'private_image', 'runtime_model_downloads': False,
             'model_image': data['image'], 'manifest_sha256': evidence['manifest_sha256']}
+
+
+def use_containerfile(context):
+    """Use the supported equivalent filename in its own VCR build repository.
+
+    This preserves all existing dockerfile repository images for rollback.
+    Only the generated source-upload context changes, not the runtime files.
+    """
+    context = Path(context)
+    source = context / 'Dockerfile.vercel'
+    target = context / 'Containerfile.vercel'
+    releases.require(source.is_file() and not target.exists(), 'EMBEDDED_CONTAINERFILE_CONFLICT')
+    rules = {}
+    for name in ('.dockerignore', '.vercelignore'):
+        path = context / name
+        rules[path] = path.read_text(encoding='utf-8')
+    source.rename(target)
+    for path, text in rules.items():
+        path.write_text(text + '\n!Containerfile.vercel\n', encoding='utf-8')

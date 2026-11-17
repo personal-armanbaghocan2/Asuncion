@@ -71,3 +71,16 @@ class EmbeddedDeliveryTests(unittest.TestCase):
         with self.assertRaisesRegex(releases.ReleaseError, 'CONTEXT_INVALID'):
             self.apply()
         self.assertEqual((self.root / 'Dockerfile.vercel').read_bytes(), before)
+
+    def test_supported_containerfile_preserves_docker_instructions_and_runtime(self):
+        self.apply()
+        before = (self.root / 'Dockerfile.vercel').read_bytes()
+        for name in ('.dockerignore', '.vercelignore'):
+            (self.root / name).write_text('**\n!runtime/\n!runtime/**\n')
+        registry = (self.root / 'runtime' / releases.REGISTRY).read_bytes()
+        delivery.use_containerfile(self.root)
+        self.assertFalse((self.root / 'Dockerfile.vercel').exists())
+        self.assertEqual((self.root / 'Containerfile.vercel').read_bytes(), before)
+        self.assertEqual((self.root / 'runtime' / releases.REGISTRY).read_bytes(), registry)
+        for name in ('.dockerignore', '.vercelignore'):
+            self.assertIn('!Containerfile.vercel', (self.root / name).read_text())

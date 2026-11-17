@@ -322,8 +322,9 @@ def main():
             result=context(args.output,args.release,inference_mode=args.inference_mode,nlp_runtime=args.nlp_runtime,
                            production=args.production)
             if args.model_image:
-                from deploy.embedded_model_delivery import apply_image
+                from deploy.embedded_model_delivery import apply_image,use_containerfile
                 result.update(apply_image(args.output,args.model_image))
+                use_containerfile(args.output)
                 result['source_bytes']=sum(p.stat().st_size for p in Path(args.output).rglob('*') if p.is_file())
                 releases.require(result['source_bytes'] < SOURCE_UPLOAD_LIMIT,'DELIVERY_HOBBY_SOURCE_LIMIT')
         elif args.action=='package':
