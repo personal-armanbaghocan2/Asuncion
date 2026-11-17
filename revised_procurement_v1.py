@@ -442,7 +442,7 @@ def staged_verification(api,row):
     if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id'] or receipt.get('new_status')!=status:abort(503)
     flash('PR-PO review saved as Reviewed. Final approval remains separate.' if status=='Reviewed' else
           'PR-PO relationship Approved. Receiving remains subject to the existing IAR eligibility checks.')
-    return redirect(url_for('nlp',verification_id=row['id']))
+    return redirect(url_for('iar',po_id=row['po_id']) if status=='Approved' else url_for('nlp',verification_id=row['id']))
 
 def nlp_page(api):
     if request.method=='POST':
@@ -705,8 +705,26 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
         pair_status='Mismatch' if any(c.get('state')=='MISMATCH' for c in valid_checks) else 'Match' if valid_checks and all(c.get('state')=='MATCH' for c in valid_checks) and line.get('identity') not in ('UNRESOLVED','CANDIDATE') else 'Needs Review'
         legacy_pairs_match=legacy_pairs_match and pair_status=='Match'
         pair_value=None if stale else incidence['pairs'].get(line.get('pr_position'))
+        quantity_percentage=None;quantity_formula='Quantity deviation requires confirmed item identity, matching units and valid positive quantities.'
+        quantity_checks=[c for c in valid_checks if c.get('attribute')=='quantity']
+        unit_checks=[c for c in valid_checks if c.get('attribute')=='unit']
+        if not stale and line.get('identity')=='EXACT_NAME' and len(quantity_checks)==len(unit_checks)==1:
+            quantity,unit=quantity_checks[0],unit_checks[0]
+            quantity_index=next(i for i,c in enumerate(checks) if c is quantity)
+            binding_valid=incidence['checks'].get((line.get('pr_position'),quantity_index)) is not None
+            requested=evidence.number(quantity.get('requested'));offered=evidence.number(quantity.get('offered'))
+            left_unit=evidence.norm(unit.get('requested'));right_unit=evidence.norm(unit.get('offered'))
+            if (binding_valid and quantity.get('conditional_on_identity') is False and unit.get('conditional_on_identity') is False
+                    and requested is not None and requested>0 and offered is not None and offered>=0
+                    and quantity.get('state')==('MATCH' if requested==offered else 'MISMATCH')
+                    and unit.get('state')=='MATCH' and left_unit and right_unit
+                    and evidence.UNITS.get(left_unit,left_unit)==evidence.UNITS.get(right_unit,right_unit)):
+                deviation=abs(offered-requested)/requested*100
+                quantity_percentage=f'{deviation:.2f}%'
+                quantity_formula=f'|{offered} - {requested}| / {requested} x 100 = {quantity_percentage}. Quantity only; specifications and model findings remain separate.'
         pairs.append(dict(pr=left,po=right,pr_position=line.get('pr_position'),po_position=line.get('po_position'),
             status='Needs Review' if pair_value is None else 'Mismatch' if pair_value else 'Match',percentage=percentage(pair_value),
+            quantity_percentage=quantity_percentage,quantity_formula=quantity_formula,
             percentage_basis='Item-line incidence: this confirmed line is affected (100%) or fully checked (0%).'))
         for index,check in enumerate(checks if isinstance(checks,list) else []):
             if not isinstance(check,dict):continue
@@ -742,7 +760,7 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
         # A small affected-line rate cannot waive mandatory discrepancies.
         if status=='Match' and eligibility_status!='Match':status='Needs Review'
     elif status!='Match':
-        value=None;status='Needs Review';explanation='Saved model and structured evidence require review.'
+        status='Needs Review';explanation='Structured item-line discrepancy is 0%; the saved model result still requires review. This percentage does not authorize approval.'
     for position in incidence['extras'] if value is not None else []:
         offered=item(po_items,position)
         reference=saved['source_fields']['PO'][position-1]['reference']
@@ -861,7 +879,7 @@ def approve_verification(api,row):
     if row.get('workflow_version')==2:
         if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id']:abort(503)
         flash('PR-PO relationship approved and recorded. Receiving remains subject to the existing IAR eligibility checks.')
-        return redirect(url_for('nlp',verification_id=row['id']))
+        return redirect(url_for('iar',po_id=row['po_id']))
     flash('PR-PO relationship authorized and recorded. Final PO approval remains a separate explicit action.')
     return redirect(url_for('nlp',verification_id=row['id']))
 

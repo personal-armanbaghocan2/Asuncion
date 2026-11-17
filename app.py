@@ -3625,9 +3625,10 @@ def iar():
         seen.add(p['id'])
         d=dict(p)
         trace=trace_for_po(p)
-        n=q("select no,result from nlp where po_id=? and status='Approved' order by id desc limit 1",(p['id'],),one=True)
+        n=q("select id,no,result from nlp where po_id=? and status='Approved' order by id desc limit 1",(p['id'],),one=True)
         d['pr_no']=trace.get('pr')['no'] if trace.get('pr') else 'No linked PR'
         d['nlp_no']=n['no'] if n else 'No approved NLP'
+        d['nlp_id']=n.get('id') if n else None
         d['nlp_result']=n['result'] if n else ''
         d['item_preview']=item_preview_from_json(d.get('items'),limit=1)
         pos.append(d)
@@ -3786,7 +3787,7 @@ def inventory_planning_classification():
     """Source-backed planning label, separate from physical stock category.
 
     Inventory has no planning-category column. Resolve only matching accepted
-    lines of an approved IAR for its recorded PO; conflicting/absent evidence
+    lines of an approved IAR and its approved source plan; conflicting/absent evidence
     yields NULL. Never infer classification from an item's name or stock type.
     """
     return """(select case when count(*)>0 and count(receipt.planning)=count(*)
@@ -3796,9 +3797,16 @@ def inventory_planning_classification():
                        then min(upper(btrim(tag.value))) end
            from (values (line->>'_Procurement Category'),(line->>'Source Category'),
                         (line->>'Category'),(line->>'category'),
-                        (line->>'PPMP Category'),(line->>'ppmp_category')) tag(value)
+                         (line->>'PPMP Category'),(line->>'ppmp_category'),(source_plan.type)) tag(value)
            where upper(btrim(tag.value)) in ('DBM','NON-DBM','LIB')) planning
           from public.iar receipt_source join public.po source_po on source_po.id=receipt_source.po_id
+          left join public.aoq source_aoq on source_aoq.id=source_po.aoq_id
+          left join public.pr source_pr on source_pr.id=coalesce((to_jsonb(source_po)->>'pr_id')::bigint,source_aoq.pr_id)
+          left join public.app_plan source_app on source_app.id=source_pr.app_id and source_app.status='Approved'
+          left join public.ppmp source_plan on source_plan.id=coalesce(source_pr.ppmp_id,source_app.ppmp_id)
+             and source_plan.status='Approved' and source_pr.status='Approved'
+             and (source_pr.app_id is null or source_app.id is not null)
+             and (source_pr.ppmp_id is null or source_app.ppmp_id is null or source_pr.ppmp_id=source_app.ppmp_id)
           cross join lateral jsonb_array_elements(case when receipt_source.items is json array
                then receipt_source.items::jsonb else '[]'::jsonb end) entry(line)
           where receipt_source.status='Approved' and source_po.no=inventory.source_po
@@ -3820,6 +3828,9 @@ def inventory():
     search_text = (request.args.get('q') or '').strip()
     category_filter = (request.args.get('category') or '').strip()
     planning_filter = (request.args.get('planning') or '').strip()
+    if category_filter in ('DBM','NON-DBM','LIB'):
+        if planning_filter and planning_filter!=category_filter:abort(400,description='Choose one planning classification.')
+        planning_filter=category_filter
     stock_filter = (request.args.get('stock') or '').strip().lower()
     stock_filter = {'in':'in stock','low':'low stock','out':'out of stock'}.get(stock_filter,stock_filter)
     sort = request.args.get('sort','newest')
@@ -3848,7 +3859,7 @@ def inventory():
     if search_text:
         where.append("strpos(lower(concat_ws(' ',item_code,item,description,source_po)),lower(?))>0")
         params.append(search_text)
-    if category_filter:
+    if category_filter and category_filter not in ('DBM','NON-DBM','LIB'):
         where.append('btrim(category)=?');params.append(category_filter)
     if planning_filter:
         where.append(inventory_planning_classification()+'=?');params.append(planning_filter)
@@ -3860,7 +3871,7 @@ def inventory():
         where.append('('+stock_predicates[stock_filter]+')')
     predicate=(' where '+' and '.join(where)) if where else ''
     filtered_count=q('select count(*) c from inventory'+predicate,params,one=True)['c']
-    all_rows=[dict(row) for row in q('select * from inventory'+predicate+' order by '+orders[sort]+' limit ? offset ?',
+    all_rows=[dict(row) for row in q('select inventory.*, '+inventory_planning_classification()+' as planning_classification from inventory'+predicate+' order by '+orders[sort]+' limit ? offset ?',
                                    (*params,page_size,(page-1)*page_size))]
     g.psms_pagination=dict(page=page,has_next=page*page_size<filtered_count,size=page_size,total=filtered_count)
 

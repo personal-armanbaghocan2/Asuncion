@@ -441,7 +441,15 @@ class PersistentWorkbookTests(unittest.TestCase):
                 with client.session_transaction() as state:
                     state.update(logged_in=True,user_id=1,username='SYNTHETIC',role='Staff',_auth_sid='a'*43)
                 self.assertEqual(client.post('/ppmp/dataset', data={'action':'refresh_dataset'}).status_code,400)
-                token = client.get('/synthetic-csrf').get_data(as_text=True)
+                # Issue the same signed GET link as the real UI. An unsigned
+                # link redirects to login and must not masquerade as a CSRF token.
+                from flask import session, url_for
+                with client.session_transaction() as state:
+                    signed_state = dict(state)
+                with runtime.module.app.test_request_context('/'):
+                    session.update(signed_state)
+                    csrf_url = url_for('synthetic_csrf')
+                token = client.get(csrf_url).get_data(as_text=True)
                 response = client.post('/ppmp/dataset',data={'action':'upload_dataset','csrf_token':token,
                     'dataset_file':(upload.stream,'fictional-production-check.xlsx')})
                 self.assertEqual(response.status_code,302)
